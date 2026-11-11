@@ -1,1 +1,130 @@
-# Waitplay
+# WaitPlay 🎮
+
+> **The zero-interruption gaming companion for AI coding agents.**  
+> Play quick micro-games while your coding agent thinks, reasons, and executes tools.
+
+![WaitPlay Banner](docs/banner.png) *(optional preview)*
+
+WaitPlay detects when your AI coding agent begins working and automatically presents an interactive mini-game popup. When the agent finishes thinking, WaitPlay displays an interactive completion summary, letting you wrap up your game or immediately review code diffs.
+
+---
+
+## ✨ Features
+
+- **⚡ Instant Agent Trigger:** Hooks directly into prompt submission and tool execution events across 8 major coding agent environments.
+- **🪟 Parent Window Synchronization:** Automatically detects when you minimize your parent terminal or IDE (Windows Terminal, VS Code, Cursor, Command Prompt) and minimizes WaitPlay off-screen. Restoring the terminal restores WaitPlay without losing your game board or score.
+- **🏆 Interactive Completion Dialog:** Replaces abrupt auto-closing with a sleek summary dialog displaying agent execution duration, moves, and options to **Keep Playing** or **Return to Terminal**.
+- **🎯 Multi-Agent & Multi-Terminal Support:** Isolated state tracking across simultaneous terminal sessions, preventing agent conflicts.
+- **🔒 Local Security First:** Bridge operates strictly on loopback (`127.0.0.1:3150`) with auto-generated secure token authentication and payload validation.
+- **💻 Dual Interface Options:**
+  - **Native Windows WPF App (`apps/native`):** Lightweight, zero-dependency C# native window with smooth animations, keyboard hotkeys, and native Win32 window docking.
+  - **Modern Web HUD (`apps/web`):** Built with React 18, Vite, Tailwind CSS, Lucide icons, sound synthesis, and full-screen / floating dock modes.
+
+---
+
+## 🤖 Supported Agents & Integrations
+
+| Agent | Directory | Trigger Mechanism |
+| :--- | :--- | :--- |
+| **Claude Code** | `integrations/claude-code/` | Session notification hook (`waitplay-hook.cjs`) |
+| **OpenAI Codex** | `integrations/codex/` | Turn notification script (`codex-notify.cjs`) |
+| **Cline** | `integrations/cline/` | Real-time state watcher (`cline-watcher.cjs`) |
+| **Cursor** | `integrations/cursor/` | Editor trigger hook (`cursor-hook.cjs`) |
+| **Google Antigravity** | `integrations/antigravity/` | Task dispatcher hook (`antigravity-hook.cjs`) |
+| **OpenCode** | `integrations/opencode/` | JSON-RPC bridge watcher (`opencode-watcher.cjs`) |
+| **Oh-My-Pi (OMP)** | `integrations/omp/` | Real-time session watcher & extension (`waitplay.ts`) |
+| **Model Context Protocol** | `integrations/mcp/` | MCP Server tool integration (`waitplay-mcp.cjs`) |
+
+---
+
+## 📁 Repository Structure
+
+```
+waitplay/
+├── apps/
+│   ├── bridge/           # Node.js WebSocket & REST event bridge (port 3150)
+│   ├── native/           # Native Windows WPF companion app (WaitPlay.cs / .exe)
+│   └── web/              # React 18 + Vite web companion frontend (port 5200)
+├── packages/
+│   └── shared/           # Event protocol, state machine, and TypeScript types
+├── integrations/         # Dedicated hooks and watchers for all supported agents
+├── docs/                 # Architecture, event protocols, and guides
+├── package.json          # Root workspace configuration
+└── tsconfig.base.json    # Shared TypeScript compiler config
+```
+
+---
+
+## 🚀 Quick Start
+
+### 1. Install Dependencies
+
+```bash
+git clone https://github.com/your-username/waitplay.git
+cd waitplay
+npm install
+```
+
+### 2. Build the Project
+
+```bash
+# Build shared library, bridge service, and web UI
+npm run build
+
+# (Optional) Recompile the native Windows application
+npm run build:native
+```
+
+### 3. Run the Test Suite
+
+```bash
+npm test
+```
+*Executes all 31 unit and integration tests across the event protocol, state machine, and bridge security.*
+
+---
+
+## 🕹️ Running WaitPlay
+
+### Mode A: Native Desktop Companion (Recommended for Windows)
+
+Run the native companion directly:
+```bash
+./apps/native/WaitPlay.exe
+```
+Or start the bridge and watcher for your preferred agent:
+```bash
+# Start OMP watcher
+npm run omp:watch
+
+# Start Codex watcher
+npm run codex:watch
+
+# Start OpenCode watcher
+npm run opencode:watch
+```
+
+### Mode B: Browser Web HUD
+
+```bash
+# Terminal 1: Start Bridge Service (port 3150)
+npm run dev:bridge
+
+# Terminal 2: Start Web Application (port 5200)
+npm run dev:web
+```
+Open `http://localhost:5200` to interact with the game dashboard, live event stream, and game simulator.
+
+---
+
+## 📖 Documentation
+
+- [System Architecture](docs/ARCHITECTURE.md)
+- [Event Protocol Specification](docs/EVENT_PROTOCOL.md)
+- [Getting Started Guide](docs/GETTING_STARTED.md)
+
+---
+
+## 📄 License
+
+MIT License. Free to use and modify.

@@ -1,0 +1,24 @@
+{
+  "name": "waitplay-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=@waitplay/shared && npm run build --workspace=@waitplay/bridge && npm run build --workspace=@waitplay/web",
+    "test": "npm run test --workspaces --if-present",
+    "dev:bridge": "npm run dev --workspace=@waitplay/bridge",
+    "dev:web": "npm run dev --workspace=@waitplay/web",
+    "start:bridge": "npm run start --workspace=@waitplay/bridge",
+    "codex:watch": "node integrations/codex/codex-watcher.cjs",
+    "omp:watch": "node integrations/omp/omp-session-watcher.js",
+    "opencode:watch": "node integrations/opencode/opencode-watcher.cjs",
+    "build:native": "powershell -ExecutionPolicy Bypass -Command \"& 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe' /target:winexe /r:System.dll /r:System.Core.dll /r:System.Xaml.dll /r:System.Web.Extensions.dll /r:'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\WPF\\WindowsBase.dll' /r:'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\WPF\\PresentationCore.dll' /r:'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\WPF\\PresentationFramework.dll' /out:apps/native/WaitPlay.exe apps/native/WaitPlay.cs\""
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Production builds
+dist/
+build/
+*.pdb
+
+# Local auth & session state
+.bridge-token
+.waitplay-*
+
+# Logs
+*.log
+npm-debug.log*
+
+# System files
+.DS_Store
+Thumbs.db
