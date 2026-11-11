@@ -1,0 +1,21 @@
+{
+  "name": "@waitplay/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --experimental-strip-types --test test/**/*.test.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
