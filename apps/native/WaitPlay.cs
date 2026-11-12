@@ -1403,6 +1403,12 @@ namespace WaitPlayNative {
         Free
     }
 
+    public enum WidgetLayout {
+        Vertical,
+        WisprFlow,
+        Horizontal
+    }
+
     public class DockOverlayWindow : Window {
         private Border leftTarget;
         private Border rightTarget;
@@ -1490,6 +1496,7 @@ namespace WaitPlayNative {
         private const uint VK_W = 0x57;
 
         private DockPosition currentDock = DockPosition.Left;
+        private WidgetLayout currentLayout = WidgetLayout.Vertical;
         private bool isCollapsed = true;
         private bool isEnabled = true;
 
@@ -1529,7 +1536,7 @@ namespace WaitPlayNative {
                 if (isDragging || currentDock == DockPosition.Free) return;
                 POINT pt;
                 GetCursorPos(out pt);
-                bool cursorInside = (pt.X >= Left - 10 && pt.X <= Left + Width + 10 && pt.Y >= Top - 10 && pt.Y <= Top + Height + 10);
+                bool cursorInside = (pt.X >= Left - 12 && pt.X <= Left + Width + 12 && pt.Y >= Top - 12 && pt.Y <= Top + Height + 12);
                 if (!cursorInside) {
                     collapseTimer.Stop();
                     SetCollapsed(true);
@@ -1598,26 +1605,19 @@ namespace WaitPlayNative {
                 StartDragging(e);
             };
 
-            // 2. Full Expanded Widget (ONE-ROW ELEGANT DESIGN)
+            // 2. Full Expanded Widget
             fullWidget = new Border {
                 Background = Brushes.Transparent,
                 Visibility = Visibility.Collapsed
             };
 
-            // Single Row Horizontal StackPanel!
-            var oneRowPanel = new StackPanel {
-                Orientation = Orientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Left
-            };
-
-            // Item 1: Pill (Status & Alt+W)
+            // Item A: Pill (Status & Alt+W)
             pillBorder = new Border {
                 Background = new SolidColorBrush(Color.FromRgb(17, 17, 22)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(42, 42, 54)),
                 BorderThickness = new Thickness(1.2),
-                CornerRadius = new CornerRadius(21),
-                Height = 42,
+                CornerRadius = new CornerRadius(20),
+                Height = 40,
                 Padding = new Thickness(16, 0, 14, 0),
                 Cursor = Cursors.Hand,
                 ToolTip = "WaitPlay Status • Click to toggle ON/OFF"
@@ -1671,7 +1671,7 @@ namespace WaitPlayNative {
                 e.Handled = true;
             };
 
-            // Item 2: Gamepad Button
+            // Item B: Gamepad Button
             actionButton = new Border {
                 Width = 42,
                 Height = 42,
@@ -1679,12 +1679,10 @@ namespace WaitPlayNative {
                 Background = new SolidColorBrush(Color.FromRgb(24, 24, 34)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(50, 50, 68)),
                 BorderThickness = new Thickness(1.2),
-                Margin = new Thickness(6, 0, 0, 0),
                 Cursor = Cursors.Hand,
                 ToolTip = "Open WaitPlay Companion Game"
             };
 
-            // Razor-sharp vector Gamepad Path
             var gamepadPath = new System.Windows.Shapes.Path {
                 Data = Geometry.Parse("M4,7 C3,7 2,8 2,10 L2,12 C2,14.5 3.5,17 6,17 C7.5,17 8.5,16 9.5,14.5 L10.5,13 L13.5,13 L14.5,14.5 C15.5,16 16.5,17 18,17 C20.5,17 22,14.5 22,12 L22,10 C22,8 21,7 20,7 Z M6,10 L8,10 L8,11 L6,11 L6,13 L5,13 L5,11 L3,11 L3,10 L5,10 L5,8 L6,8 L6,10 Z M18,9.5 C18.5,9.5 19,10 19,10.5 C19,11 18.5,11.5 18,11.5 C17.5,11.5 17,11 17,10.5 C17,10 17.5,9.5 18,9.5 Z M16,11.5 C16.5,11.5 17,12 17,12.5 C17,13 16.5,13.5 16,13.5 C15.5,13.5 15,13 15,12.5 C15,12 15.5,11.5 16,11.5 Z"),
                 Fill = new SolidColorBrush(Color.FromRgb(255, 255, 255)),
@@ -1709,7 +1707,7 @@ namespace WaitPlayNative {
                 e.Handled = true;
             };
 
-            // Item 3: Power Toggle Button (Right beside Gamepad in ONE ROW, matching Image #2!)
+            // Item C: Power Toggle Button
             toggleButton = new Border {
                 Width = 42,
                 Height = 42,
@@ -1717,14 +1715,11 @@ namespace WaitPlayNative {
                 Background = new SolidColorBrush(Color.FromRgb(20, 20, 28)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(46, 46, 62)),
                 BorderThickness = new Thickness(1.2),
-                Margin = new Thickness(6, 0, 0, 0),
                 Cursor = Cursors.Hand,
                 ToolTip = "Toggle WaitPlay ON / OFF"
             };
 
             var powerGrid = new Grid();
-
-            // Vector Power Path
             powerIconPath = new System.Windows.Shapes.Path {
                 Data = Geometry.Parse("M11,3 L13,3 L13,11 L11,11 Z M6.5,6.5 C4.5,8 4,11 5,13.5 C6.5,16.5 10,18 13,17.5 C16,16.5 18,14 18,11 C18,8.5 16.5,6.5 15,5.5 L16,4 C18,5.5 20,8 20,11 C20,15 17,18.5 13,19.5 C8.5,20.5 4,18 2.5,14 C1,10 2.5,6 5,4 Z"),
                 Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
@@ -1736,7 +1731,6 @@ namespace WaitPlayNative {
             };
             powerGrid.Children.Add(powerIconPath);
 
-            // Top-right Cyan Indicator Dot (at 1:30 position, matching Image #2!)
             var outerDot = new Ellipse {
                 Width = 10,
                 Height = 10,
@@ -1770,13 +1764,6 @@ namespace WaitPlayNative {
                 e.Handled = true;
             };
 
-            // Add all three into ONE ROW!
-            oneRowPanel.Children.Add(pillBorder);
-            oneRowPanel.Children.Add(actionButton);
-            oneRowPanel.Children.Add(toggleButton);
-
-            fullWidget.Child = oneRowPanel;
-
             rootGrid.Children.Add(edgeHandle);
             rootGrid.Children.Add(fullWidget);
             Content = rootGrid;
@@ -1790,7 +1777,6 @@ namespace WaitPlayNative {
                 }
             };
 
-            // Allow dragging anywhere on the full widget
             fullWidget.PreviewMouseLeftButtonDown += (s, e) => {
                 StartDragging(e);
             };
@@ -1807,13 +1793,110 @@ namespace WaitPlayNative {
                 }
             };
 
-            // Context Menu
+            isEnabled = WaitPlayStateManager.IsEnabled();
+            UpdateUI();
+
+            ApplyLayout(currentLayout);
+            LoadPosition();
+        }
+
+        public void ApplyLayout(WidgetLayout layout) {
+            currentLayout = layout;
+
+            var p1 = pillBorder.Parent as Panel; if (p1 != null) p1.Children.Remove(pillBorder);
+            var p2 = actionButton.Parent as Panel; if (p2 != null) p2.Children.Remove(actionButton);
+            var p3 = toggleButton.Parent as Panel; if (p3 != null) p3.Children.Remove(toggleButton);
+
+            if (currentLayout == WidgetLayout.Vertical) {
+                // PURE VERTICAL COLUMN (matching user's request)
+                var colPanel = new StackPanel {
+                    Orientation = Orientation.Vertical,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+
+                pillBorder.Margin = new Thickness(0, 0, 0, 8);
+                actionButton.Margin = new Thickness(0, 0, 0, 8);
+                actionButton.HorizontalAlignment = HorizontalAlignment.Center;
+                toggleButton.Margin = new Thickness(0, 0, 0, 0);
+                toggleButton.HorizontalAlignment = HorizontalAlignment.Center;
+
+                colPanel.Children.Add(pillBorder);
+                colPanel.Children.Add(actionButton);
+                colPanel.Children.Add(toggleButton);
+                fullWidget.Child = colPanel;
+            } else if (currentLayout == WidgetLayout.WisprFlow) {
+                // WISPR FLOW SIDE-BY-SIDE (Pill on left, Buttons stacked on right)
+                var grid = new Grid {
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                pillBorder.VerticalAlignment = VerticalAlignment.Center;
+                pillBorder.Margin = new Thickness(0, 0, 8, 0);
+                Grid.SetColumn(pillBorder, 0);
+                grid.Children.Add(pillBorder);
+
+                var btnStack = new StackPanel {
+                    Orientation = Orientation.Vertical,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                actionButton.Margin = new Thickness(0, 0, 0, 6);
+                actionButton.HorizontalAlignment = HorizontalAlignment.Center;
+                toggleButton.Margin = new Thickness(0, 0, 0, 0);
+                toggleButton.HorizontalAlignment = HorizontalAlignment.Center;
+
+                btnStack.Children.Add(actionButton);
+                btnStack.Children.Add(toggleButton);
+                Grid.SetColumn(btnStack, 1);
+                grid.Children.Add(btnStack);
+
+                fullWidget.Child = grid;
+            } else {
+                // HORIZONTAL ROW
+                var rowPanel = new StackPanel {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                pillBorder.Margin = new Thickness(0, 0, 6, 0);
+                actionButton.Margin = new Thickness(0, 0, 6, 0);
+                toggleButton.Margin = new Thickness(0, 0, 0, 0);
+
+                rowPanel.Children.Add(pillBorder);
+                rowPanel.Children.Add(actionButton);
+                rowPanel.Children.Add(toggleButton);
+                fullWidget.Child = rowPanel;
+            }
+
+            UpdateContextMenu();
+            if (!isCollapsed) {
+                SetCollapsed(false);
+            }
+        }
+
+        private void UpdateContextMenu() {
             var menu = new ContextMenu();
             var toggleItem = new MenuItem { Header = "Toggle WaitPlay (Alt+W)" };
             toggleItem.Click += (s, e) => Toggle();
             var gameItem = new MenuItem { Header = "Open Companion Game" };
             gameItem.Click += (s, e) => OpenGameWindow();
 
+            var layoutMenu = new MenuItem { Header = "Widget Layout" };
+            var vertItem = new MenuItem { Header = "Vertical Column" + (currentLayout == WidgetLayout.Vertical ? " ✓" : "") };
+            vertItem.Click += (s, e) => { ApplyLayout(WidgetLayout.Vertical); SavePosition(); };
+            var flowItem = new MenuItem { Header = "Wispr Flow (Side-by-Side)" + (currentLayout == WidgetLayout.WisprFlow ? " ✓" : "") };
+            flowItem.Click += (s, e) => { ApplyLayout(WidgetLayout.WisprFlow); SavePosition(); };
+            var horizItem = new MenuItem { Header = "Horizontal Row" + (currentLayout == WidgetLayout.Horizontal ? " ✓" : "") };
+            horizItem.Click += (s, e) => { ApplyLayout(WidgetLayout.Horizontal); SavePosition(); };
+
+            layoutMenu.Items.Add(vertItem);
+            layoutMenu.Items.Add(flowItem);
+            layoutMenu.Items.Add(horizItem);
+
+            var dockMenu = new MenuItem { Header = "Docking Position" };
             var dockLeftItem = new MenuItem { Header = "Dock to Left Screen Edge" };
             dockLeftItem.Click += (s, e) => { SetDock(DockPosition.Left, Top); SavePosition(); };
             var dockRightItem = new MenuItem { Header = "Dock to Right Screen Edge" };
@@ -1827,24 +1910,22 @@ namespace WaitPlayNative {
                 SavePosition();
             };
 
+            dockMenu.Items.Add(dockLeftItem);
+            dockMenu.Items.Add(dockRightItem);
+            dockMenu.Items.Add(dockBottomItem);
+            dockMenu.Items.Add(dockFreeItem);
+
             var exitItem = new MenuItem { Header = "Exit Desktop Widget" };
             exitItem.Click += (s, e) => Close();
 
             menu.Items.Add(toggleItem);
             menu.Items.Add(gameItem);
             menu.Items.Add(new Separator());
-            menu.Items.Add(dockLeftItem);
-            menu.Items.Add(dockRightItem);
-            menu.Items.Add(dockBottomItem);
-            menu.Items.Add(dockFreeItem);
+            menu.Items.Add(layoutMenu);
+            menu.Items.Add(dockMenu);
             menu.Items.Add(new Separator());
             menu.Items.Add(exitItem);
             ContextMenu = menu;
-
-            isEnabled = WaitPlayStateManager.IsEnabled();
-            UpdateUI();
-
-            LoadPosition();
         }
 
         private void StartDragging(MouseButtonEventArgs e) {
@@ -1870,7 +1951,6 @@ namespace WaitPlayNative {
             Left = windowStartPoint.X + deltaX;
             Top = windowStartPoint.Y + deltaY;
 
-            // Check proximity to edges and highlight docking zones
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
 
@@ -1917,9 +1997,9 @@ namespace WaitPlayNative {
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
 
-            if (topPos > 0 && topPos < screenH - 100) {
+            if (topPos > 0 && topPos < screenH - 160) {
                 Top = topPos;
-            } else if (Top <= 0 || Top > screenH - 100) {
+            } else if (Top <= 0 || Top > screenH - 160) {
                 Top = 460;
             }
 
@@ -1934,7 +2014,7 @@ namespace WaitPlayNative {
                     break;
                 case DockPosition.Bottom:
                     edgeHandle.CornerRadius = new CornerRadius(12, 12, 0, 0);
-                    Left = (screenW - 295) / 2;
+                    Left = (screenW - 200) / 2;
                     Top = screenH - 22;
                     break;
                 case DockPosition.Free:
@@ -1948,6 +2028,9 @@ namespace WaitPlayNative {
             isCollapsed = collapsed;
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
+
+            double expW = (currentLayout == WidgetLayout.Vertical) ? 195 : (currentLayout == WidgetLayout.WisprFlow ? 245 : 295);
+            double expH = (currentLayout == WidgetLayout.Vertical) ? 148 : (currentLayout == WidgetLayout.WisprFlow ? 96 : 50);
 
             if (collapsed && currentDock != DockPosition.Free) {
                 fullWidget.Visibility = Visibility.Collapsed;
@@ -1967,16 +2050,17 @@ namespace WaitPlayNative {
             } else {
                 edgeHandle.Visibility = Visibility.Collapsed;
                 fullWidget.Visibility = Visibility.Visible;
-                Width = 295;
-                Height = 50;
+                Width = expW;
+                Height = expH;
                 if (currentDock == DockPosition.Right) {
-                    Left = screenW - 300;
+                    Left = screenW - expW - 5;
                 } else if (currentDock == DockPosition.Left) {
                     Left = 6;
                 } else if (currentDock == DockPosition.Bottom) {
-                    Left = (screenW - 295) / 2;
-                    Top = screenH - 54;
+                    Left = (screenW - expW) / 2;
+                    Top = screenH - expH - 6;
                 }
+
                 if (currentDock != DockPosition.Free) {
                     collapseTimer.Start();
                 }
@@ -2049,8 +2133,15 @@ namespace WaitPlayNative {
                     var dict = ser.Deserialize<Dictionary<string, object>>(json);
                     if (dict != null) {
                         string dockStr = dict.ContainsKey("dock") ? dict["dock"].ToString() : "Left";
+                        string layoutStr = dict.ContainsKey("layout") ? dict["layout"].ToString() : "Vertical";
                         double l = dict.ContainsKey("left") ? Convert.ToDouble(dict["left"]) : 0;
                         double t = dict.ContainsKey("top") ? Convert.ToDouble(dict["top"]) : 460;
+
+                        if (layoutStr == "WisprFlow") currentLayout = WidgetLayout.WisprFlow;
+                        else if (layoutStr == "Horizontal") currentLayout = WidgetLayout.Horizontal;
+                        else currentLayout = WidgetLayout.Vertical;
+
+                        ApplyLayout(currentLayout);
 
                         if (dockStr == "Right") {
                             SetDock(DockPosition.Right, t);
@@ -2071,6 +2162,7 @@ namespace WaitPlayNative {
                     }
                 }
             } catch {}
+            ApplyLayout(WidgetLayout.Vertical);
             SetDock(DockPosition.Left, 460);
         }
 
@@ -2078,6 +2170,7 @@ namespace WaitPlayNative {
             try {
                 var dict = new Dictionary<string, object>();
                 dict["dock"] = currentDock.ToString();
+                dict["layout"] = currentLayout.ToString();
                 dict["left"] = Left;
                 dict["top"] = Top;
                 var ser = new JavaScriptSerializer();
