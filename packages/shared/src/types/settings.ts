@@ -7,6 +7,7 @@ export interface UserPreferences {
   preferredCategories: GameCategory[];
   difficulty: GameDifficulty;
   autoLaunch: boolean;
+  companionEnabled?: boolean;
   startDelaySeconds: number; // default 4
   resultsDurationSeconds: number; // default 6
   soundEnabled: boolean;
@@ -19,6 +20,7 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   preferredCategories: ["memory"],
   difficulty: "medium",
   autoLaunch: true,
+  companionEnabled: true,
   startDelaySeconds: 4,
   resultsDurationSeconds: 6,
   soundEnabled: true,

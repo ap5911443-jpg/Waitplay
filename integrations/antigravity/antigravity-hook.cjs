@@ -22,6 +22,24 @@ const action = process.argv[2] || 'start';
 const param1 = process.argv[3] || '';
 const param2 = process.argv[4] || '';
 
+function isWaitPlayEnabled() {
+  try {
+    const candidates = [
+      path.join(os.tmpdir(), 'waitplay', '.waitplay-enabled.json'),
+      path.resolve(__dirname, '..', '..', '.waitplay-enabled.json'),
+      'C:\\Users\\ASUS\\waitplay\\.waitplay-enabled.json',
+      'C:\\Users\\ASUS\\AppData\\Local\\Temp\\waitplay\\.waitplay-enabled.json',
+    ];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) {
+        const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        if (data && data.enabled === false) return false;
+      }
+    }
+  } catch {}
+  return true;
+}
+
 function isPromptDismissed(sessionId, promptTimestamp) {
   try {
     if (fs.existsSync(DISMISS_FILE)) {

@@ -12,6 +12,7 @@ WaitPlay detects when your AI coding agent begins working and automatically pres
 ## ✨ Features
 
 - **⚡ Instant Agent Trigger:** Hooks directly into prompt submission and tool execution events across 8 major coding agent environments.
+- **🔘 Wispr Flow-Style Desktop Toggle Widget:** A sleek, always-on-top, draggable floating pill widget docked to your screen edge (with `Alt+W` global hotkey, cyan active indicator dot, and direct gamepad launcher) to toggle WaitPlay ON / OFF instantly.
 - **🪟 Parent Window Synchronization:** Automatically detects when you minimize your parent terminal or IDE (Windows Terminal, VS Code, Cursor, Command Prompt) and minimizes WaitPlay off-screen. Restoring the terminal restores WaitPlay without losing your game board or score.
 - **🏆 Interactive Completion Dialog:** Replaces abrupt auto-closing with a sleek summary dialog displaying agent execution duration, moves, and options to **Keep Playing** or **Return to Terminal**.
 - **🎯 Multi-Agent & Multi-Terminal Support:** Isolated state tracking across simultaneous terminal sessions, preventing agent conflicts.
@@ -86,7 +87,19 @@ npm test
 
 ## 🕹️ Running WaitPlay
 
-### Mode A: Native Desktop Companion (Recommended for Windows)
+### Mode A: Wispr Flow Floating Widget (Desktop Overlay)
+
+Run the floating desktop widget on your screen (draggable, always on top):
+```bash
+npm run widget
+# Or run WaitPlay.exe directly
+./apps/native/WaitPlay.exe --widget
+```
+- Click the **ON/OFF** pill or press **Alt+W** anywhere to toggle WaitPlay.
+- Click the **🎮 Gamepad** button to open the companion game.
+- Toggle state instantly via CLI: `npm run toggle`
+
+### Mode B: Native Desktop Companion Window
 
 Run the native companion directly:
 ```bash

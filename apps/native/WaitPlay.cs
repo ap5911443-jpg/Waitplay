@@ -277,6 +277,56 @@ namespace WaitPlayNative {
 
             // Right window controls
             var controlsPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            // Wispr Flow style ON/OFF toggle pill in window header
+            var flowPill = new Border {
+                Background = new SolidColorBrush(Color.FromRgb(17, 17, 22)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(42, 42, 54)),
+                BorderThickness = new Thickness(1.2),
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(8, 2, 8, 2),
+                Margin = new Thickness(0, 0, 10, 0),
+                Cursor = Cursors.Hand,
+                ToolTip = "WaitPlay Status • Click to turn OFF & close interface"
+            };
+            var flowPanel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            var flowTitle = new TextBlock {
+                Text = "WaitPlay",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Color.FromRgb(203, 213, 225)),
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var flowBadge = new TextBlock {
+                Text = "ON",
+                FontSize = 11,
+                FontWeight = FontWeights.Bold,
+                Foreground = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var flowDot = new Ellipse {
+                Width = 6,
+                Height = 6,
+                Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            flowPanel.Children.Add(flowTitle);
+            flowPanel.Children.Add(flowBadge);
+            flowPanel.Children.Add(flowDot);
+            flowPill.Child = flowPanel;
+
+            flowPill.MouseLeftButtonDown += (s, e) => {
+                WaitPlayStateManager.SetEnabled(false);
+                flowBadge.Text = "OFF";
+                flowBadge.Foreground = new SolidColorBrush(Color.FromRgb(148, 163, 184));
+                flowDot.Fill = new SolidColorBrush(Color.FromRgb(100, 116, 139));
+                flowPill.ToolTip = "WaitPlay is now OFF. Closing...";
+                var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+                t.Tick += (s2, e2) => { t.Stop(); Close(); };
+                t.Start();
+            };
+            controlsPanel.Children.Add(flowPill);
+
 
             var btnMin = new Button {
                 Content = "\u2014",
@@ -1290,6 +1340,403 @@ namespace WaitPlayNative {
         }
     }
 
+    
+    public static class WaitPlayStateManager {
+        private static string GetTempPath() {
+            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay");
+            if (!System.IO.Directory.Exists(dir)) {
+                try { System.IO.Directory.CreateDirectory(dir); } catch {}
+            }
+            return System.IO.Path.Combine(dir, ".waitplay-enabled.json");
+        }
+
+        private static string GetRepoPath() {
+            return @"C:\Users\ASUS\waitplay\.waitplay-enabled.json";
+        }
+
+        public static bool IsEnabled() {
+            try {
+                string[] paths = new string[] { GetTempPath(), GetRepoPath() };
+                foreach (var p in paths) {
+                    if (System.IO.File.Exists(p)) {
+                        string json = System.IO.File.ReadAllText(p);
+                        var ser = new JavaScriptSerializer();
+                        var dict = ser.Deserialize<Dictionary<string, object>>(json);
+                        if (dict != null && dict.ContainsKey("enabled")) {
+                            return Convert.ToBoolean(dict["enabled"]);
+                        }
+                    }
+                }
+            } catch {}
+            return true;
+        }
+
+        public static bool Toggle() {
+            bool s = !IsEnabled();
+            SetEnabled(s);
+            return s;
+        }
+
+        public static void SetEnabled(bool enabled) {
+            try {
+                var dict = new Dictionary<string, object>();
+                dict["enabled"] = enabled;
+                dict["updatedAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var ser = new JavaScriptSerializer();
+                string json = ser.Serialize(dict);
+                string[] paths = new string[] { GetTempPath(), GetRepoPath() };
+                foreach (var p in paths) {
+                    try {
+                        string d = System.IO.Path.GetDirectoryName(p);
+                        if (!System.IO.Directory.Exists(d)) System.IO.Directory.CreateDirectory(d);
+                        System.IO.File.WriteAllText(p, json);
+                    } catch {}
+                }
+            } catch {}
+        }
+    }
+
+    public class FloatingFlowWidget : Window {
+        [DllImport("user32.dll")]
+        private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+        [DllImport("user32.dll")]
+        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+        private const int HOTKEY_ID = 9001;
+        private const uint MOD_ALT = 0x0001;
+        private const uint VK_W = 0x57;
+
+        private Border pillBorder;
+        private TextBlock pillTitle;
+        private TextBlock pillStatusBadge;
+        private TextBlock pillHotkeyHint;
+        private Border actionButton;
+        private Border toggleCircleButton;
+        private Ellipse statusDot;
+        private bool isEnabled = true;
+        private MainWindow activeGameWindow = null;
+        private IntPtr myHwnd = IntPtr.Zero;
+
+        public FloatingFlowWidget() {
+            InitializeComponent();
+        }
+
+        private void InitializeComponent() {
+            Title = "WaitPlay Flow";
+            Width = 260;
+            Height = 94;
+            WindowStyle = WindowStyle.None;
+            AllowsTransparency = true;
+            Background = Brushes.Transparent;
+            Topmost = true;
+            ShowInTaskbar = false;
+            ResizeMode = ResizeMode.NoResize;
+
+            LoadPosition();
+
+            SourceInitialized += (s, e) => {
+                try {
+                    myHwnd = new WindowInteropHelper(this).Handle;
+                    RegisterHotKey(myHwnd, HOTKEY_ID, MOD_ALT, VK_W);
+                    var source = HwndSource.FromHwnd(myHwnd);
+                    if (source != null) {
+                        source.AddHook(HwndHook);
+                    }
+                } catch {}
+            };
+
+            Closed += (s, e) => {
+                try {
+                    if (myHwnd != IntPtr.Zero) {
+                        UnregisterHotKey(myHwnd, HOTKEY_ID);
+                    }
+                } catch {}
+            };
+
+            MouseLeftButtonDown += (s, e) => {
+                if (e.ButtonState == MouseButtonState.Pressed) {
+                    DragMove();
+                    SavePosition();
+                }
+            };
+
+            var rootGrid = new Grid();
+            rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            // Row 0: Top Row (Capsule Pill + Action Button)
+            var topPanel = new StackPanel {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+
+            pillBorder = new Border {
+                Background = new SolidColorBrush(Color.FromRgb(17, 17, 22)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(42, 42, 54)),
+                BorderThickness = new Thickness(1.2),
+                CornerRadius = new CornerRadius(18),
+                Height = 36,
+                Padding = new Thickness(14, 0, 12, 0),
+                Cursor = Cursors.Hand,
+                ToolTip = "WaitPlay Companion • Click to toggle ON/OFF"
+            };
+
+            var pillContent = new StackPanel {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            pillTitle = new TextBlock {
+                Text = "WaitPlay",
+                FontSize = 13,
+                FontWeight = FontWeights.Medium,
+                Foreground = new SolidColorBrush(Color.FromRgb(226, 232, 240)),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+
+            pillStatusBadge = new TextBlock {
+                Text = "ON",
+                FontSize = 13,
+                FontWeight = FontWeights.Bold,
+                Foreground = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+
+            pillHotkeyHint = new TextBlock {
+                Text = "Alt+W",
+                FontSize = 10,
+                Foreground = new SolidColorBrush(Color.FromRgb(100, 116, 139)),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            pillContent.Children.Add(pillTitle);
+            pillContent.Children.Add(pillStatusBadge);
+            pillContent.Children.Add(pillHotkeyHint);
+            pillBorder.Child = pillContent;
+
+            pillBorder.MouseEnter += (s, e) => {
+                pillBorder.Background = new SolidColorBrush(Color.FromRgb(26, 26, 34));
+                pillBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(65, 65, 85));
+            };
+            pillBorder.MouseLeave += (s, e) => {
+                pillBorder.Background = new SolidColorBrush(Color.FromRgb(17, 17, 22));
+                pillBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(42, 42, 54));
+            };
+            pillBorder.MouseLeftButtonDown += (s, e) => {
+                Toggle();
+                e.Handled = true;
+            };
+
+            // Action Button (Gamepad icon)
+            actionButton = new Border {
+                Width = 36,
+                Height = 36,
+                CornerRadius = new CornerRadius(18),
+                Background = new SolidColorBrush(Color.FromRgb(30, 30, 38)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(54, 54, 70)),
+                BorderThickness = new Thickness(1.2),
+                Margin = new Thickness(6, 0, 0, 0),
+                Cursor = Cursors.Hand,
+                ToolTip = "Open WaitPlay Companion Game"
+            };
+
+            var gameIcon = new TextBlock {
+                Text = "\uD83C\uDFA7", // 🎮
+                FontSize = 16,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            actionButton.Child = gameIcon;
+
+            actionButton.MouseEnter += (s, e) => {
+                actionButton.Background = new SolidColorBrush(Color.FromRgb(42, 42, 54));
+                actionButton.BorderBrush = new SolidColorBrush(Color.FromRgb(80, 80, 105));
+            };
+            actionButton.MouseLeave += (s, e) => {
+                actionButton.Background = new SolidColorBrush(Color.FromRgb(30, 30, 38));
+                actionButton.BorderBrush = new SolidColorBrush(Color.FromRgb(54, 54, 70));
+            };
+            actionButton.MouseLeftButtonDown += (s, e) => {
+                OpenGameWindow();
+                e.Handled = true;
+            };
+
+            topPanel.Children.Add(pillBorder);
+            topPanel.Children.Add(actionButton);
+            Grid.SetRow(topPanel, 0);
+            rootGrid.Children.Add(topPanel);
+
+            // Row 1: Bottom circle toggle (aligned under action button, Wispr Flow style)
+            var bottomPanel = new StackPanel {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 6, 2, 0)
+            };
+
+            toggleCircleButton = new Border {
+                Width = 30,
+                Height = 30,
+                CornerRadius = new CornerRadius(15),
+                Background = new SolidColorBrush(Color.FromRgb(22, 22, 29)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(43, 43, 56)),
+                BorderThickness = new Thickness(1.2),
+                Cursor = Cursors.Hand,
+                ToolTip = "Toggle WaitPlay ON / OFF"
+            };
+
+            var circleGrid = new Grid();
+            var ringIcon = new TextBlock {
+                Text = "\u23FB", // ⏻
+                FontSize = 12,
+                Foreground = new SolidColorBrush(Color.FromRgb(148, 163, 184)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            circleGrid.Children.Add(ringIcon);
+
+            statusDot = new Ellipse {
+                Width = 7,
+                Height = 7,
+                Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 2, 2, 0)
+            };
+            circleGrid.Children.Add(statusDot);
+            toggleCircleButton.Child = circleGrid;
+
+            toggleCircleButton.MouseEnter += (s, e) => {
+                toggleCircleButton.Background = new SolidColorBrush(Color.FromRgb(32, 32, 42));
+                toggleCircleButton.BorderBrush = new SolidColorBrush(Color.FromRgb(60, 60, 78));
+            };
+            toggleCircleButton.MouseLeave += (s, e) => {
+                toggleCircleButton.Background = new SolidColorBrush(Color.FromRgb(22, 22, 29));
+                toggleCircleButton.BorderBrush = new SolidColorBrush(Color.FromRgb(43, 43, 56));
+            };
+            toggleCircleButton.MouseLeftButtonDown += (s, e) => {
+                Toggle();
+                e.Handled = true;
+            };
+
+            bottomPanel.Children.Add(toggleCircleButton);
+            Grid.SetRow(bottomPanel, 1);
+            rootGrid.Children.Add(bottomPanel);
+
+            // Context Menu
+            var menu = new ContextMenu();
+            var toggleItem = new MenuItem { Header = "Toggle WaitPlay (Alt+W)" };
+            toggleItem.Click += (s, e) => Toggle();
+            var gameItem = new MenuItem { Header = "Open Companion Game" };
+            gameItem.Click += (s, e) => OpenGameWindow();
+            var resetItem = new MenuItem { Header = "Reset Position to Default" };
+            resetItem.Click += (s, e) => {
+                Left = SystemParameters.WorkArea.Right - 270;
+                Top = SystemParameters.WorkArea.Bottom - 160;
+                SavePosition();
+            };
+            var exitItem = new MenuItem { Header = "Exit Widget" };
+            exitItem.Click += (s, e) => Close();
+            menu.Items.Add(toggleItem);
+            menu.Items.Add(gameItem);
+            menu.Items.Add(new Separator());
+            menu.Items.Add(resetItem);
+            menu.Items.Add(exitItem);
+            ContextMenu = menu;
+
+            Content = rootGrid;
+            isEnabled = WaitPlayStateManager.IsEnabled();
+            UpdateUI();
+        }
+
+        private void Toggle() {
+            isEnabled = !isEnabled;
+            WaitPlayStateManager.SetEnabled(isEnabled);
+            UpdateUI();
+            if (!isEnabled && activeGameWindow != null && activeGameWindow.IsVisible) {
+                try { activeGameWindow.Close(); } catch {}
+            }
+        }
+
+        private void UpdateUI() {
+            if (isEnabled) {
+                pillStatusBadge.Text = "ON";
+                pillStatusBadge.Foreground = new SolidColorBrush(Color.FromRgb(0, 240, 255));
+                statusDot.Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255));
+                pillBorder.ToolTip = "WaitPlay is ON (Active) • Click to turn OFF";
+            } else {
+                pillStatusBadge.Text = "OFF";
+                pillStatusBadge.Foreground = new SolidColorBrush(Color.FromRgb(148, 163, 184));
+                statusDot.Fill = new SolidColorBrush(Color.FromRgb(100, 116, 139));
+                pillBorder.ToolTip = "WaitPlay is OFF (Muted) • Click to turn ON";
+            }
+        }
+
+        private void OpenGameWindow() {
+            if (activeGameWindow == null || !activeGameWindow.IsLoaded) {
+                activeGameWindow = new MainWindow("", 0, "Desktop", 0, IntPtr.Zero);
+                activeGameWindow.Closed += (s, e) => { activeGameWindow = null; };
+                activeGameWindow.Show();
+            } else {
+                if (activeGameWindow.WindowState == WindowState.Minimized) {
+                    activeGameWindow.WindowState = WindowState.Normal;
+                }
+                activeGameWindow.Activate();
+            }
+        }
+
+        private IntPtr HwndHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) {
+            const int WM_HOTKEY = 0x0312;
+            if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID) {
+                Toggle();
+                handled = true;
+            }
+            return IntPtr.Zero;
+        }
+
+        private string GetWidgetPosPath() {
+            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay");
+            if (!System.IO.Directory.Exists(dir)) {
+                try { System.IO.Directory.CreateDirectory(dir); } catch {}
+            }
+            return System.IO.Path.Combine(dir, ".waitplay-widget-pos.json");
+        }
+
+        private void LoadPosition() {
+            try {
+                string path = GetWidgetPosPath();
+                if (System.IO.File.Exists(path)) {
+                    string json = System.IO.File.ReadAllText(path);
+                    var ser = new JavaScriptSerializer();
+                    var dict = ser.Deserialize<Dictionary<string, object>>(json);
+                    if (dict != null && dict.ContainsKey("left") && dict.ContainsKey("top")) {
+                        double l = Convert.ToDouble(dict["left"]);
+                        double t = Convert.ToDouble(dict["top"]);
+                        if (l >= 0 && l < SystemParameters.VirtualScreenWidth - 100 &&
+                            t >= 0 && t < SystemParameters.VirtualScreenHeight - 60) {
+                            Left = l;
+                            Top = t;
+                            return;
+                        }
+                    }
+                }
+            } catch {}
+            Left = SystemParameters.WorkArea.Right - 270;
+            Top = SystemParameters.WorkArea.Bottom - 160;
+        }
+
+        private void SavePosition() {
+            try {
+                var dict = new Dictionary<string, object>();
+                dict["left"] = Left;
+                dict["top"] = Top;
+                var ser = new JavaScriptSerializer();
+                System.IO.File.WriteAllText(GetWidgetPosPath(), ser.Serialize(dict));
+            } catch {}
+        }
+    }
+
     public static class EntryPoint {
         private static Mutex singleInstanceMutex = null;
 
@@ -1319,24 +1766,33 @@ namespace WaitPlayNative {
 
         [STAThread]
         public static void Main(string[] args) {
-            IntPtr initialForeground = ParentWindowTracker.GetForegroundWindow();
-            uint currentPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
-            uint fgPid;
-            ParentWindowTracker.GetWindowThreadProcessId(initialForeground, out fgPid);
-            if (fgPid == currentPid) initialForeground = IntPtr.Zero;
-
+            bool launchWidget = false;
+            bool toggleOnly = false;
+            bool forceGame = false;
             string targetSession = "";
             string terminal = "";
             long promptTime = 0;
             uint parentPid = 0;
             IntPtr parentHwnd = IntPtr.Zero;
 
+            IntPtr initialForeground = ParentWindowTracker.GetForegroundWindow();
+            uint currentPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+            uint fgPid;
+            ParentWindowTracker.GetWindowThreadProcessId(initialForeground, out fgPid);
+            if (fgPid == currentPid) initialForeground = IntPtr.Zero;
+
             if (args != null && args.Length > 0) {
                 foreach (var a in args) {
-                    if (a.StartsWith("--session=")) {
+                    if (a == "--widget" || a == "--flow") {
+                        launchWidget = true;
+                    } else if (a == "--toggle") {
+                        toggleOnly = true;
+                    } else if (a == "--game" || a == "--open") {
+                        forceGame = true;
+                    } else if (a.StartsWith("--session=")) {
                         targetSession = a.Substring("--session=".Length);
                     } else if (a.StartsWith("--terminal=")) {
-                        terminal = a.Substring("--terminal=".Length).Trim('\"', '\'');
+                        terminal = a.Substring("--terminal=".Length).Trim('"', '\'');
                     } else if (a.StartsWith("--promptTime=")) {
                         long.TryParse(a.Substring("--promptTime=".Length), out promptTime);
                     } else if (a.StartsWith("--parentPid=")) {
@@ -1358,6 +1814,17 @@ namespace WaitPlayNative {
                 }
             }
 
+            if (toggleOnly) {
+                bool newState = WaitPlayStateManager.Toggle();
+                Console.WriteLine("WaitPlay enabled: " + newState);
+                return;
+            }
+
+            // If an agent invoked WaitPlay but the companion is turned OFF:
+            if (!string.IsNullOrEmpty(targetSession) && !forceGame && !WaitPlayStateManager.IsEnabled()) {
+                return; // Silently skip popup
+            }
+
             if (parentHwnd == IntPtr.Zero && parentPid > 0) {
                 parentHwnd = ParentWindowTracker.FindTopWindowForPid(parentPid);
             }
@@ -1365,14 +1832,17 @@ namespace WaitPlayNative {
                 parentHwnd = initialForeground;
             }
 
-            if (string.IsNullOrEmpty(targetSession)) {
-                string detected = MainWindow.DetectActiveAgent();
-                targetSession = (detected == "OMP") ? "omp-session"
-                    : (detected == "ChatGPT") ? "codex-session"
-                    : (detected == "OpenCode") ? "opencode-session"
-                    : (detected == "Cline") ? "cline-session"
-                    : "agent-session";
+            if (string.IsNullOrEmpty(targetSession) && !launchWidget && !forceGame) {
+                // By default when run with no arguments, launch the Wispr Flow widget!
+                launchWidget = true;
             }
+
+            if (launchWidget) {
+                var app = new Application();
+                app.Run(new FloatingFlowWidget());
+                return;
+            }
+
             if (DismissalTracker.IsPromptDismissed(targetSession)) {
                 return;
             }

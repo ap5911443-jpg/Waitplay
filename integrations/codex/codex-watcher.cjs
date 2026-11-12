@@ -23,6 +23,24 @@ const BRIDGE_PORT = parseInt(process.env.BRIDGE_PORT || '3150', 10);
 const NATIVE_APP = path.join(__dirname, '..', '..', 'apps', 'native', 'WaitPlay.exe');
 const DISMISS_FILE = path.join(os.tmpdir(), 'waitplay', '.waitplay-dismissed.json');
 
+function isWaitPlayEnabled() {
+  try {
+    const candidates = [
+      path.join(os.tmpdir(), 'waitplay', '.waitplay-enabled.json'),
+      path.resolve(__dirname, '..', '..', '.waitplay-enabled.json'),
+      'C:\\Users\\ASUS\\waitplay\\.waitplay-enabled.json',
+      'C:\\Users\\ASUS\\AppData\\Local\\Temp\\waitplay\\.waitplay-enabled.json',
+    ];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) {
+        const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        if (data && data.enabled === false) return false;
+      }
+    }
+  } catch {}
+  return true;
+}
+
 function isPromptDismissed(sessionId) {
   try {
     if (!sessionId) return false;

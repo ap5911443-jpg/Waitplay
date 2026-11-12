@@ -44,6 +44,22 @@ export default function (pi: PiEmitter) {
 
   const { label: termLabel, sessionKey } = getTerminalInfo();
 
+  function isWaitPlayEnabled(): boolean {
+    try {
+      const candidates = [
+        path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay", ".waitplay-enabled.json"),
+        "C:\\Users\\ASUS\\waitplay\\.waitplay-enabled.json",
+      ];
+      for (const p of candidates) {
+        if (fs.existsSync(p)) {
+          const data = JSON.parse(fs.readFileSync(p, "utf-8"));
+          if (data && data.enabled === false) return false;
+        }
+      }
+    } catch {}
+    return true;
+  }
+
   function isPromptDismissed(sessionId: string): boolean {
     try {
       if (!sessionId) return false;

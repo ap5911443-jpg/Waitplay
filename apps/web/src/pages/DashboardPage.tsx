@@ -82,6 +82,44 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         </div>
 
         <div className="flex items-center space-x-2">
+          {/* Wispr Flow-style ON/OFF Pill Toggle */}
+          <div className="flex items-center space-x-1.5 bg-zinc-900 border border-zinc-800 rounded-full px-2.5 py-1 text-xs shadow-xs mr-2">
+            <button
+              onClick={() => {
+                const next = preferences.companionEnabled !== false ? false : true;
+                onUpdatePreferences({ ...preferences, companionEnabled: next, autoLaunch: next });
+              }}
+              className="flex items-center space-x-1.5 cursor-pointer text-zinc-300 hover:text-white transition-colors"
+              title={preferences.companionEnabled !== false ? "WaitPlay is ON • Click to turn OFF" : "WaitPlay is OFF • Click to turn ON"}
+            >
+              <span className="font-medium text-[11px] text-zinc-300">WaitPlay</span>
+              <span className={`font-bold text-[11px] ${preferences.companionEnabled !== false ? "text-cyan-400" : "text-zinc-500"}`}>
+                {preferences.companionEnabled !== false ? "ON" : "OFF"}
+              </span>
+            </button>
+            <button
+              onClick={stateMachine.openGameManually}
+              className="w-6 h-6 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-300 transition-colors cursor-pointer"
+              title="Open WaitPlay Companion Game"
+            >
+              <Gamepad2 className="w-3.5 h-3.5 text-zinc-300" />
+            </button>
+            <button
+              onClick={() => {
+                const next = preferences.companionEnabled !== false ? false : true;
+                onUpdatePreferences({ ...preferences, companionEnabled: next, autoLaunch: next });
+              }}
+              className="relative w-6 h-6 rounded-full bg-zinc-800/80 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 transition-colors cursor-pointer"
+              title="Toggle Companion Interface State"
+            >
+              <Activity className="w-3 h-3 text-zinc-400" />
+              <span
+                className={`absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full ${
+                  preferences.companionEnabled !== false ? "bg-cyan-400 animate-pulse" : "bg-zinc-600"
+                }`}
+              />
+            </button>
+          </div>
           <button
             onClick={handleToggleTheme}
             className="p-2 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 border border-zinc-800 transition-colors"
