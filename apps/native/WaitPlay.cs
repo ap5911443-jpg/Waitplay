@@ -1396,6 +1396,13 @@ namespace WaitPlayNative {
         }
     }
 
+    public enum DockPosition {
+        Left,
+        Right,
+        Bottom,
+        Free
+    }
+
     public class FloatingFlowWidget : Window {
         [DllImport("user32.dll")]
         private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -1406,14 +1413,19 @@ namespace WaitPlayNative {
         private const uint MOD_ALT = 0x0001;
         private const uint VK_W = 0x57;
 
+        private DockPosition currentDock = DockPosition.Left;
+        private bool isCollapsed = true;
+        private bool isEnabled = true;
+
+        private Border edgeHandle;
+        private Border fullWidget;
         private Border pillBorder;
-        private TextBlock pillTitle;
         private TextBlock pillStatusBadge;
-        private TextBlock pillHotkeyHint;
         private Border actionButton;
         private Border toggleCircleButton;
         private Ellipse statusDot;
-        private bool isEnabled = true;
+        private Ellipse handleStatusDot;
+        private DispatcherTimer collapseTimer;
         private MainWindow activeGameWindow = null;
         private IntPtr myHwnd = IntPtr.Zero;
 
@@ -1423,8 +1435,6 @@ namespace WaitPlayNative {
 
         private void InitializeComponent() {
             Title = "WaitPlay Flow";
-            Width = 260;
-            Height = 94;
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
             Background = Brushes.Transparent;
@@ -1432,7 +1442,14 @@ namespace WaitPlayNative {
             ShowInTaskbar = false;
             ResizeMode = ResizeMode.NoResize;
 
-            LoadPosition();
+            collapseTimer = new DispatcherTimer();
+            collapseTimer.Interval = TimeSpan.FromMilliseconds(1200);
+            collapseTimer.Tick += (s, e) => {
+                collapseTimer.Stop();
+                if (!IsMouseOver && currentDock != DockPosition.Free) {
+                    SetCollapsed(true);
+                }
+            };
 
             SourceInitialized += (s, e) => {
                 try {
@@ -1453,21 +1470,67 @@ namespace WaitPlayNative {
                 } catch {}
             };
 
-            MouseLeftButtonDown += (s, e) => {
+            var rootGrid = new Grid();
+
+            // 1. Collapsed Edge Handle (shown when docked on screen edge)
+            edgeHandle = new Border {
+                Width = 22,
+                Height = 64,
+                Background = new SolidColorBrush(Color.FromRgb(18, 18, 25)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(48, 48, 64)),
+                BorderThickness = new Thickness(1.2),
+                Cursor = Cursors.Hand,
+                ToolTip = "WaitPlay (Hover to expand • Click to toggle)",
+                Visibility = Visibility.Visible
+            };
+
+            var handleStack = new StackPanel {
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            handleStatusDot = new Ellipse {
+                Width = 7,
+                Height = 7,
+                Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
+                Margin = new Thickness(0, 0, 0, 4)
+            };
+            var grip = new TextBlock {
+                Text = "\u22EE", // ⋮ vertical ellipsis / grip
+                FontSize = 13,
+                Foreground = new SolidColorBrush(Color.FromRgb(140, 140, 165)),
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            handleStack.Children.Add(handleStatusDot);
+            handleStack.Children.Add(grip);
+            edgeHandle.Child = handleStack;
+
+            edgeHandle.MouseEnter += (s, e) => {
+                collapseTimer.Stop();
+                SetCollapsed(false);
+            };
+            edgeHandle.MouseLeftButtonDown += (s, e) => {
                 if (e.ButtonState == MouseButtonState.Pressed) {
+                    SetCollapsed(false);
                     DragMove();
+                    CheckDockOnDrop();
                     SavePosition();
                 }
             };
 
-            var rootGrid = new Grid();
-            rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            // 2. Full Expanded Widget (Wispr Flow Layout)
+            fullWidget = new Border {
+                Background = Brushes.Transparent,
+                Visibility = Visibility.Collapsed
+            };
+
+            var widgetGrid = new Grid();
+            widgetGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            widgetGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             // Row 0: Top Row (Capsule Pill + Action Button)
             var topPanel = new StackPanel {
                 Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Right
+                HorizontalAlignment = HorizontalAlignment.Left
             };
 
             pillBorder = new Border {
@@ -1486,7 +1549,7 @@ namespace WaitPlayNative {
                 VerticalAlignment = VerticalAlignment.Center
             };
 
-            pillTitle = new TextBlock {
+            var pillTitle = new TextBlock {
                 Text = "WaitPlay",
                 FontSize = 13,
                 FontWeight = FontWeights.Medium,
@@ -1504,7 +1567,7 @@ namespace WaitPlayNative {
                 Margin = new Thickness(0, 0, 8, 0)
             };
 
-            pillHotkeyHint = new TextBlock {
+            var pillHotkeyHint = new TextBlock {
                 Text = "Alt+W",
                 FontSize = 10,
                 Foreground = new SolidColorBrush(Color.FromRgb(100, 116, 139)),
@@ -1566,7 +1629,7 @@ namespace WaitPlayNative {
             topPanel.Children.Add(pillBorder);
             topPanel.Children.Add(actionButton);
             Grid.SetRow(topPanel, 0);
-            rootGrid.Children.Add(topPanel);
+            widgetGrid.Children.Add(topPanel);
 
             // Row 1: Bottom circle toggle (aligned under action button, Wispr Flow style)
             var bottomPanel = new StackPanel {
@@ -1622,7 +1685,22 @@ namespace WaitPlayNative {
 
             bottomPanel.Children.Add(toggleCircleButton);
             Grid.SetRow(bottomPanel, 1);
-            rootGrid.Children.Add(bottomPanel);
+            widgetGrid.Children.Add(bottomPanel);
+
+            fullWidget.Child = widgetGrid;
+
+            rootGrid.Children.Add(edgeHandle);
+            rootGrid.Children.Add(fullWidget);
+            Content = rootGrid;
+
+            MouseEnter += (s, e) => {
+                collapseTimer.Stop();
+            };
+            MouseLeave += (s, e) => {
+                if (currentDock != DockPosition.Free) {
+                    collapseTimer.Start();
+                }
+            };
 
             // Context Menu
             var menu = new ContextMenu();
@@ -1630,24 +1708,122 @@ namespace WaitPlayNative {
             toggleItem.Click += (s, e) => Toggle();
             var gameItem = new MenuItem { Header = "Open Companion Game" };
             gameItem.Click += (s, e) => OpenGameWindow();
-            var resetItem = new MenuItem { Header = "Reset Position to Default" };
-            resetItem.Click += (s, e) => {
-                Left = SystemParameters.WorkArea.Right - 270;
-                Top = SystemParameters.WorkArea.Bottom - 160;
+
+            var dockLeftItem = new MenuItem { Header = "Dock to Left Screen Edge" };
+            dockLeftItem.Click += (s, e) => { SetDock(DockPosition.Left, Top); SavePosition(); };
+            var dockRightItem = new MenuItem { Header = "Dock to Right Screen Edge" };
+            dockRightItem.Click += (s, e) => { SetDock(DockPosition.Right, Top); SavePosition(); };
+            var dockBottomItem = new MenuItem { Header = "Dock to Bottom Screen Edge" };
+            dockBottomItem.Click += (s, e) => { SetDock(DockPosition.Bottom); SavePosition(); };
+            var dockFreeItem = new MenuItem { Header = "Free Floating" };
+            dockFreeItem.Click += (s, e) => {
+                currentDock = DockPosition.Free;
+                SetCollapsed(false);
                 SavePosition();
             };
-            var exitItem = new MenuItem { Header = "Exit Widget" };
+
+            var exitItem = new MenuItem { Header = "Exit Desktop Widget" };
             exitItem.Click += (s, e) => Close();
+
             menu.Items.Add(toggleItem);
             menu.Items.Add(gameItem);
             menu.Items.Add(new Separator());
-            menu.Items.Add(resetItem);
+            menu.Items.Add(dockLeftItem);
+            menu.Items.Add(dockRightItem);
+            menu.Items.Add(dockBottomItem);
+            menu.Items.Add(dockFreeItem);
+            menu.Items.Add(new Separator());
             menu.Items.Add(exitItem);
             ContextMenu = menu;
 
-            Content = rootGrid;
             isEnabled = WaitPlayStateManager.IsEnabled();
             UpdateUI();
+
+            LoadPosition();
+        }
+
+        public void SetDock(DockPosition dock, double topPos = -1) {
+            currentDock = dock;
+            double screenW = SystemParameters.WorkArea.Width;
+            double screenH = SystemParameters.WorkArea.Height;
+
+            if (topPos > 0 && topPos < screenH - 100) {
+                Top = topPos;
+            } else if (Top <= 0 || Top > screenH - 100) {
+                Top = 460;
+            }
+
+            switch (dock) {
+                case DockPosition.Left:
+                    edgeHandle.CornerRadius = new CornerRadius(0, 11, 11, 0);
+                    Left = 0;
+                    break;
+                case DockPosition.Right:
+                    edgeHandle.CornerRadius = new CornerRadius(11, 0, 0, 11);
+                    Left = screenW - 22;
+                    break;
+                case DockPosition.Bottom:
+                    edgeHandle.CornerRadius = new CornerRadius(11, 11, 0, 0);
+                    Left = (screenW - 260) / 2;
+                    Top = screenH - 22;
+                    break;
+                case DockPosition.Free:
+                    break;
+            }
+
+            SetCollapsed(currentDock != DockPosition.Free);
+        }
+
+        private void SetCollapsed(bool collapsed) {
+            isCollapsed = collapsed;
+            double screenW = SystemParameters.WorkArea.Width;
+            double screenH = SystemParameters.WorkArea.Height;
+
+            if (collapsed && currentDock != DockPosition.Free) {
+                fullWidget.Visibility = Visibility.Collapsed;
+                edgeHandle.Visibility = Visibility.Visible;
+                Width = 22;
+                Height = 64;
+                if (currentDock == DockPosition.Right) {
+                    Left = screenW - 22;
+                } else if (currentDock == DockPosition.Left) {
+                    Left = 0;
+                } else if (currentDock == DockPosition.Bottom) {
+                    Left = (screenW - 70) / 2;
+                    Top = screenH - 22;
+                    Width = 70;
+                    Height = 22;
+                }
+            } else {
+                edgeHandle.Visibility = Visibility.Collapsed;
+                fullWidget.Visibility = Visibility.Visible;
+                Width = 260;
+                Height = 94;
+                if (currentDock == DockPosition.Right) {
+                    Left = screenW - 265;
+                } else if (currentDock == DockPosition.Left) {
+                    Left = 6;
+                } else if (currentDock == DockPosition.Bottom) {
+                    Left = (screenW - 260) / 2;
+                    Top = screenH - 96;
+                }
+            }
+        }
+
+        private void CheckDockOnDrop() {
+            double screenW = SystemParameters.WorkArea.Width;
+            double screenH = SystemParameters.WorkArea.Height;
+
+            if (Left < 80) {
+                SetDock(DockPosition.Left, Top);
+            } else if (Left > screenW - 320) {
+                SetDock(DockPosition.Right, Top);
+            } else if (Top > screenH - 140) {
+                SetDock(DockPosition.Bottom);
+            } else {
+                currentDock = DockPosition.Free;
+                SetCollapsed(false);
+            }
         }
 
         private void Toggle() {
@@ -1664,11 +1840,13 @@ namespace WaitPlayNative {
                 pillStatusBadge.Text = "ON";
                 pillStatusBadge.Foreground = new SolidColorBrush(Color.FromRgb(0, 240, 255));
                 statusDot.Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255));
+                handleStatusDot.Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255));
                 pillBorder.ToolTip = "WaitPlay is ON (Active) • Click to turn OFF";
             } else {
                 pillStatusBadge.Text = "OFF";
                 pillStatusBadge.Foreground = new SolidColorBrush(Color.FromRgb(148, 163, 184));
                 statusDot.Fill = new SolidColorBrush(Color.FromRgb(100, 116, 139));
+                handleStatusDot.Fill = new SolidColorBrush(Color.FromRgb(100, 116, 139));
                 pillBorder.ToolTip = "WaitPlay is OFF (Muted) • Click to turn ON";
             }
         }
@@ -1710,25 +1888,37 @@ namespace WaitPlayNative {
                     string json = System.IO.File.ReadAllText(path);
                     var ser = new JavaScriptSerializer();
                     var dict = ser.Deserialize<Dictionary<string, object>>(json);
-                    if (dict != null && dict.ContainsKey("left") && dict.ContainsKey("top")) {
-                        double l = Convert.ToDouble(dict["left"]);
-                        double t = Convert.ToDouble(dict["top"]);
-                        if (l >= 0 && l < SystemParameters.VirtualScreenWidth - 100 &&
-                            t >= 0 && t < SystemParameters.VirtualScreenHeight - 60) {
+                    if (dict != null) {
+                        string dockStr = dict.ContainsKey("dock") ? dict["dock"].ToString() : "Left";
+                        double l = dict.ContainsKey("left") ? Convert.ToDouble(dict["left"]) : 0;
+                        double t = dict.ContainsKey("top") ? Convert.ToDouble(dict["top"]) : 460;
+
+                        if (dockStr == "Right") {
+                            SetDock(DockPosition.Right, t);
+                            return;
+                        } else if (dockStr == "Bottom") {
+                            SetDock(DockPosition.Bottom);
+                            return;
+                        } else if (dockStr == "Free") {
+                            currentDock = DockPosition.Free;
                             Left = l;
                             Top = t;
+                            SetCollapsed(false);
+                            return;
+                        } else {
+                            SetDock(DockPosition.Left, t);
                             return;
                         }
                     }
                 }
             } catch {}
-            Left = SystemParameters.WorkArea.Right - 270;
-            Top = SystemParameters.WorkArea.Bottom - 160;
+            SetDock(DockPosition.Left, 460);
         }
 
         private void SavePosition() {
             try {
                 var dict = new Dictionary<string, object>();
+                dict["dock"] = currentDock.ToString();
                 dict["left"] = Left;
                 dict["top"] = Top;
                 var ser = new JavaScriptSerializer();
