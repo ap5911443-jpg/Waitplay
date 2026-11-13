@@ -1472,8 +1472,8 @@ namespace WaitPlayNative {
         private const uint MOD_ALT = 0x0001;
         private const uint VK_W = 0x57;
 
-        private DockPosition currentDock = DockPosition.Left;
-        private bool isCollapsed = true;
+        private DockPosition currentDock = DockPosition.Free;
+        private bool isCollapsed = false;
         private bool isEnabled = true;
 
         private Border edgeHandle;
@@ -1484,6 +1484,7 @@ namespace WaitPlayNative {
         private TextBlock pillBadge;
         private Border actionButton;
         private Border toggleButton;
+        private StackPanel buttonStack;
         private System.Windows.Shapes.Path powerIconPath;
         private Ellipse statusDot;
         private Ellipse handleStatusDot;
@@ -1528,7 +1529,7 @@ namespace WaitPlayNative {
                     };
                     anim.Completed += (s2, e2) => {
                         if (!isPillHovered && pillBorder != null) {
-                            pillBorder.Visibility = Visibility.Collapsed;
+                            pillBorder.Visibility = Visibility.Hidden;
                         }
                     };
                     pillBorder.BeginAnimation(UIElement.OpacityProperty, anim);
@@ -1652,7 +1653,7 @@ namespace WaitPlayNative {
                 Padding = new Thickness(10, 0, 10, 0),
                 Cursor = Cursors.Hand,
                 Opacity = 0.0,
-                Visibility = Visibility.Collapsed,
+                Visibility = Visibility.Hidden,
                 ToolTip = "WaitPlay Status • Click to toggle ON/OFF"
             };
 
@@ -1797,6 +1798,13 @@ namespace WaitPlayNative {
                 Toggle();
                 e.Handled = true;
             };
+            buttonStack = new StackPanel {
+                Orientation = Orientation.Vertical,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            buttonStack.Children.Add(actionButton);
+            buttonStack.Children.Add(toggleButton);
 
             UpdateFlowGridLayout();
 
@@ -1921,15 +1929,7 @@ namespace WaitPlayNative {
 
         private void UpdateFlowGridLayout() {
             flowGrid.Children.Clear();
-
-            var buttonStack = new StackPanel {
-                Orientation = Orientation.Vertical,
-                VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Center
-            };
-            buttonStack.Children.Add(actionButton);
-            buttonStack.Children.Add(toggleButton);
-
+            if (buttonStack == null) return;
             if (currentDock == DockPosition.Left) {
                 // When docked on Left edge: Buttons on Left (Col 0), Text Pill extends to Right (Col 1)
                 flowGrid.HorizontalAlignment = HorizontalAlignment.Left;
@@ -2184,6 +2184,9 @@ namespace WaitPlayNative {
         }
 
         private void LoadPosition() {
+            currentDock = DockPosition.Free;
+            Left = 250;
+            Top = 250;
             try {
                 string path = GetWidgetPosPath();
                 if (System.IO.File.Exists(path)) {
@@ -2191,31 +2194,18 @@ namespace WaitPlayNative {
                     var ser = new JavaScriptSerializer();
                     var dict = ser.Deserialize<Dictionary<string, object>>(json);
                     if (dict != null) {
-                        string dockStr = dict.ContainsKey("dock") ? dict["dock"].ToString() : "Left";
-                        double l = dict.ContainsKey("left") ? Convert.ToDouble(dict["left"]) : 0;
-                        double t = dict.ContainsKey("top") ? Convert.ToDouble(dict["top"]) : 460;
-
-                        if (dockStr == "Right") {
-                            SetDock(DockPosition.Right, t);
-                            return;
-                        } else if (dockStr == "Bottom") {
-                            SetDock(DockPosition.Bottom);
-                            return;
-                        } else if (dockStr == "Free") {
-                            currentDock = DockPosition.Free;
+                        double l = dict.ContainsKey("left") ? Convert.ToDouble(dict["left"]) : 250;
+                        double t = dict.ContainsKey("top") ? Convert.ToDouble(dict["top"]) : 250;
+                        if (l > 50 && t > 50 && l < SystemParameters.WorkArea.Width - 100 && t < SystemParameters.WorkArea.Height - 100) {
                             Left = l;
                             Top = t;
-                            UpdateFlowGridLayout();
-                            SetCollapsed(false);
-                            return;
-                        } else {
-                            SetDock(DockPosition.Left, t);
-                            return;
                         }
                     }
                 }
             } catch {}
-            SetDock(DockPosition.Left, 460);
+            UpdateFlowGridLayout();
+            SetCollapsed(false);
+            SavePosition();
         }
 
         private void SavePosition() {
