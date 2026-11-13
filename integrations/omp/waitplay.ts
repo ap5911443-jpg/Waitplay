@@ -74,12 +74,25 @@ export default function (pi: PiEmitter) {
         path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay", ".waitplay-enabled.json"),
         "C:\\Users\\ASUS\\waitplay\\.waitplay-enabled.json",
       ];
+      let latestTime = -1;
+      let latestEnabled = true;
+      let found = false;
       for (const p of candidates) {
         if (fs.existsSync(p)) {
-          const data = JSON.parse(fs.readFileSync(p, "utf-8"));
-          if (data && data.enabled === false) return false;
+          try {
+            const data = JSON.parse(fs.readFileSync(p, "utf-8"));
+            if (data && typeof data.enabled === "boolean") {
+              const time = Number(data.updatedAt) || 0;
+              if (time > latestTime) {
+                latestTime = time;
+                latestEnabled = data.enabled;
+                found = true;
+              }
+            }
+          } catch {}
         }
       }
+      if (found) return latestEnabled;
     } catch {}
     return true;
   }
@@ -230,6 +243,7 @@ export default function (pi: PiEmitter) {
       emit("waiting_for_input", { prompt: "OMP asking for clarification/choice", terminal: termLabel });
     } else {
       emit("task_running", { tool: toolName, model: "Gemini 3.8 Flash", terminal: termLabel });
+      if (!hasPoppedForPrompt) popApp();
     }
   });
 

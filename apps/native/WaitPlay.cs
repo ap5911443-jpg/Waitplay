@@ -1313,6 +1313,9 @@ namespace WaitPlayNative {
 
         public static bool IsEnabled() {
             try {
+                long latestTime = -1;
+                bool latestVal = true;
+                bool found = false;
                 string[] paths = new string[] { GetTempPath(), GetRepoPath() };
                 foreach (var p in paths) {
                     if (System.IO.File.Exists(p)) {
@@ -1320,10 +1323,16 @@ namespace WaitPlayNative {
                         var ser = new JavaScriptSerializer();
                         var dict = ser.Deserialize<Dictionary<string, object>>(json);
                         if (dict != null && dict.ContainsKey("enabled")) {
-                            return Convert.ToBoolean(dict["enabled"]);
+                            long time = dict.ContainsKey("updatedAt") ? Convert.ToInt64(dict["updatedAt"]) : 0;
+                            if (time > latestTime) {
+                                latestTime = time;
+                                latestVal = Convert.ToBoolean(dict["enabled"]);
+                                found = true;
+                            }
                         }
                     }
                 }
+                if (found) return latestVal;
             } catch {}
             return true;
         }
@@ -1497,6 +1506,7 @@ namespace WaitPlayNative {
         private bool isDragActive = false;
         private Point mouseDownPoint;
         private Point windowStartPoint;
+        private DependencyObject clickedDownSource = null;
         private MainWindow activeGameWindow = null;
         private IntPtr myHwnd = IntPtr.Zero;
 
@@ -1734,10 +1744,6 @@ namespace WaitPlayNative {
                 actionButton.BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72));
                 HideTextPill();
             };
-            actionButton.PreviewMouseLeftButtonDown += (s, e) => {
-                OpenGameWindow();
-                e.Handled = true;
-            };
 
             // Item C: Bottom Circular Button (Power / Status toggle)
             toggleButton = new Border {
@@ -1794,10 +1800,6 @@ namespace WaitPlayNative {
                 toggleButton.BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72));
                 HideTextPill();
             };
-            toggleButton.PreviewMouseLeftButtonDown += (s, e) => {
-                Toggle();
-                e.Handled = true;
-            };
             buttonStack = new StackPanel {
                 Orientation = Orientation.Vertical,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -1824,16 +1826,9 @@ namespace WaitPlayNative {
 
             // Drag vs Click Detection on Root Window
             PreviewMouseLeftButtonDown += (s, e) => {
-                DependencyObject dep = e.OriginalSource as DependencyObject;
-                while (dep != null && dep != this) {
-                    if (dep == actionButton || dep == toggleButton) {
-                        return;
-                    }
-                    dep = VisualTreeHelper.GetParent(dep);
-                }
-
                 isMouseDown = true;
                 isDragActive = false;
+                clickedDownSource = e.OriginalSource as DependencyObject;
                 POINT pt;
                 GetCursorPos(out pt);
                 mouseDownPoint = new Point(pt.X, pt.Y);
@@ -1879,6 +1874,32 @@ namespace WaitPlayNative {
                     isMouseDown = false;
                     if (isDragActive) {
                         StopDragging();
+                        e.Handled = true;
+                    } else {
+                        // Genuine click without drag
+                        DependencyObject dep = clickedDownSource;
+                        bool handledClick = false;
+                        while (dep != null && dep != this) {
+                            if (dep == actionButton) {
+                                OpenGameWindow();
+                                handledClick = true;
+                                break;
+                            }
+                            if (dep == toggleButton) {
+                                Toggle();
+                                handledClick = true;
+                                break;
+                            }
+                            if (dep == pillBorder) {
+                                Toggle();
+                                handledClick = true;
+                                break;
+                            }
+                            dep = VisualTreeHelper.GetParent(dep);
+                        }
+                        if (!handledClick) {
+                            Toggle();
+                        }
                         e.Handled = true;
                     }
                 }
@@ -1966,23 +1987,18 @@ namespace WaitPlayNative {
                 dockOverlay.Hide();
             }
 
-            POINT pt;
-            GetCursorPos(out pt);
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
 
-            if (pt.X < 40) {
-                SetDock(DockPosition.Left, Top);
-            } else if (pt.X > screenW - 40) {
-                SetDock(DockPosition.Right, Top);
-            } else if (pt.Y > screenH - 40) {
-                SetDock(DockPosition.Bottom);
-            } else {
-                currentDock = DockPosition.Free;
-                UpdateFlowGridLayout();
-                SetCollapsed(false);
-            }
+            // Keep within visible work area bounds
+            if (Left < 0) Left = 0;
+            if (Left > screenW - Width) Left = screenW - Width;
+            if (Top < 0) Top = 0;
+            if (Top > screenH - Height) Top = screenH - Height;
 
+            currentDock = DockPosition.Free;
+            UpdateFlowGridLayout();
+            SetCollapsed(false);
             SavePosition();
         }
 
