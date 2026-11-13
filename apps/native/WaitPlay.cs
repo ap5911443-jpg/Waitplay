@@ -1856,11 +1856,11 @@ namespace WaitPlayNative {
                         double screenW = SystemParameters.WorkArea.Width;
                         double screenH = SystemParameters.WorkArea.Height;
 
-                        if (pt.X < 40) {
+                        if (pt.X < 90) {
                             if (dockOverlay != null) dockOverlay.Highlight(DockPosition.Left);
-                        } else if (pt.X > screenW - 40) {
+                        } else if (pt.X > screenW - 90) {
                             if (dockOverlay != null) dockOverlay.Highlight(DockPosition.Right);
-                        } else if (pt.Y > screenH - 40) {
+                        } else if (pt.Y > screenH - 90) {
                             if (dockOverlay != null) dockOverlay.Highlight(DockPosition.Bottom);
                         } else {
                             if (dockOverlay != null) dockOverlay.Highlight(DockPosition.Free);
@@ -1912,20 +1912,21 @@ namespace WaitPlayNative {
             var gameItem = new MenuItem { Header = "Open Companion Game" };
             gameItem.Click += (s, e) => OpenGameWindow();
 
-            var dockMenu = new MenuItem { Header = "Docking Side" };
-            var dockLeftItem = new MenuItem { Header = "Dock Left Edge" };
-            dockLeftItem.Click += (s, e) => { SetDock(DockPosition.Left, Top); SavePosition(); };
-            var dockRightItem = new MenuItem { Header = "Dock Right Edge" };
-            dockRightItem.Click += (s, e) => { SetDock(DockPosition.Right, Top); SavePosition(); };
-            var dockBottomItem = new MenuItem { Header = "Dock Bottom" };
-            dockBottomItem.Click += (s, e) => { SetDock(DockPosition.Bottom); SavePosition(); };
-            var dockFreeItem = new MenuItem { Header = "Free Floating" };
+            var dockMenu = new MenuItem { Header = "📍 Place Button..." };
+            var dockLeftItem = new MenuItem { Header = "👈 1. Left Edge" };
+            dockLeftItem.Click += (s, e) => SetDock(DockPosition.Left);
+            var dockRightItem = new MenuItem { Header = "👉 2. Right Edge" };
+            dockRightItem.Click += (s, e) => SetDock(DockPosition.Right);
+            var dockBottomItem = new MenuItem { Header = "👇 3. Bottom Edge" };
+            dockBottomItem.Click += (s, e) => SetDock(DockPosition.Bottom);
+            var dockFreeItem = new MenuItem { Header = "✨ Free Floating" };
             dockFreeItem.Click += (s, e) => {
                 currentDock = DockPosition.Free;
+                Left = 250; Top = 250;
+                UpdateFlowGridLayout();
                 SetCollapsed(false);
                 SavePosition();
             };
-
             dockMenu.Items.Add(dockLeftItem);
             dockMenu.Items.Add(dockRightItem);
             dockMenu.Items.Add(dockBottomItem);
@@ -1987,93 +1988,77 @@ namespace WaitPlayNative {
                 dockOverlay.Hide();
             }
 
+            POINT pt;
+            GetCursorPos(out pt);
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
 
-            // Keep within visible work area bounds
-            if (Left < 0) Left = 0;
-            if (Left > screenW - Width) Left = screenW - Width;
-            if (Top < 0) Top = 0;
-            if (Top > screenH - Height) Top = screenH - Height;
-
-            currentDock = DockPosition.Free;
-            UpdateFlowGridLayout();
-            SetCollapsed(false);
-            SavePosition();
+            if (pt.X < 90) {
+                SetDock(DockPosition.Left, pt.Y - 42);
+            } else if (pt.X > screenW - 90) {
+                SetDock(DockPosition.Right, pt.Y - 42);
+            } else if (pt.Y > screenH - 90) {
+                SetDock(DockPosition.Bottom, pt.X - 82);
+            } else {
+                currentDock = DockPosition.Free;
+                Left = windowStartPoint.X + (pt.X - mouseDownPoint.X);
+                Top = windowStartPoint.Y + (pt.Y - mouseDownPoint.Y);
+                if (Left < 0) Left = 0;
+                if (Left > screenW - Width) Left = screenW - Width;
+                if (Top < 0) Top = 0;
+                if (Top > screenH - Height) Top = screenH - Height;
+                UpdateFlowGridLayout();
+                SetCollapsed(false);
+                SavePosition();
+            }
         }
 
-        public void SetDock(DockPosition dock, double topPos = -1) {
+        public void SetDock(DockPosition dock, double pos = -1) {
             currentDock = dock;
-            double screenW = SystemParameters.WorkArea.Width;
-            double screenH = SystemParameters.WorkArea.Height;
-
-            if (topPos > 0 && topPos < screenH - 100) {
-                Top = topPos;
-            } else if (Top <= 0 || Top > screenH - 100) {
-                Top = 460;
-            }
-
-            switch (dock) {
-                case DockPosition.Left:
-                    edgeHandle.CornerRadius = new CornerRadius(0, 11, 11, 0);
-                    Left = 0;
-                    break;
-                case DockPosition.Right:
-                    edgeHandle.CornerRadius = new CornerRadius(11, 0, 0, 11);
-                    Left = screenW - 20;
-                    break;
-                case DockPosition.Bottom:
-                    edgeHandle.CornerRadius = new CornerRadius(11, 11, 0, 0);
-                    Left = (screenW - 170) / 2;
-                    Top = screenH - 20;
-                    break;
-                case DockPosition.Free:
-                    break;
-            }
-
-            UpdateFlowGridLayout();
-            SetCollapsed(currentDock != DockPosition.Free);
-        }
-
-        private void SetCollapsed(bool collapsed) {
-            isCollapsed = collapsed;
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
 
             double expW = 165;
             double expH = 84;
 
-            if (collapsed && currentDock != DockPosition.Free) {
-                fullWidget.Visibility = Visibility.Collapsed;
-                edgeHandle.Visibility = Visibility.Visible;
-                Width = 20;
-                Height = 62;
-                if (currentDock == DockPosition.Right) {
-                    Left = screenW - 20;
-                } else if (currentDock == DockPosition.Left) {
-                    Left = 0;
-                } else if (currentDock == DockPosition.Bottom) {
-                    Left = (screenW - 60) / 2;
-                    Top = screenH - 20;
-                    Width = 60;
-                    Height = 20;
-                }
-            } else {
-                edgeHandle.Visibility = Visibility.Collapsed;
-                fullWidget.Visibility = Visibility.Visible;
-                Width = expW;
-                Height = expH;
-                if (currentDock == DockPosition.Right) {
-                    Left = screenW - expW - 4;
-                } else if (currentDock == DockPosition.Left) {
-                    Left = 4;
-                } else if (currentDock == DockPosition.Bottom) {
-                    Left = (screenW - expW) / 2;
-                    Top = screenH - expH - 4;
-                }
+            Width = expW;
+            Height = expH;
 
-                collapseTimer.Stop();
+            switch (dock) {
+                case DockPosition.Left:
+                    Left = 4;
+                    if (pos > 10 && pos < screenH - expH - 10) Top = pos;
+                    else if (Top <= 0 || Top > screenH - expH - 10) Top = (screenH - expH) / 2;
+                    break;
+                case DockPosition.Right:
+                    Left = screenW - expW - 4;
+                    if (pos > 10 && pos < screenH - expH - 10) Top = pos;
+                    else if (Top <= 0 || Top > screenH - expH - 10) Top = (screenH - expH) / 2;
+                    break;
+                case DockPosition.Bottom:
+                    Top = screenH - expH - 4;
+                    if (pos > 10 && pos < screenW - expW - 10) Left = pos;
+                    else Left = (screenW - expW) / 2;
+                    break;
+                case DockPosition.Free:
+                    break;
             }
+
+            UpdateFlowGridLayout();
+            SetCollapsed(false);
+            SavePosition();
+        }
+
+        private void SetCollapsed(bool collapsed) {
+            isCollapsed = false;
+            double expW = 165;
+            double expH = 84;
+
+            edgeHandle.Visibility = Visibility.Collapsed;
+            fullWidget.Visibility = Visibility.Visible;
+            Width = expW;
+            Height = expH;
+            collapseTimer.Stop();
         }
 
         private void Toggle() {
@@ -2200,25 +2185,45 @@ namespace WaitPlayNative {
         }
 
         private void LoadPosition() {
-            currentDock = DockPosition.Free;
-            Left = 250;
-            Top = 250;
             try {
-                string path = GetWidgetPosPath();
-                if (System.IO.File.Exists(path)) {
-                    string json = System.IO.File.ReadAllText(path);
-                    var ser = new JavaScriptSerializer();
-                    var dict = ser.Deserialize<Dictionary<string, object>>(json);
-                    if (dict != null) {
-                        double l = dict.ContainsKey("left") ? Convert.ToDouble(dict["left"]) : 250;
-                        double t = dict.ContainsKey("top") ? Convert.ToDouble(dict["top"]) : 250;
-                        if (l > 50 && t > 50 && l < SystemParameters.WorkArea.Width - 100 && t < SystemParameters.WorkArea.Height - 100) {
-                            Left = l;
-                            Top = t;
+                string[] paths = new string[] {
+                    GetWidgetPosPath(),
+                    @"C:\Users\ASUS\waitplay\.waitplay-widget-pos.json"
+                };
+                foreach (var p in paths) {
+                    if (System.IO.File.Exists(p)) {
+                        string json = System.IO.File.ReadAllText(p);
+                        var ser = new JavaScriptSerializer();
+                        var dict = ser.Deserialize<Dictionary<string, object>>(json);
+                        if (dict != null) {
+                            string dockStr = dict.ContainsKey("dock") ? dict["dock"].ToString() : "Free";
+                            double l = dict.ContainsKey("left") ? Convert.ToDouble(dict["left"]) : 250;
+                            double t = dict.ContainsKey("top") ? Convert.ToDouble(dict["top"]) : 250;
+
+                            if (dockStr == "Left") {
+                                SetDock(DockPosition.Left, t);
+                                return;
+                            } else if (dockStr == "Right") {
+                                SetDock(DockPosition.Right, t);
+                                return;
+                            } else if (dockStr == "Bottom") {
+                                SetDock(DockPosition.Bottom, l);
+                                return;
+                            } else {
+                                currentDock = DockPosition.Free;
+                                Left = l;
+                                Top = t;
+                                UpdateFlowGridLayout();
+                                SetCollapsed(false);
+                                return;
+                            }
                         }
                     }
                 }
             } catch {}
+            currentDock = DockPosition.Free;
+            Left = 250;
+            Top = 250;
             UpdateFlowGridLayout();
             SetCollapsed(false);
             SavePosition();
@@ -2312,6 +2317,23 @@ namespace WaitPlayNative {
                         targetSession = "opencode-session";
                     } else if (a.Contains("cline")) {
                         targetSession = "cline-session";
+                    } else if (a.StartsWith("--dock=")) {
+                        string d = a.Substring("--dock=".Length).ToLower();
+                        try {
+                            string p = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", ".waitplay-widget-pos.json");
+                            var dict = new Dictionary<string, object>();
+                            if (d == "left") dict["dock"] = "Left";
+                            else if (d == "right") dict["dock"] = "Right";
+                            else if (d == "bottom") dict["dock"] = "Bottom";
+                            else dict["dock"] = "Free";
+                            dict["left"] = 250;
+                            dict["top"] = 250;
+                            var ser = new JavaScriptSerializer();
+                            string json = ser.Serialize(dict);
+                            System.IO.File.WriteAllText(p, json);
+                            try { System.IO.File.WriteAllText(@"C:\Users\ASUS\waitplay\.waitplay-widget-pos.json", json); } catch {}
+                        } catch {}
+                        return;
                     }
                 }
             }
