@@ -1482,11 +1482,14 @@ namespace WaitPlayNative {
         private Border pillBorder;
         private TextBlock pillTitle;
         private TextBlock pillBadge;
+        private Border actionButton;
         private Border toggleButton;
         private System.Windows.Shapes.Path powerIconPath;
         private Ellipse statusDot;
         private Ellipse handleStatusDot;
         private DispatcherTimer collapseTimer;
+        private DispatcherTimer textFadeTimer;
+        private bool isPillHovered = false;
         private DockOverlayWindow dockOverlay = null;
 
         private bool isMouseDown = false;
@@ -1499,6 +1502,41 @@ namespace WaitPlayNative {
         public FloatingFlowWidget() {
             InitializeComponent();
         }
+        private void ShowTextPill() {
+            isPillHovered = true;
+            if (textFadeTimer != null) textFadeTimer.Stop();
+            if (pillBorder != null) {
+                pillBorder.Visibility = Visibility.Visible;
+                var anim = new System.Windows.Media.Animation.DoubleAnimation {
+                    To = 1.0,
+                    Duration = TimeSpan.FromMilliseconds(160)
+                };
+                pillBorder.BeginAnimation(UIElement.OpacityProperty, anim);
+            }
+        }
+
+        private void HideTextPill() {
+            isPillHovered = false;
+            if (textFadeTimer != null) textFadeTimer.Stop();
+            textFadeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+            textFadeTimer.Tick += (s, e) => {
+                textFadeTimer.Stop();
+                if (!isPillHovered && !isDragActive && pillBorder != null) {
+                    var anim = new System.Windows.Media.Animation.DoubleAnimation {
+                        To = 0.0,
+                        Duration = TimeSpan.FromMilliseconds(200)
+                    };
+                    anim.Completed += (s2, e2) => {
+                        if (!isPillHovered && pillBorder != null) {
+                            pillBorder.Visibility = Visibility.Collapsed;
+                        }
+                    };
+                    pillBorder.BeginAnimation(UIElement.OpacityProperty, anim);
+                }
+            };
+            textFadeTimer.Start();
+        }
+
 
         private void InitializeComponent() {
             Title = "WaitPlay Flow";
@@ -1594,22 +1632,28 @@ namespace WaitPlayNative {
             };
 
             flowGrid = new Grid {
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Top
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center
             };
             flowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            flowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             flowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            flowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            // Item A: Left Pill (WaitPlay Alt+W / ON) - Short & Sweet
+
+            flowGrid.MouseEnter += (s, e) => ShowTextPill();
+            flowGrid.MouseLeave += (s, e) => HideTextPill();
+
+            // Item A: Text Pill (Hidden by default, smoothly fades in on hover like Wispr Flow)
             pillBorder = new Border {
                 Background = new SolidColorBrush(Color.FromRgb(17, 17, 22)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(38, 38, 50)),
                 BorderThickness = new Thickness(1.2),
-                CornerRadius = new CornerRadius(17),
-                Height = 34,
-                Padding = new Thickness(12, 0, 12, 0),
+                CornerRadius = new CornerRadius(15),
+                Height = 30,
+                Padding = new Thickness(10, 0, 10, 0),
                 Cursor = Cursors.Hand,
-                ToolTip = "WaitPlay • Click to toggle ON/OFF"
+                Opacity = 0.0,
+                Visibility = Visibility.Collapsed,
+                ToolTip = "WaitPlay Status • Click to toggle ON/OFF"
             };
 
             var pillContent = new StackPanel {
@@ -1619,16 +1663,16 @@ namespace WaitPlayNative {
 
             pillTitle = new TextBlock {
                 Text = "WaitPlay",
-                FontSize = 12,
+                FontSize = 11.5,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = new SolidColorBrush(Color.FromRgb(255, 255, 255)),
                 VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 6, 0)
+                Margin = new Thickness(0, 0, 5, 0)
             };
 
             pillBadge = new TextBlock {
-                Text = "Alt+W",
-                FontSize = 10.5,
+                Text = "ON",
+                FontSize = 11,
                 FontWeight = FontWeights.Bold,
                 Foreground = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
                 VerticalAlignment = VerticalAlignment.Center
@@ -1641,10 +1685,12 @@ namespace WaitPlayNative {
             pillBorder.MouseEnter += (s, e) => {
                 pillBorder.Background = new SolidColorBrush(Color.FromRgb(26, 26, 34));
                 pillBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(60, 60, 78));
+                ShowTextPill();
             };
             pillBorder.MouseLeave += (s, e) => {
                 pillBorder.Background = new SolidColorBrush(Color.FromRgb(17, 17, 22));
                 pillBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(38, 38, 50));
+                HideTextPill();
             };
             pillBorder.MouseLeftButtonUp += (s, e) => {
                 if (!isDragActive) {
@@ -1653,11 +1699,50 @@ namespace WaitPlayNative {
                 }
             };
 
-            // Circular Button (Power / Status toggle)
+            // Item B: Top Stadium Capsule (Vertical Pill with Gamepad Icon)
+            actionButton = new Border {
+                Width = 28,
+                Height = 44,
+                CornerRadius = new CornerRadius(14),
+                Background = new SolidColorBrush(Color.FromRgb(34, 34, 44)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72)),
+                BorderThickness = new Thickness(1.2),
+                Margin = new Thickness(0, 0, 0, 4),
+                Cursor = Cursors.Hand,
+                ToolTip = "Open WaitPlay Companion Game"
+            };
+
+            var gamepadPath = new System.Windows.Shapes.Path {
+                Data = Geometry.Parse("M4,7 C3,7 2,8 2,10 L2,12 C2,14.5 3.5,17 6,17 C7.5,17 8.5,16 9.5,14.5 L10.5,13 L13.5,13 L14.5,14.5 C15.5,16 16.5,17 18,17 C20.5,17 22,14.5 22,12 L22,10 C22,8 21,7 20,7 Z M6,10 L8,10 L8,11 L6,11 L6,13 L5,13 L5,11 L3,11 L3,10 L5,10 L5,8 L6,8 L6,10 Z M18,9.5 C18.5,9.5 19,10 19,10.5 C19,11 18.5,11.5 18,11.5 C17.5,11.5 17,11 17,10.5 C17,10 17.5,9.5 18,9.5 Z M16,11.5 C16.5,11.5 17,12 17,12.5 C17,13 16.5,13.5 16,13.5 C15.5,13.5 15,13 15,12.5 C15,12 15.5,11.5 16,11.5 Z"),
+                Fill = new SolidColorBrush(Color.FromRgb(255, 255, 255)),
+                Width = 16,
+                Height = 13,
+                Stretch = Stretch.Uniform,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            actionButton.Child = gamepadPath;
+
+            actionButton.MouseEnter += (s, e) => {
+                actionButton.Background = new SolidColorBrush(Color.FromRgb(46, 46, 60));
+                actionButton.BorderBrush = new SolidColorBrush(Color.FromRgb(80, 80, 105));
+                ShowTextPill();
+            };
+            actionButton.MouseLeave += (s, e) => {
+                actionButton.Background = new SolidColorBrush(Color.FromRgb(34, 34, 44));
+                actionButton.BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72));
+                HideTextPill();
+            };
+            actionButton.PreviewMouseLeftButtonDown += (s, e) => {
+                OpenGameWindow();
+                e.Handled = true;
+            };
+
+            // Item C: Bottom Circular Button (Power / Status toggle)
             toggleButton = new Border {
-                Width = 34,
-                Height = 34,
-                CornerRadius = new CornerRadius(17),
+                Width = 28,
+                Height = 28,
+                CornerRadius = new CornerRadius(14),
                 Background = new SolidColorBrush(Color.FromRgb(34, 34, 44)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72)),
                 BorderThickness = new Thickness(1.2),
@@ -1670,8 +1755,8 @@ namespace WaitPlayNative {
             powerIconPath = new System.Windows.Shapes.Path {
                 Data = Geometry.Parse("M11,3 L13,3 L13,11 L11,11 Z M6.5,6.5 C4.5,8 4,11 5,13.5 C6.5,16.5 10,18 13,17.5 C16,16.5 18,14 18,11 C18,8.5 16.5,6.5 15,5.5 L16,4 C18,5.5 20,8 20,11 C20,15 17,18.5 13,19.5 C8.5,20.5 4,18 2.5,14 C1,10 2.5,6 5,4 Z"),
                 Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
-                Width = 13,
-                Height = 13,
+                Width = 12,
+                Height = 12,
                 Stretch = Stretch.Uniform,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
@@ -1701,10 +1786,12 @@ namespace WaitPlayNative {
             toggleButton.MouseEnter += (s, e) => {
                 toggleButton.Background = new SolidColorBrush(Color.FromRgb(46, 46, 60));
                 toggleButton.BorderBrush = new SolidColorBrush(Color.FromRgb(80, 80, 105));
+                ShowTextPill();
             };
             toggleButton.MouseLeave += (s, e) => {
                 toggleButton.Background = new SolidColorBrush(Color.FromRgb(34, 34, 44));
                 toggleButton.BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72));
+                HideTextPill();
             };
             toggleButton.PreviewMouseLeftButtonDown += (s, e) => {
                 Toggle();
@@ -1731,7 +1818,7 @@ namespace WaitPlayNative {
             PreviewMouseLeftButtonDown += (s, e) => {
                 DependencyObject dep = e.OriginalSource as DependencyObject;
                 while (dep != null && dep != this) {
-                    if (dep == toggleButton) {
+                    if (dep == actionButton || dep == toggleButton) {
                         return;
                     }
                     dep = VisualTreeHelper.GetParent(dep);
@@ -1835,19 +1922,40 @@ namespace WaitPlayNative {
         private void UpdateFlowGridLayout() {
             flowGrid.Children.Clear();
 
-            // Item A: WaitPlay ON/OFF Pill on Top (Row 0)
-            Grid.SetRow(pillBorder, 0);
-            Grid.SetColumn(pillBorder, 0);
-            pillBorder.HorizontalAlignment = HorizontalAlignment.Center;
-            pillBorder.Margin = new Thickness(0, 0, 0, 6);
-            flowGrid.Children.Add(pillBorder);
+            var buttonStack = new StackPanel {
+                Orientation = Orientation.Vertical,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            buttonStack.Children.Add(actionButton);
+            buttonStack.Children.Add(toggleButton);
 
-            // Item B: Circular Power Button directly underneath (Row 1)
-            Grid.SetRow(toggleButton, 1);
-            Grid.SetColumn(toggleButton, 0);
-            toggleButton.HorizontalAlignment = HorizontalAlignment.Center;
-            toggleButton.Margin = new Thickness(0);
-            flowGrid.Children.Add(toggleButton);
+            if (currentDock == DockPosition.Left) {
+                // When docked on Left edge: Buttons on Left (Col 0), Text Pill extends to Right (Col 1)
+                flowGrid.HorizontalAlignment = HorizontalAlignment.Left;
+                Grid.SetRow(buttonStack, 0);
+                Grid.SetColumn(buttonStack, 0);
+                flowGrid.Children.Add(buttonStack);
+
+                Grid.SetRow(pillBorder, 0);
+                Grid.SetColumn(pillBorder, 1);
+                pillBorder.VerticalAlignment = VerticalAlignment.Center;
+                pillBorder.Margin = new Thickness(6, 0, 0, 0);
+                flowGrid.Children.Add(pillBorder);
+            } else {
+                // When docked on Right edge or Free: Text Pill on Left (Col 0), Buttons on Right (Col 1)
+                // EXACT MATCH FOR IMAGE #1
+                flowGrid.HorizontalAlignment = HorizontalAlignment.Right;
+                Grid.SetRow(pillBorder, 0);
+                Grid.SetColumn(pillBorder, 0);
+                pillBorder.VerticalAlignment = VerticalAlignment.Center;
+                pillBorder.Margin = new Thickness(0, 0, 6, 0);
+                flowGrid.Children.Add(pillBorder);
+
+                Grid.SetRow(buttonStack, 0);
+                Grid.SetColumn(buttonStack, 1);
+                flowGrid.Children.Add(buttonStack);
+            }
         }
 
         private void StopDragging() {
@@ -1916,8 +2024,8 @@ namespace WaitPlayNative {
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
 
-            double expW = 144;
-            double expH = 88;
+            double expW = 165;
+            double expH = 84;
 
             if (collapsed && currentDock != DockPosition.Free) {
                 fullWidget.Visibility = Visibility.Collapsed;
