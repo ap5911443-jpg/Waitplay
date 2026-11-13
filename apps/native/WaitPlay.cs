@@ -1482,7 +1482,6 @@ namespace WaitPlayNative {
         private Border pillBorder;
         private TextBlock pillTitle;
         private TextBlock pillBadge;
-        private Border actionButton;
         private Border toggleButton;
         private System.Windows.Shapes.Path powerIconPath;
         private Ellipse statusDot;
@@ -1601,7 +1600,6 @@ namespace WaitPlayNative {
             flowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             flowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             flowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            flowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             // Item A: Left Pill (WaitPlay Alt+W / ON) - Short & Sweet
             pillBorder = new Border {
@@ -1656,53 +1654,17 @@ namespace WaitPlayNative {
                 }
             };
 
-            // Item B: Top Stadium Capsule (Gamepad button)
-            actionButton = new Border {
-                Width = 28,
-                Height = 44,
-                CornerRadius = new CornerRadius(14),
-                Background = new SolidColorBrush(Color.FromRgb(34, 34, 44)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72)),
-                BorderThickness = new Thickness(1.2),
-                Cursor = Cursors.Hand,
-                ToolTip = "Open WaitPlay Companion Game"
-            };
-
-            var gamepadPath = new System.Windows.Shapes.Path {
-                Data = Geometry.Parse("M4,7 C3,7 2,8 2,10 L2,12 C2,14.5 3.5,17 6,17 C7.5,17 8.5,16 9.5,14.5 L10.5,13 L13.5,13 L14.5,14.5 C15.5,16 16.5,17 18,17 C20.5,17 22,14.5 22,12 L22,10 C22,8 21,7 20,7 Z M6,10 L8,10 L8,11 L6,11 L6,13 L5,13 L5,11 L3,11 L3,10 L5,10 L5,8 L6,8 L6,10 Z M18,9.5 C18.5,9.5 19,10 19,10.5 C19,11 18.5,11.5 18,11.5 C17.5,11.5 17,11 17,10.5 C17,10 17.5,9.5 18,9.5 Z M16,11.5 C16.5,11.5 17,12 17,12.5 C17,13 16.5,13.5 16,13.5 C15.5,13.5 15,13 15,12.5 C15,12 15.5,11.5 16,11.5 Z"),
-                Fill = new SolidColorBrush(Color.FromRgb(255, 255, 255)),
-                Width = 16,
-                Height = 13,
-                Stretch = Stretch.Uniform,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            actionButton.Child = gamepadPath;
-
-            actionButton.MouseEnter += (s, e) => {
-                actionButton.Background = new SolidColorBrush(Color.FromRgb(46, 46, 60));
-                actionButton.BorderBrush = new SolidColorBrush(Color.FromRgb(80, 80, 105));
-            };
-            actionButton.MouseLeave += (s, e) => {
-                actionButton.Background = new SolidColorBrush(Color.FromRgb(34, 34, 44));
-                actionButton.BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72));
-            };
-            actionButton.PreviewMouseLeftButtonDown += (s, e) => {
-                OpenGameWindow();
-                e.Handled = true;
-            };
-
-            // Item C: Bottom Circular Button (Power / Status toggle)
+            // Circular Button (Power / Status toggle)
             toggleButton = new Border {
-                Width = 28,
-                Height = 28,
-                CornerRadius = new CornerRadius(14),
+                Width = 34,
+                Height = 34,
+                CornerRadius = new CornerRadius(17),
                 Background = new SolidColorBrush(Color.FromRgb(34, 34, 44)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72)),
                 BorderThickness = new Thickness(1.2),
-                Margin = new Thickness(0, 4, 0, 0),
                 Cursor = Cursors.Hand,
-                ToolTip = "Toggle WaitPlay ON / OFF"
+                ToolTip = "Toggle WaitPlay ON / OFF",
+                VerticalAlignment = VerticalAlignment.Center
             };
 
             var powerGrid = new Grid();
@@ -1770,7 +1732,7 @@ namespace WaitPlayNative {
             PreviewMouseLeftButtonDown += (s, e) => {
                 DependencyObject dep = e.OriginalSource as DependencyObject;
                 while (dep != null && dep != this) {
-                    if (dep == actionButton || dep == toggleButton) {
+                    if (dep == toggleButton) {
                         return;
                     }
                     dep = VisualTreeHelper.GetParent(dep);
@@ -1875,36 +1837,28 @@ namespace WaitPlayNative {
             flowGrid.Children.Clear();
 
             if (currentDock == DockPosition.Left) {
-                // When docked on Left edge: Buttons on Left (Col 0), Pill extends to Right (Col 1)
-                Grid.SetRow(actionButton, 0);
-                Grid.SetColumn(actionButton, 0);
-                flowGrid.Children.Add(actionButton);
-
-                Grid.SetRow(toggleButton, 1);
+                // When docked on Left edge: Button on Left (Col 0), Pill extends to Right (Col 1)
+                Grid.SetRow(toggleButton, 0);
                 Grid.SetColumn(toggleButton, 0);
+                toggleButton.Margin = new Thickness(0, 0, 6, 0);
                 flowGrid.Children.Add(toggleButton);
 
                 Grid.SetRow(pillBorder, 0);
                 Grid.SetColumn(pillBorder, 1);
-                Grid.SetRowSpan(pillBorder, 2);
                 pillBorder.VerticalAlignment = VerticalAlignment.Center;
-                pillBorder.Margin = new Thickness(6, 0, 0, 0);
+                pillBorder.Margin = new Thickness(0);
                 flowGrid.Children.Add(pillBorder);
             } else {
-                // When docked on Right edge or Free: Pill on Left (Col 0), Buttons on Right (Col 1) - EXACT MATCH FOR IMAGE #1
+                // When docked on Right edge or Free: Pill on Left (Col 0), Button on Right (Col 1)
                 Grid.SetRow(pillBorder, 0);
                 Grid.SetColumn(pillBorder, 0);
-                Grid.SetRowSpan(pillBorder, 2);
                 pillBorder.VerticalAlignment = VerticalAlignment.Center;
                 pillBorder.Margin = new Thickness(0, 0, 6, 0);
                 flowGrid.Children.Add(pillBorder);
 
-                Grid.SetRow(actionButton, 0);
-                Grid.SetColumn(actionButton, 1);
-                flowGrid.Children.Add(actionButton);
-
-                Grid.SetRow(toggleButton, 1);
+                Grid.SetRow(toggleButton, 0);
                 Grid.SetColumn(toggleButton, 1);
+                toggleButton.Margin = new Thickness(0);
                 flowGrid.Children.Add(toggleButton);
             }
         }
@@ -1975,8 +1929,8 @@ namespace WaitPlayNative {
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
 
-            double expW = 180;
-            double expH = 80;
+            double expW = 160;
+            double expH = 46;
 
             if (collapsed && currentDock != DockPosition.Free) {
                 fullWidget.Visibility = Visibility.Collapsed;
