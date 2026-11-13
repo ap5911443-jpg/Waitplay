@@ -103,6 +103,7 @@ function findToken() {
 }
 
 function popApp() {
+  if (!isWaitPlayEnabled()) return;
   if (isPromptDismissed('opencode-session')) {
     console.log('[OpenCode Watcher] Prompt was dismissed by user, skipping popup.');
     return;

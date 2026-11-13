@@ -86,6 +86,7 @@ function formatModelName(raw) {
 let hasPoppedForPrompt = false;
 
 function popApp() {
+  if (!isWaitPlayEnabled()) return;
   if (hasPoppedForPrompt) return;
   if (isPromptDismissed('cline-session')) {
     console.log('[Cline Watcher] Prompt was dismissed by user, skipping popup.');

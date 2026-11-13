@@ -15,6 +15,7 @@ export type BridgeClientMessage =
   | { type: "session_updated"; session: AgentSessionInfo }
   | { type: "session_list"; sessions: AgentSessionInfo[] }
   | { type: "health_check"; health: BridgeHealth }
+  | { type: "state_change"; enabled: boolean }
   | { type: "pong"; timestamp: number };
 
 export type BridgeServerMessage =

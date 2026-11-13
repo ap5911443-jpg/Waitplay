@@ -88,7 +88,7 @@ export function useAgentStateMachine(
             (new URLSearchParams(window.location.search).get("popup") === "1" ||
               new URLSearchParams(window.location.search).get("popup") === "true");
 
-          if (preferences.autoLaunch || isPopup) {
+          if (preferences.companionEnabled !== false && (preferences.autoLaunch || isPopup)) {
             const delay = isPopup ? 0 : preferences.startDelaySeconds;
             if (delay <= 0) {
               setStatus("GAME_ACTIVE");
@@ -198,6 +198,15 @@ export function useAgentStateMachine(
       clearTimeout(resultsDismissTimerRef.current as NodeJS.Timeout);
     };
   }, [clearLaunchTimers]);
+  // If companion is disabled via desktop widget/bridge, immediately shut off/minimize open games
+  useEffect(() => {
+    if (preferences.companionEnabled === false) {
+      clearLaunchTimers();
+      setIsGameOpen(false);
+      setIsResultsOpen(false);
+    }
+  }, [preferences.companionEnabled, clearLaunchTimers]);
+
 
   const processEvent = useCallback(
     (event: AgentEvent, data?: Record<string, unknown>) => {

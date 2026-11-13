@@ -1,4 +1,7 @@
 import { Router, Request, Response } from "express";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import { BridgeHealth } from "@waitplay/shared";
 import { SessionManager } from "../events/sessionManager.js";
 import { BridgeWebSocketServer } from "../websocket/wsServer.js";
@@ -20,6 +23,62 @@ export function createRouter(
   // Local token endpoint (loopback only, allows local web UI / dev to read current active token)
   router.get("/auth/token", (_req: Request, res: Response) => {
     res.json({ token: getBridgeToken() });
+  });
+
+  function getEnabledState(): boolean {
+    try {
+      const candidates = [
+        path.join(os.tmpdir(), "waitplay", ".waitplay-enabled.json"),
+        path.resolve(process.cwd(), ".waitplay-enabled.json"),
+        "C:\\Users\\ASUS\\waitplay\\.waitplay-enabled.json",
+        "C:\\Users\\ASUS\\AppData\\Local\\Temp\\waitplay\\.waitplay-enabled.json",
+      ];
+      for (const p of candidates) {
+        if (fs.existsSync(p)) {
+          const data = JSON.parse(fs.readFileSync(p, "utf-8"));
+          if (data && typeof data.enabled === "boolean") return data.enabled;
+        }
+      }
+    } catch {}
+    return true;
+  }
+
+  function setEnabledState(enabled: boolean): void {
+    const data = JSON.stringify({ enabled, updatedAt: Date.now() }, null, 2);
+    const targets = [
+      path.join(os.tmpdir(), "waitplay", ".waitplay-enabled.json"),
+      path.resolve(process.cwd(), ".waitplay-enabled.json"),
+      "C:\\Users\\ASUS\\waitplay\\.waitplay-enabled.json",
+      "C:\\Users\\ASUS\\AppData\\Local\\Temp\\waitplay\\.waitplay-enabled.json",
+    ];
+    for (const t of targets) {
+      try {
+        const dir = path.dirname(t);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(t, data, "utf-8");
+      } catch {}
+    }
+  }
+
+  // Companion enabled state query (loopback only)
+  router.get("/state", (_req: Request, res: Response) => {
+    res.json({ enabled: getEnabledState() });
+  });
+
+  // Companion enabled state toggle/set (loopback only)
+  router.post("/state", (req: Request, res: Response) => {
+    const requested = typeof req.body?.enabled === "boolean" ? req.body.enabled : !getEnabledState();
+    setEnabledState(requested);
+
+    const ws = getWsServer();
+    if (ws) {
+      ws.broadcast({
+        type: "state_change",
+        enabled: requested,
+      });
+    }
+
+    res.json({ status: "ok", enabled: requested });
   });
 
   // Active sessions list

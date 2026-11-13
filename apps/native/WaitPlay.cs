@@ -277,55 +277,6 @@ namespace WaitPlayNative {
 
             // Right window controls
             var controlsPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            // Wispr Flow style ON/OFF toggle pill in window header
-            var flowPill = new Border {
-                Background = new SolidColorBrush(Color.FromRgb(17, 17, 22)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(42, 42, 54)),
-                BorderThickness = new Thickness(1.2),
-                CornerRadius = new CornerRadius(12),
-                Padding = new Thickness(8, 2, 8, 2),
-                Margin = new Thickness(0, 0, 10, 0),
-                Cursor = Cursors.Hand,
-                ToolTip = "WaitPlay Status • Click to turn OFF & close interface"
-            };
-            var flowPanel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            var flowTitle = new TextBlock {
-                Text = "WaitPlay",
-                FontSize = 11,
-                Foreground = new SolidColorBrush(Color.FromRgb(203, 213, 225)),
-                Margin = new Thickness(0, 0, 6, 0),
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            var flowBadge = new TextBlock {
-                Text = "ON",
-                FontSize = 11,
-                FontWeight = FontWeights.Bold,
-                Foreground = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
-                Margin = new Thickness(0, 0, 6, 0),
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            var flowDot = new Ellipse {
-                Width = 6,
-                Height = 6,
-                Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            flowPanel.Children.Add(flowTitle);
-            flowPanel.Children.Add(flowBadge);
-            flowPanel.Children.Add(flowDot);
-            flowPill.Child = flowPanel;
-
-            flowPill.MouseLeftButtonDown += (s, e) => {
-                WaitPlayStateManager.SetEnabled(false);
-                flowBadge.Text = "OFF";
-                flowBadge.Foreground = new SolidColorBrush(Color.FromRgb(148, 163, 184));
-                flowDot.Fill = new SolidColorBrush(Color.FromRgb(100, 116, 139));
-                flowPill.ToolTip = "WaitPlay is now OFF. Closing...";
-                var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
-                t.Tick += (s2, e2) => { t.Stop(); Close(); };
-                t.Start();
-            };
-            controlsPanel.Children.Add(flowPill);
 
 
             var btnMin = new Button {
@@ -804,12 +755,14 @@ namespace WaitPlayNative {
             if (lower.Contains("codex") || lower.Contains("chatgpt")) return "ChatGPT";
             return raw;
         }
-
         private void CheckAgentStatus() {
+            if (!WaitPlayStateManager.IsEnabled()) {
+                Close();
+                return;
+            }
             if (myHwnd == IntPtr.Zero) {
                 try { myHwnd = new WindowInteropHelper(this).Handle; } catch {}
             }
-
             // 1. Check IPC file for session switch requested by another process
             try {
                 string ipcFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", ".waitplay-active-session.txt");
@@ -884,6 +837,10 @@ namespace WaitPlayNative {
                         }
                     } else {
                         if (wasMinimizedByParent && this.WindowState == WindowState.Minimized) {
+                            if (!WaitPlayStateManager.IsEnabled()) {
+                                Close();
+                                return;
+                            }
                             wasMinimizedByParent = false;
                             if (myHwnd != IntPtr.Zero) {
                                 ParentWindowTracker.ShowWindowAsync(myHwnd, 9); // SW_RESTORE
@@ -1392,7 +1349,27 @@ namespace WaitPlayNative {
                         System.IO.File.WriteAllText(p, json);
                     } catch {}
                 }
+                NotifyBridge(enabled);
             } catch {}
+        }
+
+        public static void NotifyBridge(bool enabled) {
+            System.Threading.ThreadPool.QueueUserWorkItem(_ => {
+                try {
+                    string url = "http://127.0.0.1:3150/state";
+                    var request = (HttpWebRequest)WebRequest.Create(url);
+                    request.Timeout = 400;
+                    request.Method = "POST";
+                    request.ContentType = "application/json";
+                    string body = string.Format("{{\"enabled\":{0}}}", enabled ? "true" : "false");
+                    byte[] data = System.Text.Encoding.UTF8.GetBytes(body);
+                    request.ContentLength = data.Length;
+                    using (var s = request.GetRequestStream()) {
+                        s.Write(data, 0, data.Length);
+                    }
+                    using (var resp = (HttpWebResponse)request.GetResponse()) {}
+                } catch {}
+            });
         }
     }
 
@@ -2038,9 +2015,56 @@ namespace WaitPlayNative {
             isEnabled = !isEnabled;
             WaitPlayStateManager.SetEnabled(isEnabled);
             UpdateUI();
-            if (!isEnabled && activeGameWindow != null && activeGameWindow.IsVisible) {
-                try { activeGameWindow.Close(); } catch {}
+            if (!isEnabled) {
+                if (activeGameWindow != null) {
+                    try { activeGameWindow.Close(); } catch {}
+                    activeGameWindow = null;
+                }
+                CloseOtherGameWindows();
+            } else {
+                CheckAndPopIfAgentWorking();
             }
+        }
+
+        private void CloseOtherGameWindows() {
+            try {
+                int currentPid = System.Diagnostics.Process.GetCurrentProcess().Id;
+                var procs = System.Diagnostics.Process.GetProcessesByName("WaitPlay");
+                foreach (var p in procs) {
+                    if (p.Id != currentPid) {
+                        try {
+                            string title = p.MainWindowTitle;
+                            if (string.IsNullOrEmpty(title) || !title.Contains("Widget")) {
+                                p.CloseMainWindow();
+                            }
+                        } catch {}
+                    }
+                }
+            } catch {}
+        }
+
+        private void CheckAndPopIfAgentWorking() {
+            System.Threading.ThreadPool.QueueUserWorkItem(_ => {
+                try {
+                    string url = string.Format("http://127.0.0.1:{0}/sessions", 3150);
+                    var req = (HttpWebRequest)WebRequest.Create(url);
+                    req.Timeout = 500;
+                    using (var res = (HttpWebResponse)req.GetResponse()) {
+                        if (res.StatusCode == HttpStatusCode.OK) {
+                            using (var r = new StreamReader(res.GetResponseStream())) {
+                                string json = r.ReadToEnd();
+                                if (json.Contains("\"status\":\"WORKING\"") || json.Contains("\"status\":\"GAME_ACTIVE\"")) {
+                                    Dispatcher.BeginInvoke(new Action(() => {
+                                        if (isEnabled) {
+                                            OpenGameWindow();
+                                        }
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                } catch {}
+            });
         }
 
         private void UpdateUI() {
@@ -2050,19 +2074,24 @@ namespace WaitPlayNative {
                 statusDot.Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255));
                 handleStatusDot.Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255));
                 if (powerIconPath != null) powerIconPath.Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255));
-                pillBorder.ToolTip = "WaitPlay is ON (Active) • Click to turn OFF";
+                pillBorder.ToolTip = "WaitPlay is ON • Companion micro-games pop out while agents are working (Click to turn OFF)";
             } else {
                 pillBadge.Text = "OFF";
                 pillBadge.Foreground = new SolidColorBrush(Color.FromRgb(148, 163, 184));
                 statusDot.Fill = new SolidColorBrush(Color.FromRgb(100, 116, 139));
                 handleStatusDot.Fill = new SolidColorBrush(Color.FromRgb(100, 116, 139));
                 if (powerIconPath != null) powerIconPath.Fill = new SolidColorBrush(Color.FromRgb(100, 116, 139));
-                pillBorder.ToolTip = "WaitPlay is OFF (Muted) • Click to turn ON";
+                pillBorder.ToolTip = "WaitPlay is OFF • Interface muted across all terminal tabs (Click to turn ON)";
             }
         }
 
         private void OpenGameWindow() {
             try {
+                if (!isEnabled) {
+                    isEnabled = true;
+                    WaitPlayStateManager.SetEnabled(true);
+                    UpdateUI();
+                }
                 if (activeGameWindow == null || !activeGameWindow.IsLoaded) {
                     activeGameWindow = new MainWindow("", 0, "Desktop", 0, IntPtr.Zero);
                     activeGameWindow.Closed += (s, e) => { activeGameWindow = null; };
@@ -2165,11 +2194,14 @@ namespace WaitPlayNative {
         public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
 
         private static void BringExistingWindowToFront() {
+            if (!WaitPlayStateManager.IsEnabled()) return;
             try {
                 var procs = System.Diagnostics.Process.GetProcessesByName("WaitPlay");
                 int currentPid = System.Diagnostics.Process.GetCurrentProcess().Id;
                 foreach (var p in procs) {
                     if (p.Id != currentPid && p.MainWindowHandle != IntPtr.Zero) {
+                        string title = p.MainWindowTitle;
+                        if (!string.IsNullOrEmpty(title) && title.Contains("Widget")) continue;
                         ShowWindowAsync(p.MainWindowHandle, 9);
                         SetForegroundWindow(p.MainWindowHandle);
                         SetWindowPos(p.MainWindowHandle, (IntPtr)(-1), 0, 0, 0, 0, 0x0003);
@@ -2235,8 +2267,12 @@ namespace WaitPlayNative {
                 return;
             }
 
-            // If an agent invoked WaitPlay but the companion is turned OFF:
-            if (!string.IsNullOrEmpty(targetSession) && !forceGame && !WaitPlayStateManager.IsEnabled()) {
+            if (forceGame && !WaitPlayStateManager.IsEnabled()) {
+                WaitPlayStateManager.SetEnabled(true);
+            }
+
+            // If WaitPlay is turned OFF and this is NOT a forced game or widget launch:
+            if (!forceGame && !launchWidget && !WaitPlayStateManager.IsEnabled()) {
                 return; // Silently skip popup
             }
 
@@ -2268,6 +2304,9 @@ namespace WaitPlayNative {
             singleInstanceMutex = new Mutex(true, mutexName, out createdNew);
 
             if (!createdNew) {
+                if (!WaitPlayStateManager.IsEnabled()) {
+                    return;
+                }
                 try {
                     string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay");
                     if (!System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);

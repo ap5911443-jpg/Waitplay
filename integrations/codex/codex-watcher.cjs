@@ -134,6 +134,10 @@ function sendBridgeEvent(event, data) {
 }
 
 function popGameWindow() {
+  if (!isWaitPlayEnabled()) {
+    console.log('[WaitPlay Watcher] WaitPlay is turned OFF, skipping popup.');
+    return;
+  }
   if (isPromptDismissed('codex-session')) {
     console.log('[WaitPlay Watcher] Prompt was dismissed by user, skipping popup.');
     return;

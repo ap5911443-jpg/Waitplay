@@ -89,6 +89,9 @@ function getBridgeToken() {
 }
 
 function popApp() {
+  if (!isWaitPlayEnabled()) {
+    return;
+  }
   if (isPromptDismissed("omp-session")) {
     console.log("[OMP Watcher] Prompt was dismissed by user, skipping popApp.");
     return;

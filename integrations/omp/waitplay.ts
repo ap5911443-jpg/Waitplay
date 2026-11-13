@@ -96,6 +96,9 @@ export default function (pi: PiEmitter) {
   let hasPoppedForPrompt = false;
 
   function popApp() {
+    if (!isWaitPlayEnabled()) {
+      return;
+    }
     if (hasPoppedForPrompt) {
       return;
     }

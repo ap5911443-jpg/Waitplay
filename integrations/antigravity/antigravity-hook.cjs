@@ -54,6 +54,7 @@ function isPromptDismissed(sessionId, promptTimestamp) {
 }
 
 function popApp(promptTimestamp = 0) {
+  if (!isWaitPlayEnabled()) return;
   if (isPromptDismissed('antigravity-session', promptTimestamp)) {
     console.log('[Antigravity Hook] Prompt was dismissed by user, skipping popup.');
     return;

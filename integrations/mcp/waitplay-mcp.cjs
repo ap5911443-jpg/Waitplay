@@ -55,6 +55,7 @@ function isPromptDismissed(sessionId, promptTimestamp) {
 }
 
 function popApp(sessionId, promptTimestamp = 0) {
+  if (!isWaitPlayEnabled()) return;
   if (isPromptDismissed(sessionId || 'agent-session', promptTimestamp)) {
     return;
   }

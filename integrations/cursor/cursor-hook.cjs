@@ -54,6 +54,7 @@ function isPromptDismissed(sessionId, promptTimestamp) {
 }
 
 function popApp(promptTimestamp = 0) {
+  if (!isWaitPlayEnabled()) return;
   if (isPromptDismissed('cursor-session', promptTimestamp)) {
     console.log('[Cursor Hook] Prompt was dismissed by user, skipping popup.');
     return;

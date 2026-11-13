@@ -36,15 +36,20 @@ function getDefaultHttpUrl(): string {
   return "http://127.0.0.1:3150";
 }
 
-export function useBridgeConnection(options?: {
+export interface UseBridgeConnectionOptions {
   wsUrl?: string;
   httpUrl?: string;
   onEvent?: (payload: AgentEventPayload, session: AgentSessionInfo) => void;
-}): UseBridgeConnectionResult {
+  onStateChange?: (enabled: boolean) => void;
+}
+
+export function useBridgeConnection(options?: UseBridgeConnectionOptions): UseBridgeConnectionResult {
   const wsUrl = options?.wsUrl ?? getDefaultWsUrl();
   const httpUrl = options?.httpUrl ?? getDefaultHttpUrl();
   const onEventRef = useRef(options?.onEvent);
   onEventRef.current = options?.onEvent;
+  const onStateChangeRef = useRef(options?.onStateChange);
+  onStateChangeRef.current = options?.onStateChange;
 
   const [status, setStatus] = useState<BridgeStatus>("connecting");
   const [sessions, setSessions] = useState<AgentSessionInfo[]>([]);
@@ -68,6 +73,13 @@ export function useBridgeConnection(options?: {
           const data = (await res.json()) as { token?: string };
           if (!cancelled && data.token) {
             setBridgeToken(data.token);
+          }
+        }
+        const stateRes = await fetch(`${httpUrl}/state`);
+        if (stateRes.ok) {
+          const stateData = (await stateRes.json()) as { enabled?: boolean };
+          if (!cancelled && typeof stateData.enabled === "boolean" && onStateChangeRef.current) {
+            onStateChangeRef.current(stateData.enabled);
           }
         }
       } catch {
@@ -143,6 +155,12 @@ export function useBridgeConnection(options?: {
                 }
                 return prev;
               });
+              break;
+            }
+            case "state_change": {
+              if (onStateChangeRef.current) {
+                onStateChangeRef.current(msg.enabled);
+              }
               break;
             }
           }

@@ -67,6 +67,9 @@ function clearDismissal(sessionId) {
 }
 
 function popApp(promptTimestamp = 0) {
+  if (!isWaitPlayEnabled()) {
+    return;
+  }
   try {
     if (fs.existsSync(NATIVE_APP)) {
       const args = ['--session=claude-code-session', `--parentPid=${process.pid}`];

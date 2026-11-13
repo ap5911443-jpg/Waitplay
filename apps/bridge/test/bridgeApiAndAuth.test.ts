@@ -158,4 +158,36 @@ describe("Bridge HTTP API & Security Authentication", () => {
     const body = (await res.json()) as { error: string };
     assert.equal(body.error, "ValidationError");
   });
+  test("GET /state and POST /state manages companion enabled state", async () => {
+    const getRes = await fetch(`${baseUrl}/state`);
+    assert.equal(getRes.status, 200);
+    const getBody = (await getRes.json()) as { enabled: boolean };
+    assert.equal(typeof getBody.enabled, "boolean");
+
+    // Turn OFF
+    const offRes = await fetch(`${baseUrl}/state`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(offRes.status, 200);
+    const offBody = (await offRes.json()) as { status: string; enabled: boolean };
+    assert.equal(offBody.status, "ok");
+    assert.equal(offBody.enabled, false);
+
+    // Verify GET /state is now false
+    const verifyRes = await fetch(`${baseUrl}/state`);
+    const verifyBody = (await verifyRes.json()) as { enabled: boolean };
+    assert.equal(verifyBody.enabled, false);
+
+    // Turn back ON
+    const onRes = await fetch(`${baseUrl}/state`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+    });
+    assert.equal(onRes.status, 200);
+    const onBody = (await onRes.json()) as { status: string; enabled: boolean };
+    assert.equal(onBody.enabled, true);
+  });
 });
