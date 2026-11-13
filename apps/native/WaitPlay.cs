@@ -109,7 +109,7 @@ namespace WaitPlayNative {
                 this.activeAgentName = DetectActiveAgent();
             }
 
-            if (this.monitoredWindowHandle == IntPtr.Zero) {
+            if (this.monitoredWindowHandle == IntPtr.Zero && this.terminalLabel != "Desktop") {
                 this.monitoredWindowHandle = ParentWindowTracker.FindWindowForAgent(this.activeAgentName);
             }
 
@@ -854,7 +854,7 @@ namespace WaitPlayNative {
             } catch {}
 
             // Fallback resolution of parent window if still unknown
-            if (monitoredWindowHandle == IntPtr.Zero) {
+            if (monitoredWindowHandle == IntPtr.Zero && terminalLabel != "Desktop") {
                 if (parentProcessId > 0) {
                     monitoredWindowHandle = ParentWindowTracker.FindTopWindowForPid(parentProcessId);
                 }
@@ -1534,7 +1534,7 @@ namespace WaitPlayNative {
             ResizeMode = ResizeMode.NoResize;
 
             collapseTimer = new DispatcherTimer();
-            collapseTimer.Interval = TimeSpan.FromMilliseconds(800);
+            collapseTimer.Interval = TimeSpan.FromMilliseconds(2000);
             collapseTimer.Tick += (s, e) => {
                 if (isDragActive || currentDock == DockPosition.Free) return;
                 POINT pt;
@@ -1603,6 +1603,12 @@ namespace WaitPlayNative {
             edgeHandle.MouseEnter += (s, e) => {
                 collapseTimer.Stop();
                 SetCollapsed(false);
+            };
+            edgeHandle.PreviewMouseLeftButtonDown += (s, e) => {
+                if (!isDragActive) {
+                    Toggle();
+                    e.Handled = true;
+                }
             };
 
             // 2. Full Expanded Widget (Exact Wispr Flow Layout: Short & Sweet)
@@ -1704,11 +1710,9 @@ namespace WaitPlayNative {
                 actionButton.Background = new SolidColorBrush(Color.FromRgb(34, 34, 44));
                 actionButton.BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72));
             };
-            actionButton.MouseLeftButtonUp += (s, e) => {
-                if (!isDragActive) {
-                    OpenGameWindow();
-                    e.Handled = true;
-                }
+            actionButton.PreviewMouseLeftButtonDown += (s, e) => {
+                OpenGameWindow();
+                e.Handled = true;
             };
 
             // Item C: Bottom Circular Button (Power / Status toggle)
@@ -1764,11 +1768,9 @@ namespace WaitPlayNative {
                 toggleButton.Background = new SolidColorBrush(Color.FromRgb(34, 34, 44));
                 toggleButton.BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72));
             };
-            toggleButton.MouseLeftButtonUp += (s, e) => {
-                if (!isDragActive) {
-                    Toggle();
-                    e.Handled = true;
-                }
+            toggleButton.PreviewMouseLeftButtonDown += (s, e) => {
+                Toggle();
+                e.Handled = true;
             };
 
             UpdateFlowGridLayout();
@@ -1789,6 +1791,14 @@ namespace WaitPlayNative {
 
             // Drag vs Click Detection on Root Window
             PreviewMouseLeftButtonDown += (s, e) => {
+                DependencyObject dep = e.OriginalSource as DependencyObject;
+                while (dep != null && dep != this) {
+                    if (dep == actionButton || dep == toggleButton) {
+                        return;
+                    }
+                    dep = VisualTreeHelper.GetParent(dep);
+                }
+
                 isMouseDown = true;
                 isDragActive = false;
                 POINT pt;
@@ -1804,7 +1814,7 @@ namespace WaitPlayNative {
                     double deltaX = pt.X - mouseDownPoint.X;
                     double deltaY = pt.Y - mouseDownPoint.Y;
 
-                    if (!isDragActive && (Math.Abs(deltaX) > 4 || Math.Abs(deltaY) > 4)) {
+                    if (!isDragActive && (Math.Abs(deltaX) > 10 || Math.Abs(deltaY) > 10)) {
                         isDragActive = true;
                         CaptureMouse();
                         if (dockOverlay == null) dockOverlay = new DockOverlayWindow();
@@ -1818,11 +1828,11 @@ namespace WaitPlayNative {
                         double screenW = SystemParameters.WorkArea.Width;
                         double screenH = SystemParameters.WorkArea.Height;
 
-                        if (pt.X < 90) {
+                        if (pt.X < 40) {
                             if (dockOverlay != null) dockOverlay.Highlight(DockPosition.Left);
-                        } else if (pt.X > screenW - 90) {
+                        } else if (pt.X > screenW - 40) {
                             if (dockOverlay != null) dockOverlay.Highlight(DockPosition.Right);
-                        } else if (pt.Y > screenH - 80) {
+                        } else if (pt.Y > screenH - 40) {
                             if (dockOverlay != null) dockOverlay.Highlight(DockPosition.Bottom);
                         } else {
                             if (dockOverlay != null) dockOverlay.Highlight(DockPosition.Free);
@@ -1899,6 +1909,7 @@ namespace WaitPlayNative {
 
                 Grid.SetRow(pillBorder, 0);
                 Grid.SetColumn(pillBorder, 1);
+                Grid.SetRowSpan(pillBorder, 2);
                 pillBorder.VerticalAlignment = VerticalAlignment.Center;
                 pillBorder.Margin = new Thickness(6, 0, 0, 0);
                 flowGrid.Children.Add(pillBorder);
@@ -1906,6 +1917,7 @@ namespace WaitPlayNative {
                 // When docked on Right edge or Free: Pill on Left (Col 0), Buttons on Right (Col 1) - EXACT MATCH FOR IMAGE #1
                 Grid.SetRow(pillBorder, 0);
                 Grid.SetColumn(pillBorder, 0);
+                Grid.SetRowSpan(pillBorder, 2);
                 pillBorder.VerticalAlignment = VerticalAlignment.Center;
                 pillBorder.Margin = new Thickness(0, 0, 6, 0);
                 flowGrid.Children.Add(pillBorder);
@@ -1933,11 +1945,11 @@ namespace WaitPlayNative {
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
 
-            if (pt.X < 90) {
+            if (pt.X < 40) {
                 SetDock(DockPosition.Left, Top);
-            } else if (pt.X > screenW - 90) {
+            } else if (pt.X > screenW - 40) {
                 SetDock(DockPosition.Right, Top);
-            } else if (pt.Y > screenH - 80) {
+            } else if (pt.Y > screenH - 40) {
                 SetDock(DockPosition.Bottom);
             } else {
                 currentDock = DockPosition.Free;
@@ -2018,9 +2030,7 @@ namespace WaitPlayNative {
                     Top = screenH - expH - 4;
                 }
 
-                if (currentDock != DockPosition.Free) {
-                    collapseTimer.Start();
-                }
+                collapseTimer.Stop();
             }
         }
 
@@ -2057,12 +2067,13 @@ namespace WaitPlayNative {
                     activeGameWindow = new MainWindow("", 0, "Desktop", 0, IntPtr.Zero);
                     activeGameWindow.Closed += (s, e) => { activeGameWindow = null; };
                     activeGameWindow.Show();
+                    activeGameWindow.WindowState = WindowState.Normal;
                     activeGameWindow.Activate();
                     activeGameWindow.Topmost = true;
+                    activeGameWindow.Focus();
                 } else {
-                    if (activeGameWindow.WindowState == WindowState.Minimized) {
-                        activeGameWindow.WindowState = WindowState.Normal;
-                    }
+                    activeGameWindow.WindowState = WindowState.Normal;
+                    activeGameWindow.Show();
                     activeGameWindow.Activate();
                     activeGameWindow.Topmost = true;
                     activeGameWindow.Focus();
