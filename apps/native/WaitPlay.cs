@@ -1491,7 +1491,6 @@ namespace WaitPlayNative {
         private Border pillBorder;
         private TextBlock pillTitle;
         private TextBlock pillBadge;
-        private Border actionButton;
         private Border toggleButton;
         private StackPanel buttonStack;
         private System.Windows.Shapes.Path powerIconPath;
@@ -1695,46 +1694,11 @@ namespace WaitPlayNative {
                 }
             };
 
-            // Item B: Top Stadium Capsule (Vertical Pill with Gamepad Icon)
-            actionButton = new Border {
-                Width = 28,
-                Height = 44,
-                CornerRadius = new CornerRadius(14),
-                Background = new SolidColorBrush(Color.FromRgb(34, 34, 44)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72)),
-                BorderThickness = new Thickness(1.2),
-                Margin = new Thickness(0, 0, 0, 4),
-                Cursor = Cursors.Hand,
-                ToolTip = "Open WaitPlay Companion Game"
-            };
-
-            var gamepadPath = new System.Windows.Shapes.Path {
-                Data = Geometry.Parse("M4,7 C3,7 2,8 2,10 L2,12 C2,14.5 3.5,17 6,17 C7.5,17 8.5,16 9.5,14.5 L10.5,13 L13.5,13 L14.5,14.5 C15.5,16 16.5,17 18,17 C20.5,17 22,14.5 22,12 L22,10 C22,8 21,7 20,7 Z M6,10 L8,10 L8,11 L6,11 L6,13 L5,13 L5,11 L3,11 L3,10 L5,10 L5,8 L6,8 L6,10 Z M18,9.5 C18.5,9.5 19,10 19,10.5 C19,11 18.5,11.5 18,11.5 C17.5,11.5 17,11 17,10.5 C17,10 17.5,9.5 18,9.5 Z M16,11.5 C16.5,11.5 17,12 17,12.5 C17,13 16.5,13.5 16,13.5 C15.5,13.5 15,13 15,12.5 C15,12 15.5,11.5 16,11.5 Z"),
-                Fill = new SolidColorBrush(Color.FromRgb(255, 255, 255)),
-                Width = 16,
-                Height = 13,
-                Stretch = Stretch.Uniform,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            actionButton.Child = gamepadPath;
-
-            actionButton.MouseEnter += (s, e) => {
-                actionButton.Background = new SolidColorBrush(Color.FromRgb(46, 46, 60));
-                actionButton.BorderBrush = new SolidColorBrush(Color.FromRgb(80, 80, 105));
-                ShowTextPill();
-            };
-            actionButton.MouseLeave += (s, e) => {
-                actionButton.Background = new SolidColorBrush(Color.FromRgb(34, 34, 44));
-                actionButton.BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72));
-                HideTextPill();
-            };
-
-            // Item C: Bottom Circular Button (Power / Status toggle)
+            // Circular Button (Power / Status toggle)
             toggleButton = new Border {
-                Width = 28,
-                Height = 28,
-                CornerRadius = new CornerRadius(14),
+                Width = 30,
+                Height = 30,
+                CornerRadius = new CornerRadius(15),
                 Background = new SolidColorBrush(Color.FromRgb(34, 34, 44)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72)),
                 BorderThickness = new Thickness(1.2),
@@ -1790,7 +1754,6 @@ namespace WaitPlayNative {
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center
             };
-            buttonStack.Children.Add(actionButton);
             buttonStack.Children.Add(toggleButton);
 
             UpdateFlowGridLayout();
@@ -1865,11 +1828,6 @@ namespace WaitPlayNative {
                         DependencyObject dep = clickedDownSource;
                         bool handledClick = false;
                         while (dep != null && dep != this) {
-                            if (dep == actionButton) {
-                                OpenGameWindow();
-                                handledClick = true;
-                                break;
-                            }
                             if (dep == toggleButton) {
                                 Toggle();
                                 handledClick = true;
@@ -2006,8 +1964,8 @@ namespace WaitPlayNative {
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
 
-            double expW = 165;
-            double expH = 84;
+            double expW = 160;
+            double expH = 46;
 
             Width = expW;
             Height = expH;
@@ -2045,8 +2003,8 @@ namespace WaitPlayNative {
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
 
-            double expW = 165;
-            double expH = 84;
+            double expW = 160;
+            double expH = 46;
 
             if (collapsed) {
                 fullWidget.Visibility = Visibility.Collapsed;
