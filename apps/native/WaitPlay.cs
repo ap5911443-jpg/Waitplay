@@ -2080,8 +2080,8 @@ namespace WaitPlayNative {
                     // Free floating position
                     Width = 16;
                     Height = 52;
-                    Left = savedLeft + 138;
-                    Top = savedTop + 16;
+                    Left = savedLeft;
+                    Top = savedTop;
                     edgeHandle.Width = 10;
                     edgeHandle.Height = 48;
                     edgeHandle.CornerRadius = new CornerRadius(5);
