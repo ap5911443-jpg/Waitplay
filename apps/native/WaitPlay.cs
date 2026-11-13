@@ -1496,7 +1496,6 @@ namespace WaitPlayNative {
         private StackPanel buttonStack;
         private System.Windows.Shapes.Path powerIconPath;
         private Ellipse statusDot;
-        private Ellipse handleStatusDot;
         private DispatcherTimer collapseTimer;
         private DispatcherTimer textFadeTimer;
         private bool isPillHovered = false;
@@ -1506,6 +1505,8 @@ namespace WaitPlayNative {
         private bool isDragActive = false;
         private Point mouseDownPoint;
         private Point windowStartPoint;
+        private double savedLeft = 250;
+        private double savedTop = 250;
         private DependencyObject clickedDownSource = null;
         private MainWindow activeGameWindow = null;
         private IntPtr myHwnd = IntPtr.Zero;
@@ -1559,12 +1560,12 @@ namespace WaitPlayNative {
             ResizeMode = ResizeMode.NoResize;
 
             collapseTimer = new DispatcherTimer();
-            collapseTimer.Interval = TimeSpan.FromMilliseconds(2000);
+            collapseTimer.Interval = TimeSpan.FromMilliseconds(1500);
             collapseTimer.Tick += (s, e) => {
-                if (isDragActive || currentDock == DockPosition.Free) return;
+                if (isDragActive) return;
                 POINT pt;
                 GetCursorPos(out pt);
-                bool cursorInside = (pt.X >= Left - 10 && pt.X <= Left + Width + 10 && pt.Y >= Top - 10 && pt.Y <= Top + Height + 10);
+                bool cursorInside = (pt.X >= Left - 8 && pt.X <= Left + Width + 8 && pt.Y >= Top - 8 && pt.Y <= Top + Height + 8);
                 if (!cursorInside) {
                     collapseTimer.Stop();
                     SetCollapsed(true);
@@ -1593,41 +1594,25 @@ namespace WaitPlayNative {
 
             var rootGrid = new Grid();
 
-            // 1. Minimal Collapsed Edge Handle
+            // 1. Minimal Collapsed Capsule Handle (Matches Image #1)
             edgeHandle = new Border {
-                Width = 20,
-                Height = 62,
-                Background = new SolidColorBrush(Color.FromRgb(17, 17, 24)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(46, 46, 62)),
-                BorderThickness = new Thickness(1.2),
+                Width = 10,
+                Height = 48,
+                Background = new SolidColorBrush(Color.FromArgb(200, 20, 20, 28)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(148, 163, 184)),
+                BorderThickness = new Thickness(1.5),
+                CornerRadius = new CornerRadius(5),
                 Cursor = Cursors.Hand,
                 ToolTip = "WaitPlay (Hover to expand • Click to toggle)",
-                Visibility = Visibility.Visible
-            };
-
-            var handleStack = new StackPanel {
+                HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Center
+                Visibility = Visibility.Collapsed
             };
-            handleStatusDot = new Ellipse {
-                Width = 6,
-                Height = 6,
-                Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
-                Margin = new Thickness(0, 0, 0, 4)
-            };
-            var grip = new TextBlock {
-                Text = "\u22EE", // ⋮
-                FontSize = 12,
-                Foreground = new SolidColorBrush(Color.FromRgb(140, 140, 165)),
-                HorizontalAlignment = HorizontalAlignment.Center
-            };
-            handleStack.Children.Add(handleStatusDot);
-            handleStack.Children.Add(grip);
-            edgeHandle.Child = handleStack;
 
             edgeHandle.MouseEnter += (s, e) => {
                 collapseTimer.Stop();
                 SetCollapsed(false);
+                ShowTextPill();
             };
             edgeHandle.PreviewMouseLeftButtonDown += (s, e) => {
                 if (!isDragActive) {
@@ -1819,7 +1804,7 @@ namespace WaitPlayNative {
                 collapseTimer.Stop();
             };
             MouseLeave += (s, e) => {
-                if (currentDock != DockPosition.Free && !isDragActive) {
+                if (!isDragActive) {
                     collapseTimer.Start();
                 }
             };
@@ -2007,9 +1992,12 @@ namespace WaitPlayNative {
                 if (Left > screenW - Width) Left = screenW - Width;
                 if (Top < 0) Top = 0;
                 if (Top > screenH - Height) Top = screenH - Height;
+                savedLeft = Left;
+                savedTop = Top;
                 UpdateFlowGridLayout();
                 SetCollapsed(false);
                 SavePosition();
+                collapseTimer.Start();
             }
         }
 
@@ -2044,21 +2032,82 @@ namespace WaitPlayNative {
                     break;
             }
 
+            savedLeft = Left;
+            savedTop = Top;
             UpdateFlowGridLayout();
             SetCollapsed(false);
             SavePosition();
+            collapseTimer.Start();
         }
 
         private void SetCollapsed(bool collapsed) {
-            isCollapsed = false;
+            isCollapsed = collapsed;
+            double screenW = SystemParameters.WorkArea.Width;
+            double screenH = SystemParameters.WorkArea.Height;
+
             double expW = 165;
             double expH = 84;
 
-            edgeHandle.Visibility = Visibility.Collapsed;
-            fullWidget.Visibility = Visibility.Visible;
-            Width = expW;
-            Height = expH;
-            collapseTimer.Stop();
+            if (collapsed) {
+                fullWidget.Visibility = Visibility.Collapsed;
+                edgeHandle.Visibility = Visibility.Visible;
+
+                if (currentDock == DockPosition.Right) {
+                    Width = 14;
+                    Height = 52;
+                    Left = screenW - 14;
+                    Top = savedTop + 16;
+                    edgeHandle.Width = 10;
+                    edgeHandle.Height = 48;
+                    edgeHandle.CornerRadius = new CornerRadius(5);
+                } else if (currentDock == DockPosition.Left) {
+                    Width = 14;
+                    Height = 52;
+                    Left = 2;
+                    Top = savedTop + 16;
+                    edgeHandle.Width = 10;
+                    edgeHandle.Height = 48;
+                    edgeHandle.CornerRadius = new CornerRadius(5);
+                } else if (currentDock == DockPosition.Bottom) {
+                    Width = 52;
+                    Height = 14;
+                    Left = savedLeft + 56;
+                    Top = screenH - 14;
+                    edgeHandle.Width = 48;
+                    edgeHandle.Height = 10;
+                    edgeHandle.CornerRadius = new CornerRadius(5);
+                } else {
+                    // Free floating position
+                    Width = 16;
+                    Height = 52;
+                    Left = savedLeft + 138;
+                    Top = savedTop + 16;
+                    edgeHandle.Width = 10;
+                    edgeHandle.Height = 48;
+                    edgeHandle.CornerRadius = new CornerRadius(5);
+                }
+            } else {
+                edgeHandle.Visibility = Visibility.Collapsed;
+                fullWidget.Visibility = Visibility.Visible;
+                Width = expW;
+                Height = expH;
+
+                if (currentDock == DockPosition.Right) {
+                    Left = screenW - expW - 4;
+                    Top = savedTop;
+                } else if (currentDock == DockPosition.Left) {
+                    Left = 4;
+                    Top = savedTop;
+                } else if (currentDock == DockPosition.Bottom) {
+                    Left = savedLeft;
+                    Top = screenH - expH - 4;
+                } else {
+                    Left = savedLeft;
+                    Top = savedTop;
+                }
+
+                collapseTimer.Stop();
+            }
         }
 
         private void Toggle() {
@@ -2122,14 +2171,11 @@ namespace WaitPlayNative {
                 pillBadge.Text = "ON";
                 pillBadge.Foreground = new SolidColorBrush(Color.FromRgb(0, 240, 255));
                 statusDot.Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255));
-                handleStatusDot.Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255));
                 if (powerIconPath != null) powerIconPath.Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255));
                 pillBorder.ToolTip = "WaitPlay is ON • Companion micro-games pop out while agents are working (Click to turn OFF)";
             } else {
                 pillBadge.Text = "OFF";
                 pillBadge.Foreground = new SolidColorBrush(Color.FromRgb(148, 163, 184));
-                statusDot.Fill = new SolidColorBrush(Color.FromRgb(100, 116, 139));
-                handleStatusDot.Fill = new SolidColorBrush(Color.FromRgb(100, 116, 139));
                 if (powerIconPath != null) powerIconPath.Fill = new SolidColorBrush(Color.FromRgb(100, 116, 139));
                 pillBorder.ToolTip = "WaitPlay is OFF • Interface muted across all terminal tabs (Click to turn ON)";
             }
@@ -2213,8 +2259,11 @@ namespace WaitPlayNative {
                                 currentDock = DockPosition.Free;
                                 Left = l;
                                 Top = t;
+                                savedLeft = Left;
+                                savedTop = Top;
                                 UpdateFlowGridLayout();
                                 SetCollapsed(false);
+                                collapseTimer.Start();
                                 return;
                             }
                         }
@@ -2224,9 +2273,12 @@ namespace WaitPlayNative {
             currentDock = DockPosition.Free;
             Left = 250;
             Top = 250;
+            savedLeft = Left;
+            savedTop = Top;
             UpdateFlowGridLayout();
             SetCollapsed(false);
             SavePosition();
+            collapseTimer.Start();
         }
 
         private void SavePosition() {
