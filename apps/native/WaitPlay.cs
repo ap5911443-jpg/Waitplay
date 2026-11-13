@@ -1594,13 +1594,12 @@ namespace WaitPlayNative {
             };
 
             flowGrid = new Grid {
-                HorizontalAlignment = HorizontalAlignment.Left,
+                HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Top
             };
             flowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            flowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             flowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
+            flowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             // Item A: Left Pill (WaitPlay Alt+W / ON) - Short & Sweet
             pillBorder = new Border {
                 Background = new SolidColorBrush(Color.FromRgb(17, 17, 22)),
@@ -1836,31 +1835,19 @@ namespace WaitPlayNative {
         private void UpdateFlowGridLayout() {
             flowGrid.Children.Clear();
 
-            if (currentDock == DockPosition.Left) {
-                // When docked on Left edge: Button on Left (Col 0), Pill extends to Right (Col 1)
-                Grid.SetRow(toggleButton, 0);
-                Grid.SetColumn(toggleButton, 0);
-                toggleButton.Margin = new Thickness(0, 0, 6, 0);
-                flowGrid.Children.Add(toggleButton);
+            // Item A: WaitPlay ON/OFF Pill on Top (Row 0)
+            Grid.SetRow(pillBorder, 0);
+            Grid.SetColumn(pillBorder, 0);
+            pillBorder.HorizontalAlignment = HorizontalAlignment.Center;
+            pillBorder.Margin = new Thickness(0, 0, 0, 6);
+            flowGrid.Children.Add(pillBorder);
 
-                Grid.SetRow(pillBorder, 0);
-                Grid.SetColumn(pillBorder, 1);
-                pillBorder.VerticalAlignment = VerticalAlignment.Center;
-                pillBorder.Margin = new Thickness(0);
-                flowGrid.Children.Add(pillBorder);
-            } else {
-                // When docked on Right edge or Free: Pill on Left (Col 0), Button on Right (Col 1)
-                Grid.SetRow(pillBorder, 0);
-                Grid.SetColumn(pillBorder, 0);
-                pillBorder.VerticalAlignment = VerticalAlignment.Center;
-                pillBorder.Margin = new Thickness(0, 0, 6, 0);
-                flowGrid.Children.Add(pillBorder);
-
-                Grid.SetRow(toggleButton, 0);
-                Grid.SetColumn(toggleButton, 1);
-                toggleButton.Margin = new Thickness(0);
-                flowGrid.Children.Add(toggleButton);
-            }
+            // Item B: Circular Power Button directly underneath (Row 1)
+            Grid.SetRow(toggleButton, 1);
+            Grid.SetColumn(toggleButton, 0);
+            toggleButton.HorizontalAlignment = HorizontalAlignment.Center;
+            toggleButton.Margin = new Thickness(0);
+            flowGrid.Children.Add(toggleButton);
         }
 
         private void StopDragging() {
@@ -1929,8 +1916,8 @@ namespace WaitPlayNative {
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
 
-            double expW = 160;
-            double expH = 46;
+            double expW = 144;
+            double expH = 88;
 
             if (collapsed && currentDock != DockPosition.Free) {
                 fullWidget.Visibility = Visibility.Collapsed;
