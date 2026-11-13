@@ -13,7 +13,19 @@ export default function (pi: PiEmitter) {
   const DISMISS_FILE = path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay", ".waitplay-dismissed.json");
   const REG_FILE = path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay", ".waitplay-terminals.json");
 
-  // Determine stable terminal tab label (e.g. "Term - 1", "Term - 2") for this specific OMP process
+  function isPidAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err: unknown) {
+      if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "EPERM") {
+        return true;
+      }
+      return false;
+    }
+  }
+
+  // Determine stable terminal tab label (reusing lowest available slot 1, 2, ... among active processes)
   function getTerminalInfo(): { label: string; sessionKey: string } {
     try {
       const dir = path.dirname(REG_FILE);
@@ -23,13 +35,25 @@ export default function (pi: PiEmitter) {
         try { data = JSON.parse(fs.readFileSync(REG_FILE, "utf-8")); } catch {}
       }
       const pids: Record<string, number> = (data.pids as Record<string, number>) || {};
+
+      // Prune dead process IDs so slots are reclaimed immediately
+      for (const p of Object.keys(pids)) {
+        const pidNum = parseInt(p, 10);
+        if (!isPidAlive(pidNum)) {
+          delete pids[p];
+        }
+      }
+
       const pidStr = String(process.pid);
       let num: number;
       if (pids[pidStr]) {
         num = pids[pidStr];
       } else {
-        const nums = Object.values(pids);
-        num = nums.length > 0 ? Math.max(...nums) + 1 : 1;
+        const used = new Set(Object.values(pids));
+        num = 1;
+        while (used.has(num)) {
+          num++;
+        }
         pids[pidStr] = num;
         data.pids = pids;
         fs.writeFileSync(REG_FILE, JSON.stringify(data, null, 2), "utf-8");
