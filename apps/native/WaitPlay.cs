@@ -2133,8 +2133,11 @@ namespace WaitPlayNative {
                     if (p.Id != currentPid) {
                         try {
                             string title = p.MainWindowTitle;
-                            if (string.IsNullOrEmpty(title) || !title.Contains("Widget")) {
+                            if (string.IsNullOrEmpty(title) || (!title.Contains("Widget") && !title.Contains("Flow"))) {
                                 p.CloseMainWindow();
+                                if (!p.WaitForExit(150)) {
+                                    p.Kill();
+                                }
                             }
                         } catch {}
                     }
