@@ -3,17 +3,28 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
-}
-
-:root.light {
-  color-scheme: light;
+  --color-canvas: #FFFFEB;
+  --color-canvas-muted: #E4E4D0;
+  --color-ink: #1A1A1A;
+  --color-ink-soft: #666666;
+  --color-ink-muted: #888888;
+  --color-forest: #034F46;
+  --color-forest-soft: #639085;
+  --color-lavender: #F0D7FF;
+  --color-lavender-ink: #1A1A1A;
+  --color-orange: #FFA946;
+  --color-border: rgba(26, 26, 26, 0.20);
+  --color-border-soft: rgba(26, 26, 26, 0.08);
+  --color-white: #FFFFFF;
 }
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: Figtree, system-ui, -apple-system, sans-serif;
+  color: #1A1A1A;
+  background-color: #FFFFEB;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* Card flip 3D perspective styles for memory game */

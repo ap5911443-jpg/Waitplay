@@ -5,6 +5,8 @@ import {
   Moon,
   Sun,
   Sparkles,
+  Film,
+  Tv,
 } from "lucide-react";
 import { UserPreferences, GameScoreRecord } from "@waitplay/shared";
 import { useBridgeConnection } from "../hooks/useBridgeConnection";
@@ -22,11 +24,13 @@ import { SettingsModal } from "../components/settings/SettingsModal";
 export interface DashboardPageProps {
   preferences: UserPreferences;
   onUpdatePreferences: (updated: UserPreferences) => void;
+  onOpenShowcase?: () => void;
 }
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({
   preferences,
   onUpdatePreferences,
+  onOpenShowcase,
 }) => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const isPopup =
@@ -38,6 +42,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [overrideDisplayMode, setOverrideDisplayMode] = useState<"compact" | "fullscreen" | null>(
     isPopup ? "fullscreen" : null
   );
+  const [companionTab, setCompanionTab] = useState<"games" | "instagram" | "youtube">("instagram");
   const bridge = useBridgeConnection({
     onStateChange: (enabled) => {
       if (preferences.companionEnabled !== enabled) {
@@ -87,8 +92,17 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         </div>
 
         <div className="flex items-center space-x-2">
+          {onOpenShowcase && !isPopup && (
+            <button
+              onClick={onOpenShowcase}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-ink bg-lavender hover:bg-lavender-hover border border-ink/20 transition-all cursor-pointer shadow-subtle"
+              title="Return to Wispr Flow Showcase Website"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-forest" />
+              <span>Showcase Website</span>
+            </button>
+          )}
           <button
-            onClick={handleToggleTheme}
             className="p-2 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 border border-zinc-800 transition-colors"
             title="Toggle Theme"
           >
@@ -131,6 +145,54 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       {!isPopup && (
         <>
           <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-8 py-6 space-y-6">
+            {/* Companion Experience Quick Launcher */}
+            <div className="p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800 flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 flex items-center justify-center text-white shadow-md">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-100">AI Waiting Experiences</h3>
+                  <p className="text-xs text-zinc-400">Authentic social entertainment while your coding agent reasons</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2.5 w-full md:w-auto">
+                <button
+                  onClick={() => {
+                    setCompanionTab("instagram");
+                    stateMachine.openGameManually();
+                  }}
+                  className="flex-1 md:flex-none flex items-center justify-center space-x-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#833ab4]/20 via-[#fd1d1d]/20 to-[#fcb045]/20 hover:from-[#833ab4]/30 hover:via-[#fd1d1d]/30 hover:to-[#fcb045]/30 border border-[#fd1d1d]/30 text-white text-xs font-semibold transition-all cursor-pointer shadow-xs"
+                >
+                  <Film className="w-4 h-4 text-[#fd1d1d]" />
+                  <span>Instagram (Reels & Feed)</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setCompanionTab("youtube");
+                    stateMachine.openGameManually();
+                  }}
+                  className="flex-1 md:flex-none flex items-center justify-center space-x-2 px-3.5 py-2 rounded-xl bg-[#CC0000]/15 hover:bg-[#CC0000]/25 border border-[#CC0000]/30 text-white text-xs font-semibold transition-all cursor-pointer shadow-xs"
+                >
+                  <Tv className="w-4 h-4 text-[#CC0000]" />
+                  <span>YouTube</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setCompanionTab("games");
+                    stateMachine.openGameManually();
+                  }}
+                  className="flex-1 md:flex-none flex items-center justify-center space-x-2 px-3.5 py-2 rounded-xl bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 text-white text-xs font-semibold transition-all cursor-pointer shadow-xs"
+                >
+                  <Gamepad2 className="w-4 h-4 text-blue-400" />
+                  <span>Micro-Games</span>
+                </button>
+              </div>
+            </div>
+
             {/* Row 1: Agent Telemetry & Connection */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2">
@@ -191,6 +253,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           taskElapsedSeconds={stateMachine.currentTaskElapsedSeconds}
           preferences={preferences}
           isPaused={stateMachine.isPaused}
+          initialTab={companionTab}
           onToggleMinimize={stateMachine.toggleMinimize}
           onSwitchToFullscreen={() => setOverrideDisplayMode("fullscreen")}
           onClose={stateMachine.closeGameManually}
@@ -206,6 +269,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           taskElapsedSeconds={stateMachine.currentTaskElapsedSeconds}
           preferences={preferences}
           isPaused={stateMachine.isPaused}
+          initialTab={companionTab}
           onExitFullscreen={() => setOverrideDisplayMode("compact")}
           onClose={stateMachine.closeGameManually}
           onGameComplete={handleGameComplete}

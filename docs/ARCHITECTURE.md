@@ -38,6 +38,12 @@ WaitPlay is a browser-based interactive gaming companion for users of AI coding 
 +------------------------------------------------------------------+
 ```
 
+## OMP Completion Detection
+
+The OMP watcher tails the active session JSONL file and sends lifecycle events to the bridge. A `task_completed` event is delayed by 5 seconds after a candidate assistant stop message. Any subsequent JSONL activity cancels that timer, including tool execution, tool results, custom system events, subagent completion messages, and internal events. This prevents the companion from closing while an agent is still continuing work after a temporary stop.
+
+The watcher polls the session file every 150 milliseconds. The bridge and WebSocket path remain local and synchronous; the completion delay is intentional session-settling protection, not network latency.
+
 ## Security Model
 
 1. **Loopback Only:** All network sockets listen exclusively on `127.0.0.1` and reject non-loopback clients. Host header validation prevents DNS rebinding.

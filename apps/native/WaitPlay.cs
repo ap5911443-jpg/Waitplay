@@ -29,6 +29,39 @@ namespace WaitPlayNative {
 
     public class MainWindow : Window {
         private const int BRIDGE_PORT = 3150;
+
+        // Wispr Flow Design Tokens from design.md
+        private static readonly Color CanvasColor = Color.FromRgb(255, 255, 235);        // #FFFFEB Warm cream canvas
+        private static readonly Color CanvasMutedColor = Color.FromRgb(244, 244, 226);   // #F4F4E2 Subtle panel contrast
+        private static readonly Color CanvasBorderColor = Color.FromRgb(228, 228, 208);  // #E4E4D0 Muted cream border
+        private static readonly Color InkColor = Color.FromRgb(26, 26, 26);              // #1A1A1A Main high-contrast text
+        private static readonly Color InkSoftColor = Color.FromRgb(102, 102, 102);       // #666666 Supporting text
+        private static readonly Color InkMutedColor = Color.FromRgb(150, 150, 130);      // #969682 Subtle captions & question marks
+        private static readonly Color ForestColor = Color.FromRgb(3, 79, 70);            // #034F46 Deep forest accent
+        private static readonly Color ForestSoftColor = Color.FromRgb(99, 144, 133);     // #639085 Soft teal/green
+        private static readonly Color LavenderColor = Color.FromRgb(240, 215, 255);      // #F0D7FF Primary CTA & flipped card
+        private static readonly Color OrangeColor = Color.FromRgb(255, 169, 70);         // #FFA946 Warm accent
+        private static readonly Color CardBgColor = Color.FromRgb(255, 255, 255);        // #FFFFFF Pure white card
+        private static readonly Color CardBorderColor = Color.FromRgb(220, 220, 200);    // Thin border
+
+        private static ControlTemplate CreateRoundedButtonTemplate(CornerRadius radius) {
+            var template = new ControlTemplate(typeof(Button));
+            var borderFactory = new FrameworkElementFactory(typeof(Border));
+            borderFactory.Name = "border";
+            borderFactory.SetValue(Border.CornerRadiusProperty, radius);
+            borderFactory.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Button.BackgroundProperty));
+            borderFactory.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Button.BorderBrushProperty));
+            borderFactory.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Button.BorderThicknessProperty));
+
+            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
+            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+            borderFactory.AppendChild(cp);
+
+            template.VisualTree = borderFactory;
+            return template;
+        }
+
         private string[] EMOJIS = new string[] {
             "\uD83D\uDE80", // 🚀
             "\u26A1",       // ⚡
@@ -39,7 +72,6 @@ namespace WaitPlayNative {
             "\uD83D\uDC8E", // 💎
             "\uD83D\uDEE1"  // 🛡️
         };
-
         private List<CardModel> cards = new List<CardModel>();
         private CardModel firstCard = null;
         private CardModel secondCard = null;
@@ -185,19 +217,19 @@ namespace WaitPlayNative {
         }
 
         private void InitializeWindow() {
-            Title = "WaitPlay • AI Agent Companion";
+            Title = "WaitPlay • Companion Game";
             Width = 620;
             Height = 680;
             MinWidth = 540;
             MinHeight = 600;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            Background = new SolidColorBrush(Color.FromRgb(15, 15, 20)); // #0f0f14
-            Foreground = new SolidColorBrush(Color.FromRgb(240, 240, 245));
+            Background = new SolidColorBrush(CanvasColor);
+            Foreground = new SolidColorBrush(InkColor);
             Topmost = true;
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.CanResizeWithGrip;
             AllowsTransparency = true;
-            BorderBrush = new SolidColorBrush(Color.FromRgb(45, 45, 60));
+            BorderBrush = new SolidColorBrush(CanvasBorderColor);
             BorderThickness = new Thickness(1.5);
             SourceInitialized += (s, e) => {
                 try { myHwnd = new WindowInteropHelper(this).Handle; } catch {}
@@ -230,17 +262,18 @@ namespace WaitPlayNative {
 
         private void BuildUI() {
             var rootGrid = new Grid();
-            rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(46) }); // Header
+            rootGrid.Background = new SolidColorBrush(CanvasColor);
+            rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(48) }); // Header
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(56) }); // Stats bar
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Cards
-            rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(36) }); // Footer
+            rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(38) }); // Footer
 
             // Drag window on header click
             var header = new Border {
-                Background = new SolidColorBrush(Color.FromRgb(22, 22, 30)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(38, 38, 50)),
+                Background = new SolidColorBrush(CanvasColor),
+                BorderBrush = new SolidColorBrush(CanvasBorderColor),
                 BorderThickness = new Thickness(0, 0, 0, 1),
-                Padding = new Thickness(14, 0, 14, 0)
+                Padding = new Thickness(16, 0, 14, 0)
             };
             header.MouseLeftButtonDown += (s, e) => {
                 if (e.ButtonState == MouseButtonState.Pressed) DragMove();
@@ -250,26 +283,38 @@ namespace WaitPlayNative {
 
             // Left branding
             var brandPanel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            var gameIcon = new TextBlock {
-                Text = "\uD83C\uDFA7", // 🎮
-                FontSize = 18,
-                Margin = new Thickness(0, 0, 8, 0),
+            var iconBox = new Border {
+                Width = 26,
+                Height = 26,
+                CornerRadius = new CornerRadius(7),
+                Background = new SolidColorBrush(ForestColor),
+                Margin = new Thickness(0, 0, 10, 0),
                 VerticalAlignment = VerticalAlignment.Center
             };
+            var gameIcon = new TextBlock {
+                Text = "\uD83C\uDFA7", // 🎧
+                FontSize = 14,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            iconBox.Child = gameIcon;
+
             var appTitle = new TextBlock {
                 Text = "WaitPlay",
-                FontWeight = FontWeights.Bold,
-                FontSize = 14,
-                Foreground = new SolidColorBrush(Color.FromRgb(255, 255, 255)),
+                FontFamily = new FontFamily("EB Garamond, Georgia, serif"),
+                FontWeight = FontWeights.Normal,
+                FontSize = 19,
+                Foreground = new SolidColorBrush(InkColor),
                 VerticalAlignment = VerticalAlignment.Center
             };
             var appSub = new TextBlock {
-                Text = " • Companion Game",
+                Text = " \u2022 Companion Game",
+                FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
                 FontSize = 12,
-                Foreground = new SolidColorBrush(Color.FromRgb(140, 140, 160)),
+                Foreground = new SolidColorBrush(InkSoftColor),
                 VerticalAlignment = VerticalAlignment.Center
             };
-            brandPanel.Children.Add(gameIcon);
+            brandPanel.Children.Add(iconBox);
             brandPanel.Children.Add(appTitle);
             brandPanel.Children.Add(appSub);
             DockPanel.SetDock(brandPanel, Dock.Left);
@@ -278,15 +323,14 @@ namespace WaitPlayNative {
             // Right window controls
             var controlsPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
 
-
             var btnMin = new Button {
                 Content = "\u2014",
                 Width = 28,
                 Height = 26,
                 Background = Brushes.Transparent,
-                Foreground = new SolidColorBrush(Color.FromRgb(180, 180, 200)),
+                Foreground = new SolidColorBrush(InkSoftColor),
                 BorderThickness = new Thickness(0),
-                FontSize = 11,
+                FontSize = 12,
                 Cursor = Cursors.Hand,
                 Margin = new Thickness(0, 0, 4, 0)
             };
@@ -300,11 +344,17 @@ namespace WaitPlayNative {
                 Width = 28,
                 Height = 26,
                 Background = Brushes.Transparent,
-                Foreground = new SolidColorBrush(Color.FromRgb(220, 100, 100)),
+                Foreground = new SolidColorBrush(InkSoftColor),
                 BorderThickness = new Thickness(0),
-                FontSize = 12,
+                FontSize = 13,
                 FontWeight = FontWeights.Bold,
                 Cursor = Cursors.Hand
+            };
+            btnClose.MouseEnter += (s, e) => {
+                btnClose.Foreground = new SolidColorBrush(Color.FromRgb(220, 38, 38));
+            };
+            btnClose.MouseLeave += (s, e) => {
+                btnClose.Foreground = new SolidColorBrush(InkSoftColor);
             };
             btnClose.Click += (s, e) => {
                 if (hasBeenActive && !hasFinished) {
@@ -324,8 +374,8 @@ namespace WaitPlayNative {
 
             // Row 1: Telemetry & Stats Bar
             var statsBar = new Border {
-                Background = new SolidColorBrush(Color.FromRgb(18, 18, 24)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(32, 32, 42)),
+                Background = new SolidColorBrush(CanvasMutedColor),
+                BorderBrush = new SolidColorBrush(CanvasBorderColor),
                 BorderThickness = new Thickness(0, 0, 0, 1),
                 Padding = new Thickness(16, 8, 16, 8)
             };
@@ -334,11 +384,11 @@ namespace WaitPlayNative {
             // Container for Status Pill + Terminal Tab Badge
             var statusContainer = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
 
-            // Status Pill
+            // Status Pill (Forest tint from design.md)
             statusPill = new Border {
                 CornerRadius = new CornerRadius(12),
-                Background = new SolidColorBrush(Color.FromArgb(40, 59, 130, 246)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(90, 59, 130, 246)),
+                Background = new SolidColorBrush(Color.FromArgb(28, 3, 79, 70)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(80, 3, 79, 70)),
                 BorderThickness = new Thickness(1),
                 Padding = new Thickness(10, 4, 12, 4),
                 VerticalAlignment = VerticalAlignment.Center
@@ -347,24 +397,25 @@ namespace WaitPlayNative {
             statusDot = new Ellipse {
                 Width = 8,
                 Height = 8,
-                Fill = new SolidColorBrush(Color.FromRgb(59, 130, 246)),
+                Fill = new SolidColorBrush(ForestColor),
                 Margin = new Thickness(0, 0, 6, 0),
                 VerticalAlignment = VerticalAlignment.Center
             };
             string initialPill = (activeAgentName == "ChatGPT")
                 ? "ChatGPT is Reasoning..."
                 : (activeAgentName == "OMP")
-                    ? "OMP • Gemini 3.8 Flash"
+                    ? "OMP \u2022 Gemini 3.8 Flash"
                     : (activeAgentName == "OpenCode")
-                        ? "OpenCode • GLM 5.3 Flash"
+                        ? "OpenCode \u2022 GLM 5.3 Flash"
                         : (activeAgentName == "Cline")
-                            ? "Cline • Claude 3.7 Sonnet"
+                            ? "Cline \u2022 Claude 3.7 Sonnet"
                             : string.Format("{0} is Working...", activeAgentName);
             statusPillText = new TextBlock {
                 Text = initialPill,
+                FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
                 FontSize = 11,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(147, 197, 253)),
+                Foreground = new SolidColorBrush(ForestColor),
                 VerticalAlignment = VerticalAlignment.Center
             };
             pillContent.Children.Add(statusDot);
@@ -375,8 +426,8 @@ namespace WaitPlayNative {
             // Terminal Tab Badge directly to the right of Status Pill
             terminalPill = new Border {
                 CornerRadius = new CornerRadius(10),
-                Background = new SolidColorBrush(Color.FromArgb(35, 255, 255, 255)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(60, 255, 255, 255)),
+                Background = new SolidColorBrush(CardBgColor),
+                BorderBrush = new SolidColorBrush(CanvasBorderColor),
                 BorderThickness = new Thickness(1),
                 Padding = new Thickness(8, 3, 8, 3),
                 Margin = new Thickness(8, 0, 0, 0),
@@ -385,9 +436,10 @@ namespace WaitPlayNative {
             };
             terminalText = new TextBlock {
                 Text = !string.IsNullOrEmpty(terminalLabel) ? terminalLabel : "Term - 1",
+                FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
                 FontSize = 11,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(210, 210, 230)),
+                Foreground = new SolidColorBrush(InkColor),
                 VerticalAlignment = VerticalAlignment.Center
             };
             terminalPill.Child = terminalText;
@@ -395,28 +447,33 @@ namespace WaitPlayNative {
 
             DockPanel.SetDock(statusContainer, Dock.Left);
             statsPanel.Children.Add(statusContainer);
+
             // Metrics (Score, Matches, Timer)
             var metricsPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
 
             timerText = new TextBlock {
                 Text = "\u23F1 0:00",
+                FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
                 FontSize = 12,
-                Foreground = new SolidColorBrush(Color.FromRgb(200, 200, 215)),
+                Foreground = new SolidColorBrush(InkSoftColor),
                 Margin = new Thickness(0, 0, 16, 0),
                 VerticalAlignment = VerticalAlignment.Center
             };
             scoreText = new TextBlock {
                 Text = "\u2B50 0 pts",
+                FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
                 FontSize = 12,
-                FontWeight = FontWeights.Bold,
-                Foreground = new SolidColorBrush(Color.FromRgb(250, 204, 21)),
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(217, 119, 6)),
                 Margin = new Thickness(0, 0, 16, 0),
                 VerticalAlignment = VerticalAlignment.Center
             };
             matchesText = new TextBlock {
                 Text = "\uD83C\uDCCF 0/8",
+                FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
                 FontSize = 12,
-                Foreground = new SolidColorBrush(Color.FromRgb(52, 211, 153)),
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(ForestColor),
                 VerticalAlignment = VerticalAlignment.Center
             };
 
@@ -431,7 +488,10 @@ namespace WaitPlayNative {
             rootGrid.Children.Add(statsBar);
 
             // Row 2: 4x4 Cards Grid
-            var cardsContainer = new Grid { Margin = new Thickness(16, 16, 16, 16) };
+            var cardsContainer = new Grid {
+                Margin = new Thickness(16, 16, 16, 16),
+                Background = new SolidColorBrush(CanvasColor)
+            };
             cardGrid = new UniformGrid {
                 Rows = 4,
                 Columns = 4,
@@ -442,11 +502,11 @@ namespace WaitPlayNative {
 
             // Overlay banner for win / completed notification
             bannerBorder = new Border {
-                Background = new SolidColorBrush(Color.FromArgb(235, 12, 12, 18)),
-                CornerRadius = new CornerRadius(16),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(16, 185, 129)),
+                Background = new SolidColorBrush(Color.FromArgb(248, 255, 255, 245)),
+                CornerRadius = new CornerRadius(20),
+                BorderBrush = new SolidColorBrush(ForestColor),
                 BorderThickness = new Thickness(2),
-                Padding = new Thickness(24),
+                Padding = new Thickness(28),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
                 Visibility = Visibility.Collapsed
@@ -454,26 +514,29 @@ namespace WaitPlayNative {
             var bannerContent = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
             bannerTitle = new TextBlock {
                 Text = "\uD83C\uDF89 Agent Work is Done!",
-                FontSize = 20,
-                FontWeight = FontWeights.Bold,
-                Foreground = new SolidColorBrush(Color.FromRgb(52, 211, 153)),
+                FontFamily = new FontFamily("EB Garamond, Georgia, serif"),
+                FontSize = 24,
+                FontWeight = FontWeights.Normal,
+                Foreground = new SolidColorBrush(ForestColor),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 0, 0, 8)
             };
             bannerSubtitle = new TextBlock {
                 Text = "Want to keep playing or quit?",
+                FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
                 FontSize = 14,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(240, 240, 245)),
+                Foreground = new SolidColorBrush(InkColor),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 0, 0, 6)
             };
             countdownText = new TextBlock {
                 Text = "Score: 0 pts \u2022 Press Enter to Quit or click Keep Playing",
+                FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
                 FontSize = 11,
-                Foreground = new SolidColorBrush(Color.FromRgb(150, 150, 175)),
+                Foreground = new SolidColorBrush(InkSoftColor),
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 0, 0, 14)
+                Margin = new Thickness(0, 0, 0, 16)
             };
             var bannerBtnRow = new StackPanel {
                 Orientation = Orientation.Horizontal,
@@ -481,28 +544,37 @@ namespace WaitPlayNative {
             };
             btnExit = new Button {
                 Content = "Quit to Terminal",
+                FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
                 FontSize = 13,
-                FontWeight = FontWeights.Bold,
-                Foreground = Brushes.White,
-                Background = new SolidColorBrush(Color.FromRgb(16, 185, 129)),
-                BorderThickness = new Thickness(0),
-                Padding = new Thickness(18, 9, 18, 9),
-                Cursor = Cursors.Hand
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(InkColor),
+                Background = new SolidColorBrush(LavenderColor),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(60, 26, 26, 26)),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(20, 10, 20, 10),
+                Cursor = Cursors.Hand,
+                Template = CreateRoundedButtonTemplate(new CornerRadius(10))
             };
             btnExit.Click += (s, e) => Close();
             var btnKeepPlaying = new Button {
                 Content = "Keep Playing \uD83C\uDFAE",
+                FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
                 FontSize = 13,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(147, 197, 253)),
-                Background = new SolidColorBrush(Color.FromRgb(35, 35, 52)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(55, 55, 75)),
+                Foreground = new SolidColorBrush(ForestColor),
+                Background = new SolidColorBrush(CardBgColor),
+                BorderBrush = new SolidColorBrush(CanvasBorderColor),
                 BorderThickness = new Thickness(1),
-                Padding = new Thickness(16, 9, 16, 9),
+                Padding = new Thickness(18, 10, 18, 10),
                 Margin = new Thickness(12, 0, 0, 0),
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                Template = CreateRoundedButtonTemplate(new CornerRadius(10))
             };
             btnKeepPlaying.Click += (s, e) => {
+                if (exitTimer != null) {
+                    exitTimer.Stop();
+                    exitTimer = null;
+                }
                 bannerBorder.Visibility = Visibility.Collapsed;
             };
             bannerBtnRow.Children.Add(btnExit);
@@ -519,16 +591,17 @@ namespace WaitPlayNative {
 
             // Row 3: Footer hints
             var footer = new Border {
-                Background = new SolidColorBrush(Color.FromRgb(18, 18, 24)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(32, 32, 42)),
+                Background = new SolidColorBrush(CanvasMutedColor),
+                BorderBrush = new SolidColorBrush(CanvasBorderColor),
                 BorderThickness = new Thickness(0, 1, 0, 0),
                 Padding = new Thickness(16, 0, 16, 0)
             };
             var footerPanel = new DockPanel();
             hintText = new TextBlock {
                 Text = "Match all pairs before your coding agent finishes \u2022 Automatically closes on turn end",
-                FontSize = 10,
-                Foreground = new SolidColorBrush(Color.FromRgb(100, 100, 120)),
+                FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
+                FontSize = 10.5,
+                Foreground = new SolidColorBrush(InkSoftColor),
                 VerticalAlignment = VerticalAlignment.Center
             };
             DockPanel.SetDock(hintText, Dock.Left);
@@ -536,13 +609,16 @@ namespace WaitPlayNative {
 
             var restartBtn = new Button {
                 Content = "\u21BB Restart",
-                FontSize = 10,
-                Foreground = new SolidColorBrush(Color.FromRgb(140, 140, 160)),
+                FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
+                FontSize = 11,
+                FontWeight = FontWeights.Medium,
+                Foreground = new SolidColorBrush(InkColor),
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
                 Cursor = Cursors.Hand,
                 VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Right
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Padding = new Thickness(6, 3, 6, 3)
             };
             restartBtn.Click += (s, e) => StartGame();
             DockPanel.SetDock(restartBtn, Dock.Right);
@@ -604,19 +680,34 @@ namespace WaitPlayNative {
 
                 var btn = new Button {
                     Margin = new Thickness(4),
-                    Background = new SolidColorBrush(Color.FromRgb(30, 30, 40)),
-                    BorderBrush = new SolidColorBrush(Color.FromRgb(50, 50, 68)),
+                    Background = new SolidColorBrush(CardBgColor),
+                    BorderBrush = new SolidColorBrush(CardBorderColor),
                     BorderThickness = new Thickness(1.5),
                     Cursor = Cursors.Hand,
-                    Tag = card
+                    Tag = card,
+                    Template = CreateRoundedButtonTemplate(new CornerRadius(12))
+                };
+
+                btn.MouseEnter += (s, e) => {
+                    var c = (s as Button).Tag as CardModel;
+                    if (c != null && !c.IsFlipped && !c.IsMatched) {
+                        (s as Button).BorderBrush = new SolidColorBrush(ForestSoftColor);
+                    }
+                };
+                btn.MouseLeave += (s, e) => {
+                    var c = (s as Button).Tag as CardModel;
+                    if (c != null && !c.IsFlipped && !c.IsMatched) {
+                        (s as Button).BorderBrush = new SolidColorBrush(CardBorderColor);
+                    }
                 };
 
                 var txt = new TextBlock {
-                    Text = "\u2753", // ❓ hidden state
-                    FontSize = 26,
+                    Text = "?",
+                    FontFamily = new FontFamily("EB Garamond, Georgia, serif"),
+                    FontSize = 32,
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center,
-                    Foreground = new SolidColorBrush(Color.FromRgb(120, 120, 150))
+                    Foreground = new SolidColorBrush(InkMutedColor)
                 };
 
                 btn.Content = txt;
@@ -666,10 +757,11 @@ namespace WaitPlayNative {
                     UpdateUIStats();
 
                     // Flash green
-                    firstCard.Element.Background = new SolidColorBrush(Color.FromRgb(16, 80, 50));
-                    secondCard.Element.Background = new SolidColorBrush(Color.FromRgb(16, 80, 50));
-                    firstCard.Element.BorderBrush = new SolidColorBrush(Color.FromRgb(52, 211, 153));
-                    secondCard.Element.BorderBrush = new SolidColorBrush(Color.FromRgb(52, 211, 153));
+                    // Soft sage/forest match highlight from design.md
+                    firstCard.Element.Background = new SolidColorBrush(Color.FromRgb(220, 240, 235));
+                    secondCard.Element.Background = new SolidColorBrush(Color.FromRgb(220, 240, 235));
+                    firstCard.Element.BorderBrush = new SolidColorBrush(ForestColor);
+                    secondCard.Element.BorderBrush = new SolidColorBrush(ForestColor);
 
                     firstCard = null;
                     secondCard = null;
@@ -701,14 +793,17 @@ namespace WaitPlayNative {
             card.IsFlipped = flipped;
             if (flipped) {
                 card.TextElement.Text = card.Symbol;
+                card.TextElement.FontFamily = new FontFamily("Segoe UI Emoji, Apple Color Emoji, Segoe UI, sans-serif");
                 card.TextElement.FontSize = 32;
-                card.Element.Background = new SolidColorBrush(Color.FromRgb(30, 48, 80));
-                card.Element.BorderBrush = new SolidColorBrush(Color.FromRgb(96, 165, 250));
+                card.Element.Background = new SolidColorBrush(LavenderColor); // Signature Lavender #F0D7FF from design.md
+                card.Element.BorderBrush = new SolidColorBrush(Color.FromArgb(90, 26, 26, 26));
             } else {
-                card.TextElement.Text = "\u2753";
-                card.TextElement.FontSize = 26;
-                card.Element.Background = new SolidColorBrush(Color.FromRgb(30, 30, 40));
-                card.Element.BorderBrush = new SolidColorBrush(Color.FromRgb(50, 50, 68));
+                card.TextElement.Text = "?";
+                card.TextElement.FontFamily = new FontFamily("EB Garamond, Georgia, serif");
+                card.TextElement.FontSize = 32;
+                card.TextElement.Foreground = new SolidColorBrush(InkMutedColor);
+                card.Element.Background = new SolidColorBrush(CardBgColor);
+                card.Element.BorderBrush = new SolidColorBrush(CardBorderColor);
             }
         }
 
@@ -723,7 +818,7 @@ namespace WaitPlayNative {
 
             bannerTitle.Text = "\uD83C\uDF89 Round Cleared!";
             bannerSubtitle.Text = string.Format("Score: {0} pts \u2022 Restarting in 2s...", score);
-            bannerBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(52, 211, 153));
+            bannerBorder.BorderBrush = new SolidColorBrush(ForestColor);
             bannerBorder.Visibility = Visibility.Visible;
 
             var restartTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -868,6 +963,97 @@ namespace WaitPlayNative {
             } catch {
                 // Bridge might be idle
             }
+            CheckOmpNativeSession();
+        }
+
+        private void CheckOmpNativeSession() {
+            try {
+                string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                string ompDir = System.IO.Path.Combine(userProfile, ".omp", "agent", "sessions", "-tmp");
+                if (!System.IO.Directory.Exists(ompDir)) return;
+
+                string latestFile = null;
+                DateTime latestTime = DateTime.MinValue;
+                var files = System.IO.Directory.GetFiles(ompDir, "*.jsonl");
+                foreach (var f in files) {
+                    var fi = new System.IO.FileInfo(f);
+                    if (fi.LastWriteTime > latestTime) {
+                        latestTime = fi.LastWriteTime;
+                        latestFile = f;
+                    }
+                }
+                if (latestFile == null || (DateTime.Now - latestTime).TotalSeconds > 10) return;
+                // Read last 12KB of file
+                using (var fs = new System.IO.FileStream(latestFile, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite)) {
+                    long len = fs.Length;
+                    if (len == 0) return;
+                    long seekPos = Math.Max(0, len - 12288);
+                    fs.Seek(seekPos, System.IO.SeekOrigin.Begin);
+                    using (var reader = new System.IO.StreamReader(fs)) {
+                        string tail = reader.ReadToEnd();
+                        string[] lines = tail.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (lines.Length == 0) return;
+
+                        for (int i = lines.Length - 1; i >= 0; i--) {
+                            string line = lines[i].Trim();
+                            if (string.IsNullOrEmpty(line) || !line.StartsWith("{")) continue;
+
+                            var ser = new JavaScriptSerializer();
+                            var entry = ser.Deserialize<Dictionary<string, object>>(line);
+                            if (entry == null) continue;
+
+                            string type = entry.ContainsKey("type") ? Convert.ToString(entry["type"]) : "";
+
+                            if (type == "custom") {
+                                string customType = entry.ContainsKey("customType") ? Convert.ToString(entry["customType"]) : "";
+                                if (customType == "tool_execution_start") {
+                                    hasBeenActive = true;
+                                    idleTicks = 0;
+                                    break;
+                                }
+                            } else if (type == "message") {
+                                var msg = entry.ContainsKey("message") ? entry["message"] as Dictionary<string, object> : null;
+                                if (msg == null) continue;
+                                string role = msg.ContainsKey("role") ? Convert.ToString(msg["role"]) : "";
+
+                                if (role == "user" || role == "toolResult") {
+                                    hasBeenActive = true;
+                                    idleTicks = 0;
+                                    break;
+                                } else if (role == "assistant") {
+                                    string stopReason = msg.ContainsKey("stopReason") ? Convert.ToString(msg["stopReason"]) : "";
+                                    var content = msg.ContainsKey("content") ? msg["content"] as ArrayList : null;
+                                    bool hasToolCall = false;
+                                    if (content != null) {
+                                        foreach (object c in content) {
+                                            var cd = c as Dictionary<string, object>;
+                                            if (cd != null && cd.ContainsKey("type") && Convert.ToString(cd["type"]) == "toolCall") {
+                                                hasToolCall = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    if (hasToolCall || stopReason == "toolUse") {
+                                        hasBeenActive = true;
+                                        idleTicks = 0;
+                                        break;
+                                    } else if (stopReason == "stop" || stopReason == "end_turn") {
+                                        // Final assistant message without tools -> Turn Completed!
+                                        if (hasBeenActive && !hasFinished) {
+                                            idleTicks++;
+                                            if (idleTicks >= 2) {
+                                                OnTurnCompleted();
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch {}
         }
 
 
@@ -999,9 +1185,10 @@ namespace WaitPlayNative {
                             hintText.Text = string.Format("Active Tool: {0} \u2022 Working on your task...", tool);
                         }
 
-                        statusPill.Background = new SolidColorBrush(Color.FromArgb(40, 59, 130, 246));
-                        statusPill.BorderBrush = new SolidColorBrush(Color.FromArgb(90, 59, 130, 246));
-                        statusDot.Fill = new SolidColorBrush(Color.FromRgb(59, 130, 246));
+                        statusPill.Background = new SolidColorBrush(Color.FromArgb(28, 3, 79, 70));
+                        statusPill.BorderBrush = new SolidColorBrush(Color.FromArgb(80, 3, 79, 70));
+                        statusDot.Fill = new SolidColorBrush(ForestColor);
+                        statusPillText.Foreground = new SolidColorBrush(ForestColor);
                     }
                     else if (status == "WAITING_FOR_INPUT") {
                         hasBeenActive = true;
@@ -1015,9 +1202,10 @@ namespace WaitPlayNative {
                         }
 
                         statusPillText.Text = string.Format("\u23F8 {0} waiting for input", agentName);
-                        statusPill.Background = new SolidColorBrush(Color.FromArgb(40, 245, 158, 11));
-                        statusPill.BorderBrush = new SolidColorBrush(Color.FromArgb(90, 245, 158, 11));
-                        statusDot.Fill = new SolidColorBrush(Color.FromRgb(245, 158, 11));
+                        statusPill.Background = new SolidColorBrush(Color.FromArgb(30, 255, 169, 70));
+                        statusPill.BorderBrush = new SolidColorBrush(Color.FromArgb(120, 255, 169, 70));
+                        statusDot.Fill = new SolidColorBrush(OrangeColor);
+                        statusPillText.Foreground = new SolidColorBrush(Color.FromRgb(180, 83, 9));
 
                         string prompt = activeSession.ContainsKey("waitingForInputPrompt") ? Convert.ToString(activeSession["waitingForInputPrompt"]) : "";
                         if (!string.IsNullOrEmpty(prompt) && hintText != null) {
@@ -1054,28 +1242,37 @@ namespace WaitPlayNative {
             hasFinished = true;
             DismissalTracker.ClearDismissal(targetSessionId);
 
-            // Never auto-quit on a timer! Stop any background timers
-            if (exitTimer != null) {
-                exitTimer.Stop();
-                exitTimer = null;
-            }
-
             statusPillText.Text = string.Format("\u2713 {0} Work Done", activeAgentName);
-            statusPill.Background = new SolidColorBrush(Color.FromArgb(40, 16, 185, 129));
-            statusPill.BorderBrush = new SolidColorBrush(Color.FromArgb(90, 16, 185, 129));
-            statusDot.Fill = new SolidColorBrush(Color.FromRgb(52, 211, 153));
+            statusPill.Background = new SolidColorBrush(Color.FromArgb(35, 3, 79, 70));
+            statusPill.BorderBrush = new SolidColorBrush(Color.FromArgb(100, 3, 79, 70));
+            statusDot.Fill = new SolidColorBrush(ForestColor);
+            statusPillText.Foreground = new SolidColorBrush(ForestColor);
 
             bannerTitle.Text = string.Format("\uD83C\uDF89 {0} Work is Done!", activeAgentName);
-            bannerSubtitle.Text = "Want to keep playing or quit?";
-            countdownText.Text = string.Format("Score: {0} pts \u2022 {1}/8 matches \u2022 Press Enter to Quit or click Keep Playing", score, matchesFound);
+            bannerSubtitle.Text = "Agent finished! Automatically closing...";
+            countdownRemaining = 2;
+            countdownText.Text = string.Format("Score: {0} pts \u2022 Auto-closing in {1}s... (Click Keep Playing to stay)", score, countdownRemaining);
 
             string exitLabel = (activeAgentName == "OMP" || activeAgentName == "Claude Code")
                 ? "Quit to Terminal"
                 : string.Format("Quit to {0}", activeAgentName);
             if (btnExit != null) btnExit.Content = exitLabel;
 
-            bannerBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(52, 211, 153));
+            bannerBorder.BorderBrush = new SolidColorBrush(ForestColor);
             bannerBorder.Visibility = Visibility.Visible;
+
+            if (exitTimer != null) exitTimer.Stop();
+            exitTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            exitTimer.Tick += (s, e) => {
+                countdownRemaining--;
+                if (countdownRemaining <= 0) {
+                    exitTimer.Stop();
+                    Close();
+                } else {
+                    countdownText.Text = string.Format("Score: {0} pts \u2022 Auto-closing in {1}s... (Click Keep Playing to stay)", score, countdownRemaining);
+                }
+            };
+            exitTimer.Start();
         }
     }
 
@@ -2149,6 +2346,18 @@ namespace WaitPlayNative {
                     WaitPlayStateManager.SetEnabled(true);
                     UpdateUI();
                 }
+                int currentPid = System.Diagnostics.Process.GetCurrentProcess().Id;
+                var procs = System.Diagnostics.Process.GetProcessesByName("WaitPlay");
+                foreach (var p in procs) {
+                    if (p.Id != currentPid && p.MainWindowHandle != IntPtr.Zero) {
+                        string title = p.MainWindowTitle;
+                        if (!string.IsNullOrEmpty(title) && title.Contains("Companion Game")) {
+                            EntryPoint.ShowWindowAsync(p.MainWindowHandle, 9);
+                            EntryPoint.SetForegroundWindow(p.MainWindowHandle);
+                            return;
+                        }
+                    }
+                }
                 if (activeGameWindow == null || !activeGameWindow.IsLoaded) {
                     activeGameWindow = new MainWindow("", 0, "Desktop", 0, IntPtr.Zero);
                     activeGameWindow.Closed += (s, e) => { activeGameWindow = null; };
@@ -2309,6 +2518,7 @@ namespace WaitPlayNative {
                         toggleOnly = true;
                     } else if (a == "--game" || a == "--open") {
                         forceGame = true;
+                        if (string.IsNullOrEmpty(terminal)) terminal = "Desktop";
                     } else if (a.StartsWith("--session=")) {
                         targetSession = a.Substring("--session=".Length);
                     } else if (a.StartsWith("--terminal=")) {

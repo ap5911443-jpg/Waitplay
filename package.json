@@ -16,6 +16,7 @@
     "codex:watch": "node integrations/codex/codex-watcher.cjs",
     "omp:watch": "node integrations/omp/omp-session-watcher.js",
     "opencode:watch": "node integrations/opencode/opencode-watcher.cjs",
+    "test:mode": "node test-mode-25s.cjs",
     "build:native": "powershell -ExecutionPolicy Bypass -Command \"& 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe' /target:winexe /r:System.dll /r:System.Core.dll /r:System.Xaml.dll /r:System.Web.Extensions.dll /r:'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\WPF\\WindowsBase.dll' /r:'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\WPF\\PresentationCore.dll' /r:'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\WPF\\PresentationFramework.dll' /out:apps\\native\\WaitPlay.exe apps\\native\\WaitPlay.cs\"",
     "widget": "powershell -Command \"Start-Process apps\\native\\WaitPlay.exe -ArgumentList '--widget'\"",
     "toggle": "apps\\native\\WaitPlay.exe --toggle",

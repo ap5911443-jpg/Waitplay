@@ -191,33 +191,33 @@ export const MemoryGame: React.FC<GameStateProps> = ({
   return (
     <div className="flex flex-col h-full w-full select-none">
       {/* Top Game Controls & Telemetry */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-900/60 rounded-t-lg text-xs text-zinc-300">
-        <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-1.5 font-medium">
-            <TimerIcon className="w-3.5 h-3.5 text-blue-400" />
-            <span className="font-mono text-zinc-100">{formatTime(elapsedSeconds)}</span>
+      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-ink/10 bg-canvas-muted/50 rounded-t-xl text-xs text-ink-soft">
+        <div className="flex items-center space-x-3.5">
+          <div className="flex items-center space-x-1.5 font-medium text-ink">
+            <TimerIcon className="w-3.5 h-3.5 text-forest" />
+            <span className="font-mono text-ink font-semibold">{formatTime(elapsedSeconds)}</span>
           </div>
           <div className="flex items-center space-x-1.5">
-            <MousePointerClick className="w-3.5 h-3.5 text-zinc-400" />
-            <span>Turns: <strong className="text-zinc-100 font-mono">{turns}</strong></span>
+            <MousePointerClick className="w-3.5 h-3.5 text-ink-muted" />
+            <span>Turns: <strong className="text-ink font-mono">{turns}</strong></span>
           </div>
           <div className="hidden sm:flex items-center space-x-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Matched: <strong className="text-zinc-100 font-mono">{matchedIds.length / 2}/{totalPairs}</strong></span>
+            <CheckCircle2 className="w-3.5 h-3.5 text-forest" />
+            <span>Matched: <strong className="text-forest font-mono">{matchedIds.length / 2}/{totalPairs}</strong></span>
           </div>
         </div>
 
         <div className="flex items-center space-x-1">
           <button
             onClick={() => setInternalPaused((p) => !p)}
-            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+            className="p-1.5 rounded-lg hover:bg-canvas text-ink-soft hover:text-ink transition-colors cursor-pointer"
             title={isPaused ? "Resume" : "Pause"}
           >
             {isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
           </button>
           <button
             onClick={handleRestart}
-            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+            className="p-1.5 rounded-lg hover:bg-canvas text-ink-soft hover:text-ink transition-colors cursor-pointer"
             title="Restart Game"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -229,17 +229,17 @@ export const MemoryGame: React.FC<GameStateProps> = ({
       <div className="relative flex-1 p-3 flex items-center justify-center overflow-auto min-h-[220px]">
         {/* Pause Overlay */}
         {isPaused && !isFinished && (
-          <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-xs flex flex-col items-center justify-center z-20 rounded-b-lg">
-            <Pause className="w-8 h-8 text-blue-400 mb-2 animate-pulse" />
-            <p className="text-sm font-medium text-zinc-200">
-              {externalPaused ? "Paused: Claude Code needs input" : "Game Paused"}
+          <div className="absolute inset-0 bg-canvas/90 backdrop-blur-xs flex flex-col items-center justify-center z-20 rounded-b-xl">
+            <Pause className="w-8 h-8 text-forest mb-2 animate-pulse" />
+            <p className="font-serif text-base text-ink">
+              {externalPaused ? "Paused: Agent needs confirmation" : "Game Paused"}
             </p>
             {!externalPaused && (
               <button
                 onClick={() => setInternalPaused(false)}
-                className="mt-3 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-medium transition-colors"
+                className="mt-3 px-4 py-1.5 bg-lavender hover:bg-lavender-hover text-ink border border-ink/15 rounded-xl text-xs font-semibold shadow-subtle transition-all cursor-pointer"
               >
-                Resume
+                Resume Game
               </button>
             )}
           </div>
@@ -247,31 +247,31 @@ export const MemoryGame: React.FC<GameStateProps> = ({
 
         {/* Completion Modal / Overlay */}
         {isFinished && (
-          <div className="absolute inset-0 bg-zinc-950/90 backdrop-blur-sm flex flex-col items-center justify-center z-30 p-4 text-center rounded-b-lg">
-            <div className="w-12 h-12 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-2">
+          <div className="absolute inset-0 bg-canvas/95 backdrop-blur-sm flex flex-col items-center justify-center z-30 p-5 text-center rounded-b-xl border border-forest/30 shadow-popover">
+            <div className="w-12 h-12 rounded-full bg-forest/10 border border-forest/20 flex items-center justify-center text-forest mb-2">
               <Trophy className="w-6 h-6" />
             </div>
-            <h3 className="text-base font-semibold text-zinc-100">Memory Match Complete!</h3>
-            <p className="text-xs text-zinc-400 mt-1">
-              You cleared all pairs in <span className="text-zinc-200 font-medium">{formatTime(elapsedSeconds)}</span> with <span className="text-zinc-200 font-medium">{turns}</span> turns.
+            <h3 className="font-serif text-xl text-ink font-normal">Memory Match Complete!</h3>
+            <p className="font-sans text-xs text-ink-soft mt-1">
+              Cleared all pairs in <span className="text-ink font-semibold">{formatTime(elapsedSeconds)}</span> with <span className="text-ink font-semibold">{turns}</span> turns.
             </p>
 
-            <div className="my-3 px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-lg">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-400">Final Score</div>
-              <div className="text-2xl font-bold font-mono text-blue-400">{finalScore}</div>
+            <div className="my-3 px-5 py-2.5 bg-white border border-ink/15 rounded-2xl shadow-subtle">
+              <div className="text-[10px] uppercase font-semibold tracking-wider text-ink-muted">Final Score</div>
+              <div className="text-2xl font-serif font-bold text-forest">{finalScore}</div>
             </div>
 
             <div className="flex items-center space-x-2 mt-1">
               <button
                 onClick={handleRestart}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded transition-colors flex items-center space-x-1"
+                className="px-4 py-2 bg-lavender hover:bg-lavender-hover text-ink text-xs font-semibold rounded-xl border border-ink/15 shadow-subtle transition-all flex items-center space-x-1.5 cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Play Again</span>
               </button>
               <button
                 onClick={onGameQuit}
-                className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium rounded transition-colors"
+                className="px-4 py-2 bg-white hover:bg-canvas-muted text-ink-soft hover:text-ink text-xs font-medium rounded-xl border border-ink/15 transition-all cursor-pointer"
               >
                 Dismiss
               </button>
@@ -290,12 +290,12 @@ export const MemoryGame: React.FC<GameStateProps> = ({
                 key={card.id}
                 onClick={() => handleCardClick(card.id)}
                 disabled={isMatched || isPaused || isProcessing}
-                className={`aspect-square rounded-lg p-1.5 text-center transition-all duration-300 focus:outline-hidden focus:ring-1 focus:ring-blue-500 ${
+                className={`aspect-square rounded-2xl p-1.5 text-center transition-all duration-200 focus:outline-hidden ${
                   isMatched
-                    ? "opacity-60 bg-zinc-900/50 border border-emerald-500/20 cursor-default"
+                    ? "opacity-75 bg-forest/10 border border-forest/30 cursor-default"
                     : isFlipped
-                      ? "bg-zinc-800 border border-zinc-700 shadow-md scale-95"
-                      : "bg-zinc-900 border border-zinc-800 hover:border-zinc-700 hover:bg-zinc-850 active:scale-95 cursor-pointer"
+                      ? "bg-lavender border border-ink/20 shadow-subtle scale-98"
+                      : "bg-white border border-ink/15 hover:border-forest/40 hover:shadow-subtle hover:scale-102 active:scale-96 cursor-pointer shadow-subtle"
                 }`}
                 aria-label={isFlipped ? card.label : "Hidden Card"}
               >
@@ -310,10 +310,8 @@ export const MemoryGame: React.FC<GameStateProps> = ({
                       </span>
                     </div>
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-zinc-600">
-                      <div className="w-5 h-5 rounded-sm border border-dashed border-zinc-700 flex items-center justify-center text-[9px] font-mono">
-                        ?
-                      </div>
+                    <div className="w-full h-full flex items-center justify-center text-ink-muted font-serif text-2xl select-none">
+                      ?
                     </div>
                   )}
                 </div>

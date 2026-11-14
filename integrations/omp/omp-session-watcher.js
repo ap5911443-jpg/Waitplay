@@ -13,7 +13,9 @@ import path from "node:path";
 import http from "node:http";
 import os from "node:os";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SESSIONS_DIR = "C:/Users/ASUS/.omp/agent/sessions/-tmp";
 const BRIDGE_PORT = parseInt(process.env.BRIDGE_PORT || "3150", 10);
 const NATIVE_APP = fs.existsSync("C:\\Users\\ASUS\\waitplay\\apps\\native\\WaitPlay.exe") ? "C:\\Users\\ASUS\\waitplay\\apps\\native\\WaitPlay.exe" : "C:\\Users\\ASUS\\AppData\\Local\\Temp\\waitplay\\apps\\native\\WaitPlay.exe";
@@ -72,11 +74,11 @@ function clearDismissal(sessionId) {
 // Locate bridge security token
 function getBridgeToken() {
   const candidates = [
-    path.resolve(process.cwd(), "waitplay", ".bridge-token"),
-    path.resolve(process.cwd(), ".bridge-token"),
+    "C:/Users/ASUS/waitplay/apps/bridge/.bridge-token",
+    path.resolve(__dirname, "..", "..", "apps", "bridge", ".bridge-token"),
     path.resolve(__dirname, "..", "..", ".bridge-token"),
     "C:/Users/ASUS/waitplay/.bridge-token",
-    "C:/Users/ASUS/AppData/Local/Temp/waitplay/.bridge-token",
+    path.join(os.tmpdir(), "waitplay", ".bridge-token"),
   ];
   for (const p of candidates) {
     try {
@@ -87,7 +89,7 @@ function getBridgeToken() {
   }
   return process.env.BRIDGE_AUTH_TOKEN || "";
 }
-
+let lastPopTime = 0;
 function popApp() {
   if (!isWaitPlayEnabled()) {
     return;
@@ -96,6 +98,12 @@ function popApp() {
     console.log("[OMP Watcher] Prompt was dismissed by user, skipping popApp.");
     return;
   }
+  const now = Date.now();
+  if (now - lastPopTime < 4000) {
+    // Debounce duplicate pop requests within 4 seconds
+    return;
+  }
+  lastPopTime = now;
   try {
     if (fs.existsSync(NATIVE_APP)) {
       const args = ["--session=omp-session", `--parentPid=${process.pid}`];
@@ -188,10 +196,16 @@ function processLine(line) {
   try {
     const entry = JSON.parse(line.trim());
 
-    // 1. User Prompt Submitted: Task Starts!
-    if (entry.type === "message" && entry.message?.role === "user") {
+    // ANY line arriving means the session is still active.
+    // Cancel any pending completion timer immediately — we re-evaluate below.
+    if (finishDebounceTimer) {
       clearTimeout(finishDebounceTimer);
       finishDebounceTimer = null;
+      console.log("[OMP Watcher] Completion timer cancelled — new activity detected");
+    }
+
+    // 1. User Prompt Submitted: Task Starts!
+    if (entry.type === "message" && entry.message?.role === "user") {
       isWorking = true;
       pendingTools = 0;
       const promptTimestamp = Date.now();
@@ -226,8 +240,6 @@ function processLine(line) {
 
     // 2. Tool Execution Start: Increment pending tools count
     if (entry.type === "custom" && entry.customType === "tool_execution_start") {
-      clearTimeout(finishDebounceTimer);
-      finishDebounceTimer = null;
       isWorking = true;
       pendingTools++;
       const toolName = entry.data?.toolName || "tool";
@@ -238,8 +250,6 @@ function processLine(line) {
 
     // 3. Tool Result Returned: Decrement pending tools count
     if (entry.type === "message" && entry.message?.role === "toolResult") {
-      clearTimeout(finishDebounceTimer);
-      finishDebounceTimer = null;
       pendingTools = Math.max(0, pendingTools - 1);
       isWorking = true;
       console.log(`[OMP Watcher] Tool finished (pending: ${pendingTools})`);
@@ -247,7 +257,14 @@ function processLine(line) {
       return;
     }
 
-    // 4. Assistant message: Check stopReason and pending tools
+    // 4. System/custom events (todo_hud_state, launch-completion, image-attachment, etc.)
+    //    These indicate continued activity — keep isWorking true, no completion.
+    if (entry.type === "custom" || entry.type === "custom_message" || entry.type === "internal") {
+      isWorking = true;
+      return;
+    }
+
+    // 5. Assistant message: Check stopReason and pending tools
     if (entry.type === "message" && entry.message?.role === "assistant") {
       if (entry.message.model) {
         currentModel = formatModelName(entry.message.model);
@@ -259,26 +276,23 @@ function processLine(line) {
 
       if (stopReason === "toolUse" || hasToolCall) {
         // Model is requesting another tool -> CANNOT BE FINISHED!
-        clearTimeout(finishDebounceTimer);
-        finishDebounceTimer = null;
         isWorking = true;
         sendBridgeEvent("task_running", { model: currentModel });
         return;
       }
-
       if ((stopReason === "stop" || stopReason === "end_turn") && pendingTools === 0) {
-        clearTimeout(finishDebounceTimer);
-        // Debounce for 2.5s to verify OMP turn has truly settled
+        // Debounce for 5s to verify OMP turn has truly settled.
+        // Subagent work and system events can cause multi-second gaps
+        // between JSONL writes while the agent is still active.
         finishDebounceTimer = setTimeout(() => {
           isWorking = false;
           finishDebounceTimer = null;
           console.log("[OMP Watcher] OMP turn fully settled and complete!");
           clearDismissal("omp-session");
           sendBridgeEvent("task_completed", { model: currentModel });
-        }, 2500);
+        }, 5000);
+      } else {
         // Intermediate reasoning or thinking
-        clearTimeout(finishDebounceTimer);
-        finishDebounceTimer = null;
         isWorking = true;
         sendBridgeEvent("task_running", { model: currentModel });
       }
