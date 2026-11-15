@@ -1283,21 +1283,11 @@ namespace WaitPlayNative {
         private void OnTurnCompleted() {
             if (hasFinished) return;
             hasFinished = true;
-            // Browser mode: stay a usable browser after the agent finishes so
-            // multi-step logins are not interrupted. Keep the web view visible
-            // and do NOT auto-close — the user closes the window with the X button.
+            // Agent finished -> close the companion immediately (low latency).
             if (webReadyTimer != null) { try { webReadyTimer.Stop(); } catch {} }
+            if (statusPollTimer != null) { try { statusPollTimer.Stop(); } catch {} }
             DismissalTracker.ClearDismissal(targetSessionId);
-
-            if (statusPillText != null) {
-                statusPillText.Text = string.Format("\u2713 {0} Work Done", activeAgentName);
-                statusPillText.Foreground = new SolidColorBrush(ForestColor);
-            }
-            if (statusPill != null) {
-                statusPill.Background = new SolidColorBrush(Color.FromArgb(35, 3, 79, 70));
-                statusPill.BorderBrush = new SolidColorBrush(Color.FromArgb(100, 3, 79, 70));
-            }
-            if (statusDot != null) statusDot.Fill = new SolidColorBrush(ForestColor);
+            try { Close(); } catch {}
         }
 
         // --- Instagram WebView2 companion plumbing -------------------------------

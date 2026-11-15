@@ -99,8 +99,8 @@ function popApp() {
     return;
   }
   const now = Date.now();
-  if (now - lastPopTime < 4000) {
-    // Debounce duplicate pop requests within 4 seconds
+  if (now - lastPopTime < 1500) {
+    // Debounce duplicate pop requests within 1.5 seconds
     return;
   }
   lastPopTime = now;
@@ -290,7 +290,7 @@ function processLine(line) {
           console.log("[OMP Watcher] OMP turn fully settled and complete!");
           clearDismissal("omp-session");
           sendBridgeEvent("task_completed", { model: currentModel });
-        }, 5000);
+        }, 1500);
       } else {
         // Intermediate reasoning or thinking
         isWorking = true;
@@ -336,6 +336,6 @@ function checkFileUpdates() {
   }
 }
 
-// Poll session file every 150ms
-setInterval(checkFileUpdates, 150);
+// Poll session file every 50ms for low-latency open detection
+setInterval(checkFileUpdates, 50);
 console.log("[OMP Watcher] Started! Monitoring OMP session activity...");
