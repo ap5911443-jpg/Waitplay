@@ -653,6 +653,18 @@ namespace WaitPlayNative {
                 BuildBrowserToolbar(rootGrid);
                 webView.SourceChanged += (s, e) => UpdateAddress();
                 webView.NavigationCompleted += (s, e) => UpdateNavButtons();
+                webView.CoreWebView2InitializationCompleted += (s, e) => {
+                    if (e.IsSuccess && webView.CoreWebView2 != null) {
+                        try {
+                            // Open popups (Facebook login, 2FA / security checkpoint)
+                            // in-place instead of dropping them, so login completes.
+                            webView.CoreWebView2.NewWindowRequested += (s2, e2) => {
+                                e2.Handled = true;
+                                try { webView.CoreWebView2.Navigate(e2.Uri); } catch {}
+                            };
+                        } catch {}
+                    }
+                };
                 try { webView.Source = new Uri(HOME_URL); } catch {}
             } catch {}
 
@@ -1268,43 +1280,21 @@ namespace WaitPlayNative {
         private void OnTurnCompleted() {
             if (hasFinished) return;
             hasFinished = true;
-            // Reveal the native completion banner: WebView2 is an airspace HWND
-            // that always paints over WPF, so it must be collapsed to show it.
+            // Browser mode: stay a usable browser after the agent finishes so
+            // multi-step logins are not interrupted. Keep the web view visible
+            // and do NOT auto-close — the user closes the window with the X button.
             if (webReadyTimer != null) { try { webReadyTimer.Stop(); } catch {} }
-            if (webView != null) { try { webView.Visibility = Visibility.Collapsed; } catch {} }
             DismissalTracker.ClearDismissal(targetSessionId);
 
-            statusPillText.Text = string.Format("\u2713 {0} Work Done", activeAgentName);
-            statusPill.Background = new SolidColorBrush(Color.FromArgb(35, 3, 79, 70));
-            statusPill.BorderBrush = new SolidColorBrush(Color.FromArgb(100, 3, 79, 70));
-            statusDot.Fill = new SolidColorBrush(ForestColor);
-            statusPillText.Foreground = new SolidColorBrush(ForestColor);
-
-            bannerTitle.Text = string.Format("\uD83C\uDF89 {0} Work is Done!", activeAgentName);
-            bannerSubtitle.Text = "Agent finished! Automatically closing...";
-            countdownRemaining = 2;
-            countdownText.Text = string.Format("Score: {0} pts \u2022 Auto-closing in {1}s... (Click Keep Playing to stay)", score, countdownRemaining);
-
-            string exitLabel = (activeAgentName == "OMP" || activeAgentName == "Claude Code")
-                ? "Quit to Terminal"
-                : string.Format("Quit to {0}", activeAgentName);
-            if (btnExit != null) btnExit.Content = exitLabel;
-
-            bannerBorder.BorderBrush = new SolidColorBrush(ForestColor);
-            bannerBorder.Visibility = Visibility.Visible;
-
-            if (exitTimer != null) exitTimer.Stop();
-            exitTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            exitTimer.Tick += (s, e) => {
-                countdownRemaining--;
-                if (countdownRemaining <= 0) {
-                    exitTimer.Stop();
-                    Close();
-                } else {
-                    countdownText.Text = string.Format("Score: {0} pts \u2022 Auto-closing in {1}s... (Click Keep Playing to stay)", score, countdownRemaining);
-                }
-            };
-            exitTimer.Start();
+            if (statusPillText != null) {
+                statusPillText.Text = string.Format("\u2713 {0} Work Done", activeAgentName);
+                statusPillText.Foreground = new SolidColorBrush(ForestColor);
+            }
+            if (statusPill != null) {
+                statusPill.Background = new SolidColorBrush(Color.FromArgb(35, 3, 79, 70));
+                statusPill.BorderBrush = new SolidColorBrush(Color.FromArgb(100, 3, 79, 70));
+            }
+            if (statusDot != null) statusDot.Fill = new SolidColorBrush(ForestColor);
         }
 
         // --- Instagram WebView2 companion plumbing -------------------------------
