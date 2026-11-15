@@ -239,7 +239,7 @@ namespace WaitPlayNative {
             Foreground = new SolidColorBrush(InkColor);
             Topmost = true;
             WindowStyle = WindowStyle.None;
-            ResizeMode = ResizeMode.CanResizeWithGrip;
+            ResizeMode = ResizeMode.NoResize;
             AllowsTransparency = false;
             BorderBrush = new SolidColorBrush(CanvasBorderColor);
             BorderThickness = new Thickness(0);
