@@ -644,19 +644,17 @@ namespace WaitPlayNative {
             rootGrid.Children.Add(footer);
             footer.Visibility = Visibility.Hidden;
 
-            // Browser experience: the WebView2 (Chromium/Edge) loads the real
-            // Instagram site; a slim toolbar in row 0 provides back/forward/reload
-            // and an editable address bar, so the window acts as a browser.
+            // Browser experience: the WebView2 (Chromium/Edge) fills the whole
+            // window and loads the real Instagram site — no toolbar chrome.
             try {
                 webView = new Microsoft.Web.WebView2.Wpf.WebView2();
                 string udf = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", "webview2");
                 try { System.IO.Directory.CreateDirectory(udf); } catch {}
                 webView.CreationProperties = new Microsoft.Web.WebView2.Wpf.CoreWebView2CreationProperties { UserDataFolder = udf };
-                Grid.SetRow(webView, 1);
-                Grid.SetRowSpan(webView, 3);
+                Grid.SetRow(webView, 0);
+                Grid.SetRowSpan(webView, 4);
                 Panel.SetZIndex(webView, 50);
                 rootGrid.Children.Add(webView);
-                BuildBrowserToolbar(rootGrid);
                 webView.SourceChanged += (s, e) => UpdateAddress();
                 webView.NavigationCompleted += (s, e) => UpdateNavButtons();
                 webView.CoreWebView2InitializationCompleted += (s, e) => {
