@@ -5,7 +5,7 @@
 
 ![WaitPlay Banner](docs/banner.png) *(optional preview)*
 
-WaitPlay detects when your AI coding agent begins working and automatically presents an interactive mini-game popup. When the agent finishes thinking, WaitPlay displays an interactive completion summary, letting you wrap up your game or immediately review code diffs.
+WaitPlay detects when your AI coding agent begins working and automatically opens a companion popup. By default it presents an authentic **Instagram experience** (feed, stories, and Reels) so you can scroll while the agent reasons; a **Micro-Games** tab and **YouTube** tab are one click away. When the agent finishes, WaitPlay surfaces a completion summary and returns focus to your terminal.
 
 ---
 
@@ -75,6 +75,8 @@ npm run build
 # (Optional) Recompile the native Windows application
 npm run build:native
 ```
+
+> **Companion UI:** The native Windows app hosts the web companion (`apps/web`) in an embedded **WebView2** control. On agent start it auto-starts a local static server (`apps/web/serve.cjs`, port `5200`) that serves the production build, so `npm run build` (which emits `apps/web/dist`) must have run at least once. The WebView2 runtime ships with modern Windows; no extra install is required.
 
 ### 3. Run the Test Suite
 

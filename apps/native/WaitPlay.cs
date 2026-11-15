@@ -17,6 +17,8 @@ using System.Web.Script.Serialization;
 using System.Windows.Interop;
 using System.Diagnostics;
 using System.Text;
+using Microsoft.Web.WebView2.Wpf;
+using Microsoft.Web.WebView2.Core;
 namespace WaitPlayNative {
     public class CardModel {
         public int Id { get; set; }
@@ -117,6 +119,9 @@ namespace WaitPlayNative {
         private bool wasMinimizedByParent = false;
         private IntPtr myHwnd = IntPtr.Zero;
         private int missingParentTicks = 0;
+        private Microsoft.Web.WebView2.Wpf.WebView2 webView;
+        private DispatcherTimer webReadyTimer;
+        private const int WEB_PORT = 5200;
 
         public MainWindow(string sessionId = "", long promptTime = 0, string terminal = "", uint parentPid = 0, IntPtr parentHwnd = default(IntPtr)) {
             this.targetSessionId = sessionId;
@@ -218,17 +223,17 @@ namespace WaitPlayNative {
 
         private void InitializeWindow() {
             Title = "WaitPlay • Companion Game";
-            Width = 620;
-            Height = 680;
-            MinWidth = 540;
-            MinHeight = 600;
+            Width = 1120;
+            Height = 760;
+            MinWidth = 900;
+            MinHeight = 640;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             Background = new SolidColorBrush(CanvasColor);
             Foreground = new SolidColorBrush(InkColor);
             Topmost = true;
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.CanResizeWithGrip;
-            AllowsTransparency = true;
+            AllowsTransparency = false;
             BorderBrush = new SolidColorBrush(CanvasBorderColor);
             BorderThickness = new Thickness(1.5);
             SourceInitialized += (s, e) => {
@@ -627,6 +632,21 @@ namespace WaitPlayNative {
             footer.Child = footerPanel;
             Grid.SetRow(footer, 3);
             rootGrid.Children.Add(footer);
+
+            // Instagram companion experience: WebView2 overlays the game rows
+            // (stats + cards + footer) so the native window hosts the web popup.
+            try {
+                webView = new Microsoft.Web.WebView2.Wpf.WebView2();
+                string udf = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", "webview2");
+                try { System.IO.Directory.CreateDirectory(udf); } catch {}
+                webView.CreationProperties = new Microsoft.Web.WebView2.Wpf.CoreWebView2CreationProperties { UserDataFolder = udf };
+                Grid.SetRow(webView, 1);
+                Grid.SetRowSpan(webView, 3);
+                Panel.SetZIndex(webView, 50);
+                rootGrid.Children.Add(webView);
+                EnsureWebServer();
+                StartWebNavigationWhenReady();
+            } catch {}
 
             Content = rootGrid;
 
@@ -1240,6 +1260,10 @@ namespace WaitPlayNative {
         private void OnTurnCompleted() {
             if (hasFinished) return;
             hasFinished = true;
+            // Reveal the native completion banner: WebView2 is an airspace HWND
+            // that always paints over WPF, so it must be collapsed to show it.
+            if (webReadyTimer != null) { try { webReadyTimer.Stop(); } catch {} }
+            if (webView != null) { try { webView.Visibility = Visibility.Collapsed; } catch {} }
             DismissalTracker.ClearDismissal(targetSessionId);
 
             statusPillText.Text = string.Format("\u2713 {0} Work Done", activeAgentName);
@@ -1273,6 +1297,54 @@ namespace WaitPlayNative {
                 }
             };
             exitTimer.Start();
+        }
+
+        // --- Instagram WebView2 companion plumbing -------------------------------
+
+        private bool IsPortOpen(int port) {
+            try {
+                using (var client = new System.Net.Sockets.TcpClient()) {
+                    var ar = client.BeginConnect("127.0.0.1", port, null, null);
+                    bool ok = ar.AsyncWaitHandle.WaitOne(TimeSpan.FromMilliseconds(250));
+                    if (ok) { try { client.EndConnect(ar); } catch { return false; } return true; }
+                    return false;
+                }
+            } catch { return false; }
+        }
+
+        private void EnsureWebServer() {
+            try {
+                if (IsPortOpen(WEB_PORT)) return;
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                string repoRoot = System.IO.Path.GetFullPath(System.IO.Path.Combine(baseDir, "..", ".."));
+                string serveScript = System.IO.Path.Combine(repoRoot, "apps", "web", "serve.cjs");
+                if (!System.IO.File.Exists(serveScript)) {
+                    serveScript = @"C:\Users\ASUS\waitplay\apps\web\serve.cjs";
+                }
+                if (!System.IO.File.Exists(serveScript)) return;
+                var psi = new ProcessStartInfo("node", "\"" + serveScript + "\"");
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.WindowStyle = ProcessWindowStyle.Hidden;
+                psi.WorkingDirectory = System.IO.Path.GetDirectoryName(serveScript);
+                Process.Start(psi);
+            } catch {}
+        }
+
+        private void StartWebNavigationWhenReady() {
+            string url = string.Format("http://127.0.0.1:{0}/?popup=1&mode=fullscreen", WEB_PORT);
+            int attempts = 0;
+            webReadyTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+            webReadyTimer.Tick += (s, e) => {
+                attempts++;
+                if (IsPortOpen(WEB_PORT)) {
+                    webReadyTimer.Stop();
+                    try { if (webView != null) webView.Source = new Uri(url); } catch {}
+                } else if (attempts > 60) {
+                    webReadyTimer.Stop();
+                }
+            };
+            webReadyTimer.Start();
         }
     }
 
