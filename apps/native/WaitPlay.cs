@@ -920,6 +920,7 @@ namespace WaitPlayNative {
                         long cnow = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                         if (cts > 0 && (cnow - cts) < 6000 &&
                             (csid == "*" || string.Equals(csid, targetSessionId, StringComparison.OrdinalIgnoreCase))) {
+                            try { System.IO.File.Delete(closeFile); } catch {}
                             OnTurnCompleted();
                             return;
                         }
@@ -1077,6 +1078,7 @@ namespace WaitPlayNative {
                                 if (customType == "tool_execution_start") {
                                     hasBeenActive = true;
                                     idleTicks = 0;
+                                    CancelPendingClose();
                                     break;
                                 }
                             } else if (type == "message") {
@@ -1087,6 +1089,7 @@ namespace WaitPlayNative {
                                 if (role == "user" || role == "toolResult") {
                                     hasBeenActive = true;
                                     idleTicks = 0;
+                                    CancelPendingClose();
                                     break;
                                 } else if (role == "assistant") {
                                     string stopReason = msg.ContainsKey("stopReason") ? Convert.ToString(msg["stopReason"]) : "";
@@ -1105,11 +1108,13 @@ namespace WaitPlayNative {
                                     if (hasToolCall || stopReason == "toolUse") {
                                         hasBeenActive = true;
                                         idleTicks = 0;
+                                        CancelPendingClose();
                                         break;
                                     } else if (stopReason == "stop" || stopReason == "end_turn") {
-                                        // The log shows a turn end, but closing is driven by the
-                                        // authoritative agent_end event (via the close-signal file),
-                                        // NOT this heuristic — avoids closing before the turn is done.
+                                        // Final assistant message is the newest log line: the
+                                        // output is written. Arm the grace close (cancelled if
+                                        // the agent resumes before it elapses).
+                                        if (hasBeenActive) OnTurnCompleted();
                                         break;
                                     }
                                 }
@@ -1304,11 +1309,24 @@ namespace WaitPlayNative {
         private void OnTurnCompleted() {
             if (hasFinished) return;
             hasFinished = true;
-            // Agent finished -> close the companion immediately (low latency).
             if (webReadyTimer != null) { try { webReadyTimer.Stop(); } catch {} }
-            if (statusPollTimer != null) { try { statusPollTimer.Stop(); } catch {} }
             DismissalTracker.ClearDismissal(targetSessionId);
-            try { Close(); } catch {}
+            // Grace: wait for the agent's final output to settle (no new activity)
+            // before closing; cancelled by CancelPendingClose() if the agent resumes.
+            if (exitTimer != null) { try { exitTimer.Stop(); } catch {} }
+            exitTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2500) };
+            exitTimer.Tick += (s, e) => {
+                try { exitTimer.Stop(); } catch {}
+                try { Close(); } catch {}
+            };
+            exitTimer.Start();
+        }
+
+        private void CancelPendingClose() {
+            if (hasFinished) {
+                hasFinished = false;
+                if (exitTimer != null) { try { exitTimer.Stop(); } catch {} }
+            }
         }
 
         // --- Instagram WebView2 companion plumbing -------------------------------
