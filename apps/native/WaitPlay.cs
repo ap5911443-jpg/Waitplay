@@ -159,7 +159,7 @@ namespace WaitPlayNative {
 
             InitializeWindow();
             BuildUI();
-            StartGame();
+            // Game disabled: the companion opens the Instagram browser directly.
             StartMonitoring();
         }
 
@@ -235,14 +235,14 @@ namespace WaitPlayNative {
             MinWidth = 900;
             MinHeight = 640;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            Background = new SolidColorBrush(CanvasColor);
+            Background = new SolidColorBrush(Color.FromRgb(0, 0, 0));
             Foreground = new SolidColorBrush(InkColor);
             Topmost = true;
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.CanResizeWithGrip;
             AllowsTransparency = false;
             BorderBrush = new SolidColorBrush(CanvasBorderColor);
-            BorderThickness = new Thickness(1.5);
+            BorderThickness = new Thickness(0);
             SourceInitialized += (s, e) => {
                 try { myHwnd = new WindowInteropHelper(this).Handle; } catch {}
             };
@@ -274,7 +274,7 @@ namespace WaitPlayNative {
 
         private void BuildUI() {
             var rootGrid = new Grid();
-            rootGrid.Background = new SolidColorBrush(CanvasColor);
+            rootGrid.Background = new SolidColorBrush(Color.FromRgb(0, 0, 0));
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(48) }); // Header
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(56) }); // Stats bar
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Cards
@@ -498,6 +498,7 @@ namespace WaitPlayNative {
             statsBar.Child = statsPanel;
             Grid.SetRow(statsBar, 1);
             rootGrid.Children.Add(statsBar);
+            statsBar.Visibility = Visibility.Hidden;
 
             // Row 2: 4x4 Cards Grid
             var cardsContainer = new Grid {
@@ -601,6 +602,7 @@ namespace WaitPlayNative {
 
             Grid.SetRow(cardsContainer, 2);
             rootGrid.Children.Add(cardsContainer);
+            cardsContainer.Visibility = Visibility.Hidden;
 
             // Row 3: Footer hints
             var footer = new Border {
@@ -640,6 +642,7 @@ namespace WaitPlayNative {
             footer.Child = footerPanel;
             Grid.SetRow(footer, 3);
             rootGrid.Children.Add(footer);
+            footer.Visibility = Visibility.Hidden;
 
             // Browser experience: the WebView2 (Chromium/Edge) loads the real
             // Instagram site; a slim toolbar in row 0 provides back/forward/reload
@@ -1103,13 +1106,9 @@ namespace WaitPlayNative {
                                         idleTicks = 0;
                                         break;
                                     } else if (stopReason == "stop" || stopReason == "end_turn") {
-                                        // Final assistant message without tools -> Turn Completed!
-                                        if (hasBeenActive && !hasFinished) {
-                                            idleTicks++;
-                                            if (idleTicks >= 2) {
-                                                OnTurnCompleted();
-                                            }
-                                        }
+                                        // The log shows a turn end, but closing is driven by the
+                                        // authoritative agent_end event (via the close-signal file),
+                                        // NOT this heuristic — avoids closing before the turn is done.
                                         break;
                                     }
                                 }
@@ -1371,7 +1370,7 @@ namespace WaitPlayNative {
                 Margin = new Thickness(3, 0, 0, 0),
                 Foreground = new SolidColorBrush(accent),
                 Background = Brushes.Transparent,
-                BorderBrush = new SolidColorBrush(Color.FromRgb(219, 219, 219)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(70, 70, 76)),
                 BorderThickness = new Thickness(1),
                 Cursor = Cursors.Hand,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -1385,7 +1384,7 @@ namespace WaitPlayNative {
                 Width = 32,
                 Height = 30,
                 FontSize = 16,
-                Foreground = new SolidColorBrush(InkColor),
+                Foreground = new SolidColorBrush(Color.FromRgb(235, 235, 235)),
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
                 Cursor = Cursors.Hand,
@@ -1396,8 +1395,8 @@ namespace WaitPlayNative {
 
         private void BuildBrowserToolbar(Grid root) {
             var bar = new Border {
-                Background = new SolidColorBrush(Color.FromRgb(250, 250, 250)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(219, 219, 219)),
+                Background = new SolidColorBrush(Color.FromRgb(0, 0, 0)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(28, 28, 30)),
                 BorderThickness = new Thickness(0, 0, 0, 1)
             };
             bar.MouseLeftButtonDown += (s, e) => {
@@ -1440,7 +1439,7 @@ namespace WaitPlayNative {
             dock.Children.Add(sites);
 
             var addrWrap = new Border {
-                Background = new SolidColorBrush(Color.FromRgb(239, 239, 239)),
+                Background = new SolidColorBrush(Color.FromRgb(38, 38, 42)),
                 CornerRadius = new CornerRadius(8),
                 Margin = new Thickness(8, 6, 8, 6),
                 Padding = new Thickness(10, 0, 10, 0)
@@ -1451,7 +1450,7 @@ namespace WaitPlayNative {
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
                 FontSize = 12,
-                Foreground = new SolidColorBrush(InkColor)
+                Foreground = new SolidColorBrush(Color.FromRgb(220, 220, 222))
             };
             addressBar.KeyDown += (s, e) => {
                 if (e.Key == Key.Enter) { NavigateTo(addressBar.Text); }

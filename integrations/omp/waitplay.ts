@@ -12,6 +12,7 @@ export default function (pi: PiEmitter) {
   const NATIVE_APP = fs.existsSync("C:\\Users\\ASUS\\waitplay\\apps\\native\\WaitPlay.exe") ? "C:\\Users\\ASUS\\waitplay\\apps\\native\\WaitPlay.exe" : "C:\\Users\\ASUS\\AppData\\Local\\Temp\\waitplay\\apps\\native\\WaitPlay.exe";
   const DISMISS_FILE = path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay", ".waitplay-dismissed.json");
   const REG_FILE = path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay", ".waitplay-terminals.json");
+  const CLOSE_FILE = path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay", ".waitplay-close.json");
 
   function isPidAlive(pid: number): boolean {
     try {
@@ -129,6 +130,17 @@ export default function (pi: PiEmitter) {
     } catch {}
   }
 
+  function writeCloseSignal() {
+    try {
+      fs.mkdirSync(path.dirname(CLOSE_FILE), { recursive: true });
+      fs.writeFileSync(CLOSE_FILE, JSON.stringify({ sessionId: sessionKey, ts: Date.now() }));
+    } catch {}
+  }
+
+  function clearCloseSignal() {
+    try { if (fs.existsSync(CLOSE_FILE)) fs.unlinkSync(CLOSE_FILE); } catch {}
+  }
+
   // Guard: Open interface EXACTLY ONE TIME per prompt per terminal!
   let hasPoppedForPrompt = false;
 
@@ -143,6 +155,7 @@ export default function (pi: PiEmitter) {
       return;
     }
     hasPoppedForPrompt = true;
+    clearCloseSignal();
     try {
       if (fs.existsSync(NATIVE_APP)) {
         const child = spawn(NATIVE_APP, [
@@ -252,11 +265,13 @@ export default function (pi: PiEmitter) {
     hasPoppedForPrompt = false;
     clearDismissal(sessionKey);
     emit("task_completed", { model: "Gemini 3.8 Flash", terminal: termLabel });
+    writeCloseSignal();
   });
 
   pi.on("session_stop", async () => {
     hasPoppedForPrompt = false;
     clearDismissal(sessionKey);
     emit("task_completed", { model: "Gemini 3.8 Flash", terminal: termLabel });
+    writeCloseSignal();
   });
 }
