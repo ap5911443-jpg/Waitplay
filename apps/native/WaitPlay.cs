@@ -129,6 +129,8 @@ namespace WaitPlayNative {
         private TextBox addressBar;
         private Button btnBack;
         private Button btnForward;
+        private bool isFullscreen = false;
+        private Rect savedBounds;
 
         public MainWindow(string sessionId = "", long promptTime = 0, string terminal = "", uint parentPid = 0, IntPtr parentHwnd = default(IntPtr)) {
             this.targetSessionId = sessionId;
@@ -275,7 +277,7 @@ namespace WaitPlayNative {
         private void BuildUI() {
             var rootGrid = new Grid();
             rootGrid.Background = new SolidColorBrush(Color.FromRgb(0, 0, 0));
-            rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(48) }); // Header
+            rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(34) }); // Top bar
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(56) }); // Stats bar
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Cards
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(38) }); // Footer
@@ -651,10 +653,11 @@ namespace WaitPlayNative {
                 string udf = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", "webview2");
                 try { System.IO.Directory.CreateDirectory(udf); } catch {}
                 webView.CreationProperties = new Microsoft.Web.WebView2.Wpf.CoreWebView2CreationProperties { UserDataFolder = udf };
-                Grid.SetRow(webView, 0);
-                Grid.SetRowSpan(webView, 4);
+                Grid.SetRow(webView, 1);
+                Grid.SetRowSpan(webView, 3);
                 Panel.SetZIndex(webView, 50);
                 rootGrid.Children.Add(webView);
+                BuildTopBar(rootGrid);
                 webView.SourceChanged += (s, e) => UpdateAddress();
                 webView.NavigationCompleted += (s, e) => UpdateNavButtons();
                 webView.CoreWebView2InitializationCompleted += (s, e) => {
@@ -1374,6 +1377,82 @@ namespace WaitPlayNative {
                 VerticalAlignment = VerticalAlignment.Center,
                 Template = CreateRoundedButtonTemplate(new CornerRadius(13))
             };
+        }
+
+        private Button MakeWinButton(string glyph, Color hover) {
+            var b = new Button {
+                Content = glyph,
+                Width = 46,
+                Height = 34,
+                FontSize = 13,
+                Foreground = new SolidColorBrush(Color.FromRgb(235, 235, 235)),
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Template = CreateRoundedButtonTemplate(new CornerRadius(0))
+            };
+            b.MouseEnter += (s, e) => b.Background = new SolidColorBrush(hover);
+            b.MouseLeave += (s, e) => b.Background = Brushes.Transparent;
+            return b;
+        }
+
+        private void ToggleFullscreen() {
+            if (!isFullscreen) {
+                savedBounds = new Rect(Left, Top, Width, Height);
+                Left = 0;
+                Top = 0;
+                Width = SystemParameters.PrimaryScreenWidth;
+                Height = SystemParameters.PrimaryScreenHeight;
+                isFullscreen = true;
+            } else {
+                Left = savedBounds.Left;
+                Top = savedBounds.Top;
+                Width = savedBounds.Width;
+                Height = savedBounds.Height;
+                isFullscreen = false;
+            }
+        }
+
+        private void BuildTopBar(Grid root) {
+            var bar = new Border {
+                Background = new SolidColorBrush(Color.FromRgb(0, 0, 0)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(28, 28, 30)),
+                BorderThickness = new Thickness(0, 0, 0, 1)
+            };
+            bar.MouseLeftButtonDown += (s, e) => {
+                if (e.ButtonState != MouseButtonState.Pressed) return;
+                if (e.ClickCount == 2) { ToggleFullscreen(); }
+                else { try { DragMove(); } catch {} }
+            };
+            var dock = new DockPanel { LastChildFill = true };
+
+            var btnClose = MakeWinButton("\u2715", Color.FromRgb(232, 60, 60));
+            btnClose.ToolTip = "Quit";
+            btnClose.Click += (s, e) => Close();
+            DockPanel.SetDock(btnClose, Dock.Right);
+            dock.Children.Add(btnClose);
+
+            var btnFull = MakeWinButton("\u2922", Color.FromRgb(48, 48, 56));
+            btnFull.ToolTip = "Full screen";
+            btnFull.Click += (s, e) => ToggleFullscreen();
+            DockPanel.SetDock(btnFull, Dock.Right);
+            dock.Children.Add(btnFull);
+
+            var btnMin = MakeWinButton("\u2013", Color.FromRgb(48, 48, 56));
+            btnMin.ToolTip = "Minimize";
+            btnMin.Click += (s, e) => { try { this.WindowState = WindowState.Minimized; } catch {} };
+            DockPanel.SetDock(btnMin, Dock.Right);
+            dock.Children.Add(btnMin);
+
+            // Remaining space is the draggable title area.
+            var dragArea = new Border { Background = Brushes.Transparent };
+            dock.Children.Add(dragArea);
+
+            bar.Child = dock;
+            Grid.SetRow(bar, 0);
+            Panel.SetZIndex(bar, 100);
+            root.Children.Add(bar);
         }
 
         private Button MakeToolbarButton(string glyph) {
