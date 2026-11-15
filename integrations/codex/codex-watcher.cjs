@@ -22,6 +22,18 @@ const CODEX_DB_PATH = path.join(os.homedir(), '.codex', 'logs_2.sqlite');
 const BRIDGE_PORT = parseInt(process.env.BRIDGE_PORT || '3150', 10);
 const NATIVE_APP = path.join(__dirname, '..', '..', 'apps', 'native', 'WaitPlay.exe');
 const DISMISS_FILE = path.join(os.tmpdir(), 'waitplay', '.waitplay-dismissed.json');
+const CLOSE_FILE = path.join(os.tmpdir(), 'waitplay', '.waitplay-close.json');
+
+function writeCloseSignal() {
+  try {
+    fs.mkdirSync(path.dirname(CLOSE_FILE), { recursive: true });
+    fs.writeFileSync(CLOSE_FILE, JSON.stringify({ sessionId: 'codex-session', ts: Date.now() }));
+  } catch {}
+}
+
+function clearCloseSignal() {
+  try { if (fs.existsSync(CLOSE_FILE)) fs.unlinkSync(CLOSE_FILE); } catch {}
+}
 
 function isWaitPlayEnabled() {
   try {
@@ -143,6 +155,7 @@ function popGameWindow() {
     return;
   }
   console.log('[WaitPlay Watcher] Launching native WaitPlay desktop application...');
+  clearCloseSignal();
   try {
     const args = ['--session=codex-session', `--parentPid=${process.pid}`];
     const child = spawn(NATIVE_APP, args, {
@@ -247,6 +260,7 @@ setInterval(() => {
             console.log(`[WaitPlay Watcher] ChatGPT/Codex finished turn! (log ${endLogId})`);
             clearDismissal('codex-session');
             sendBridgeEvent('task_completed');
+            writeCloseSignal();
           }, 800);
         }
       }

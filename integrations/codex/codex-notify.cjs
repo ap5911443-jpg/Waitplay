@@ -85,10 +85,11 @@ function emitCompleted() {
 
 emitCompleted();
 
-setTimeout(() => {
-  try {
-    const { execSync } = require('node:child_process');
-    execSync('taskkill /im WaitPlay.exe /T /F', { stdio: 'ignore' });
-  } catch {}
-  process.exit(0);
-}, 3000);
+// Widget-safe close: signal the companion to close (not taskkill, which would
+// also kill the floating desktop widget). The native app polls this file.
+try {
+  const CLOSE_FILE = path.join(os.tmpdir(), 'waitplay', '.waitplay-close.json');
+  fs.mkdirSync(path.dirname(CLOSE_FILE), { recursive: true });
+  fs.writeFileSync(CLOSE_FILE, JSON.stringify({ sessionId: 'codex-session', ts: Date.now() }));
+} catch {}
+setTimeout(() => process.exit(0), 500);

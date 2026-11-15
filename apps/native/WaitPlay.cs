@@ -901,6 +901,27 @@ namespace WaitPlayNative {
             if (myHwnd == IntPtr.Zero) {
                 try { myHwnd = new WindowInteropHelper(this).Handle; } catch {}
             }
+
+            // Bridge-independent close signal: any watcher can request close by
+            // writing { sessionId, ts } so completion works without the bridge.
+            try {
+                string closeFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", ".waitplay-close.json");
+                if (System.IO.File.Exists(closeFile)) {
+                    string cj = System.IO.File.ReadAllText(closeFile);
+                    var cser = new JavaScriptSerializer();
+                    var cdict = cser.Deserialize<Dictionary<string, object>>(cj);
+                    if (cdict != null) {
+                        string csid = cdict.ContainsKey("sessionId") ? Convert.ToString(cdict["sessionId"]) : "";
+                        long cts = cdict.ContainsKey("ts") && cdict["ts"] != null ? Convert.ToInt64(cdict["ts"]) : 0;
+                        long cnow = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                        if (cts > 0 && (cnow - cts) < 6000 &&
+                            (csid == "*" || string.Equals(csid, targetSessionId, StringComparison.OrdinalIgnoreCase))) {
+                            OnTurnCompleted();
+                            return;
+                        }
+                    }
+                }
+            } catch {}
             // 1. Check IPC file for session switch requested by another process
             try {
                 string ipcFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", ".waitplay-active-session.txt");
@@ -1414,13 +1435,7 @@ namespace WaitPlayNative {
             var sites = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0) };
             var igBtn = MakeSiteButton("Instagram", Color.FromRgb(214, 41, 118));
             igBtn.Click += (s, e) => NavigateTo(HOME_URL);
-            var ytBtn = MakeSiteButton("YouTube", Color.FromRgb(255, 0, 0));
-            ytBtn.Click += (s, e) => NavigateTo(YT_URL);
-            var xBtn = MakeSiteButton("X", Color.FromRgb(26, 26, 26));
-            xBtn.Click += (s, e) => NavigateTo(X_URL);
             sites.Children.Add(igBtn);
-            sites.Children.Add(ytBtn);
-            sites.Children.Add(xBtn);
             DockPanel.SetDock(sites, Dock.Left);
             dock.Children.Add(sites);
 
@@ -2242,7 +2257,7 @@ namespace WaitPlayNative {
             };
             buttonStack.Children.Add(toggleButton);
 
-            // Quick-launch site shortcuts near the power button
+            // Quick-launch Instagram shortcut near the power button
             buttonStack.Children.Add(CreateSiteIcon("instagram",
                 new LinearGradientBrush(
                     new GradientStopCollection {
@@ -2251,12 +2266,6 @@ namespace WaitPlayNative {
                         new GradientStop(Color.FromRgb(0x81, 0x34, 0xAF), 1.0)
                     }, 45),
                 BuildCameraGlyph(), "Open Instagram"));
-            buttonStack.Children.Add(CreateSiteIcon("youtube",
-                new SolidColorBrush(Color.FromRgb(0xFF, 0x00, 0x00)),
-                BuildPlayGlyph(), "Open YouTube"));
-            buttonStack.Children.Add(CreateSiteIcon("x",
-                new SolidColorBrush(Color.FromRgb(0x10, 0x10, 0x12)),
-                BuildXGlyph(), "Open X"));
 
             UpdateFlowGridLayout();
 
