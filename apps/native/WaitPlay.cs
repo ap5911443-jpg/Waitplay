@@ -122,6 +122,10 @@ namespace WaitPlayNative {
         private Microsoft.Web.WebView2.Wpf.WebView2 webView;
         private DispatcherTimer webReadyTimer;
         private const int WEB_PORT = 5200;
+        private const string HOME_URL = "https://www.instagram.com/";
+        private TextBox addressBar;
+        private Button btnBack;
+        private Button btnForward;
 
         public MainWindow(string sessionId = "", long promptTime = 0, string terminal = "", uint parentPid = 0, IntPtr parentHwnd = default(IntPtr)) {
             this.targetSessionId = sessionId;
@@ -581,6 +585,7 @@ namespace WaitPlayNative {
                     exitTimer = null;
                 }
                 bannerBorder.Visibility = Visibility.Collapsed;
+                if (webView != null) { try { webView.Visibility = Visibility.Visible; } catch {} }
             };
             bannerBtnRow.Children.Add(btnExit);
             bannerBtnRow.Children.Add(btnKeepPlaying);
@@ -633,8 +638,9 @@ namespace WaitPlayNative {
             Grid.SetRow(footer, 3);
             rootGrid.Children.Add(footer);
 
-            // Instagram companion experience: WebView2 overlays the game rows
-            // (stats + cards + footer) so the native window hosts the web popup.
+            // Browser experience: the WebView2 (Chromium/Edge) loads the real
+            // Instagram site; a slim toolbar in row 0 provides back/forward/reload
+            // and an editable address bar, so the window acts as a browser.
             try {
                 webView = new Microsoft.Web.WebView2.Wpf.WebView2();
                 string udf = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", "webview2");
@@ -644,8 +650,10 @@ namespace WaitPlayNative {
                 Grid.SetRowSpan(webView, 3);
                 Panel.SetZIndex(webView, 50);
                 rootGrid.Children.Add(webView);
-                EnsureWebServer();
-                StartWebNavigationWhenReady();
+                BuildBrowserToolbar(rootGrid);
+                webView.SourceChanged += (s, e) => UpdateAddress();
+                webView.NavigationCompleted += (s, e) => UpdateNavButtons();
+                try { webView.Source = new Uri(HOME_URL); } catch {}
             } catch {}
 
             Content = rootGrid;
@@ -1345,6 +1353,115 @@ namespace WaitPlayNative {
                 }
             };
             webReadyTimer.Start();
+        }
+
+        // --- Browser toolbar (back / forward / reload / address) ----------------
+
+        private Button MakeToolbarButton(string glyph) {
+            return new Button {
+                Content = glyph,
+                Width = 32,
+                Height = 30,
+                FontSize = 16,
+                Foreground = new SolidColorBrush(InkColor),
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand,
+                VerticalAlignment = VerticalAlignment.Center,
+                Template = CreateRoundedButtonTemplate(new CornerRadius(6))
+            };
+        }
+
+        private void BuildBrowserToolbar(Grid root) {
+            var bar = new Border {
+                Background = new SolidColorBrush(Color.FromRgb(250, 250, 250)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(219, 219, 219)),
+                BorderThickness = new Thickness(0, 0, 0, 1)
+            };
+            bar.MouseLeftButtonDown += (s, e) => {
+                if (e.ButtonState == MouseButtonState.Pressed && !(e.OriginalSource is TextBox)) {
+                    try { DragMove(); } catch {}
+                }
+            };
+            var dock = new DockPanel { LastChildFill = true, Margin = new Thickness(8, 0, 8, 0) };
+
+            var btnClose = MakeToolbarButton("\u2715");
+            btnClose.Click += (s, e) => Close();
+            DockPanel.SetDock(btnClose, Dock.Right);
+            dock.Children.Add(btnClose);
+
+            var btnHome = MakeToolbarButton("\u2302");
+            btnHome.Click += (s, e) => NavigateTo(HOME_URL);
+            DockPanel.SetDock(btnHome, Dock.Right);
+            dock.Children.Add(btnHome);
+
+            btnBack = MakeToolbarButton("\u2039");
+            btnBack.Click += (s, e) => { try { if (webView != null && webView.CanGoBack) webView.GoBack(); } catch {} };
+            DockPanel.SetDock(btnBack, Dock.Left);
+            dock.Children.Add(btnBack);
+
+            btnForward = MakeToolbarButton("\u203A");
+            btnForward.Click += (s, e) => { try { if (webView != null && webView.CanGoForward) webView.GoForward(); } catch {} };
+            DockPanel.SetDock(btnForward, Dock.Left);
+            dock.Children.Add(btnForward);
+
+            var btnReload = MakeToolbarButton("\u21BB");
+            btnReload.Click += (s, e) => { try { if (webView != null) webView.Reload(); } catch {} };
+            DockPanel.SetDock(btnReload, Dock.Left);
+            dock.Children.Add(btnReload);
+
+            var addrWrap = new Border {
+                Background = new SolidColorBrush(Color.FromRgb(239, 239, 239)),
+                CornerRadius = new CornerRadius(8),
+                Margin = new Thickness(8, 6, 8, 6),
+                Padding = new Thickness(10, 0, 10, 0)
+            };
+            addressBar = new TextBox {
+                Text = HOME_URL,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                FontSize = 12,
+                Foreground = new SolidColorBrush(InkColor)
+            };
+            addressBar.KeyDown += (s, e) => {
+                if (e.Key == Key.Enter) { NavigateTo(addressBar.Text); }
+            };
+            addrWrap.Child = addressBar;
+            dock.Children.Add(addrWrap);
+
+            bar.Child = dock;
+            Grid.SetRow(bar, 0);
+            Panel.SetZIndex(bar, 100);
+            root.Children.Add(bar);
+        }
+
+        private void NavigateTo(string input) {
+            if (string.IsNullOrWhiteSpace(input)) return;
+            string u = input.Trim();
+            if (!u.StartsWith("http://") && !u.StartsWith("https://")) {
+                if (u.Contains(" ") || !u.Contains(".")) {
+                    u = "https://www.google.com/search?q=" + Uri.EscapeDataString(u);
+                } else {
+                    u = "https://" + u;
+                }
+            }
+            try { if (webView != null) webView.Source = new Uri(u); } catch {}
+        }
+
+        private void UpdateAddress() {
+            try {
+                if (addressBar != null && webView != null && webView.Source != null && !addressBar.IsKeyboardFocused) {
+                    addressBar.Text = webView.Source.ToString();
+                }
+            } catch {}
+        }
+
+        private void UpdateNavButtons() {
+            try {
+                if (btnBack != null && webView != null) btnBack.Opacity = webView.CanGoBack ? 1.0 : 0.4;
+                if (btnForward != null && webView != null) btnForward.Opacity = webView.CanGoForward ? 1.0 : 0.4;
+            } catch {}
         }
     }
 

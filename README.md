@@ -76,7 +76,7 @@ npm run build
 npm run build:native
 ```
 
-> **Companion UI:** The native Windows app hosts the web companion (`apps/web`) in an embedded **WebView2** control. On agent start it auto-starts a local static server (`apps/web/serve.cjs`, port `5200`) that serves the production build, so `npm run build` (which emits `apps/web/dist`) must have run at least once. The WebView2 runtime ships with modern Windows; no extra install is required.
+> **Companion UI:** The native Windows app embeds a **WebView2** (Chromium) control that acts as a browser: on agent start it opens the live **[instagram.com](https://www.instagram.com/)** with a slim toolbar (back / forward / reload / editable address bar / home). Your login persists via a dedicated WebView2 user-data folder. The WebView2 runtime ships with modern Windows; no extra install is required. (A separate React companion with an Instagram clone, micro-games, and YouTube still lives in `apps/web` and runs via `npm run dev:web`.)
 
 ### 3. Run the Test Suite
 
