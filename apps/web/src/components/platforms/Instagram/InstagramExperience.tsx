@@ -1,5 +1,5 @@
 import React from "react";
-import { InstagramContainer } from "../InstagramContainer";
+import { InstagramApp } from "./InstagramApp";
 
 interface InstagramExperienceProps {
   initialScreen?: "feed" | "reels";
@@ -7,5 +7,7 @@ interface InstagramExperienceProps {
 }
 
 export const InstagramExperience: React.FC<InstagramExperienceProps> = ({ onClose }) => {
-  return <InstagramContainer onClose={onClose} />;
+  return <InstagramApp onClose={onClose} />;
 };
+
+export default InstagramExperience;
