@@ -123,6 +123,8 @@ namespace WaitPlayNative {
         private DispatcherTimer webReadyTimer;
         private const int WEB_PORT = 5200;
         private const string HOME_URL = "https://www.instagram.com/";
+        private const string YT_URL = "https://www.youtube.com/";
+        private const string X_URL = "https://x.com/home";
         private TextBox addressBar;
         private Button btnBack;
         private Button btnForward;
@@ -1347,6 +1349,24 @@ namespace WaitPlayNative {
 
         // --- Browser toolbar (back / forward / reload / address) ----------------
 
+        private Button MakeSiteButton(string label, Color accent) {
+            return new Button {
+                Content = label,
+                Height = 26,
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Padding = new Thickness(11, 0, 11, 0),
+                Margin = new Thickness(3, 0, 0, 0),
+                Foreground = new SolidColorBrush(accent),
+                Background = Brushes.Transparent,
+                BorderBrush = new SolidColorBrush(Color.FromRgb(219, 219, 219)),
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+                VerticalAlignment = VerticalAlignment.Center,
+                Template = CreateRoundedButtonTemplate(new CornerRadius(13))
+            };
+        }
+
         private Button MakeToolbarButton(string glyph) {
             return new Button {
                 Content = glyph,
@@ -1399,6 +1419,19 @@ namespace WaitPlayNative {
             btnReload.Click += (s, e) => { try { if (webView != null) webView.Reload(); } catch {} };
             DockPanel.SetDock(btnReload, Dock.Left);
             dock.Children.Add(btnReload);
+
+            var sites = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0) };
+            var igBtn = MakeSiteButton("Instagram", Color.FromRgb(214, 41, 118));
+            igBtn.Click += (s, e) => NavigateTo(HOME_URL);
+            var ytBtn = MakeSiteButton("YouTube", Color.FromRgb(255, 0, 0));
+            ytBtn.Click += (s, e) => NavigateTo(YT_URL);
+            var xBtn = MakeSiteButton("X", Color.FromRgb(26, 26, 26));
+            xBtn.Click += (s, e) => NavigateTo(X_URL);
+            sites.Children.Add(igBtn);
+            sites.Children.Add(ytBtn);
+            sites.Children.Add(xBtn);
+            DockPanel.SetDock(sites, Dock.Left);
+            dock.Children.Add(sites);
 
             var addrWrap = new Border {
                 Background = new SolidColorBrush(Color.FromRgb(239, 239, 239)),
