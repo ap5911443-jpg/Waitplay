@@ -125,6 +125,7 @@ namespace WaitPlayNative {
         private const string HOME_URL = "https://www.instagram.com/";
         private const string YT_URL = "https://www.youtube.com/";
         private const string X_URL = "https://x.com/home";
+        internal static string StartUrl = null;
         private TextBox addressBar;
         private Button btnBack;
         private Button btnForward;
@@ -667,7 +668,7 @@ namespace WaitPlayNative {
                         } catch {}
                     }
                 };
-                try { webView.Source = new Uri(HOME_URL); } catch {}
+                try { webView.Source = new Uri(string.IsNullOrEmpty(StartUrl) ? HOME_URL : StartUrl); } catch {}
             } catch {}
 
             Content = rootGrid;
@@ -1922,6 +1923,92 @@ namespace WaitPlayNative {
         public FloatingFlowWidget() {
             InitializeComponent();
         }
+        private void LaunchSite(string site) {
+            try {
+                string exe = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+                var psi = new ProcessStartInfo(exe, "--game --site=" + site);
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                Process.Start(psi);
+            } catch {}
+        }
+
+        private Border CreateSiteIcon(string site, Brush bg, UIElement glyph, string tip) {
+            var b = new Border {
+                Width = 26,
+                Height = 26,
+                CornerRadius = new CornerRadius(13),
+                Background = bg,
+                BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72)),
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+                Margin = new Thickness(0, 7, 0, 0),
+                ToolTip = tip,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var g = new Grid();
+            g.Children.Add(glyph);
+            b.Child = g;
+            b.MouseEnter += (s, e) => { b.Opacity = 0.82; };
+            b.MouseLeave += (s, e) => { b.Opacity = 1.0; };
+            b.MouseLeftButtonUp += (s, e) => { if (!isDragActive) { LaunchSite(site); e.Handled = true; } };
+            return b;
+        }
+
+        private UIElement BuildCameraGlyph() {
+            var grid = new Grid { Width = 14, Height = 14 };
+            var body = new Border {
+                Width = 14,
+                Height = 14,
+                CornerRadius = new CornerRadius(4.5),
+                BorderBrush = Brushes.White,
+                BorderThickness = new Thickness(1.6)
+            };
+            var lens = new Ellipse {
+                Width = 6,
+                Height = 6,
+                Stroke = Brushes.White,
+                StrokeThickness = 1.5,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var dot = new Ellipse {
+                Width = 2.2,
+                Height = 2.2,
+                Fill = Brushes.White,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 2.2, 2.2, 0)
+            };
+            grid.Children.Add(body);
+            grid.Children.Add(lens);
+            grid.Children.Add(dot);
+            return grid;
+        }
+
+        private UIElement BuildPlayGlyph() {
+            return new System.Windows.Shapes.Polygon {
+                Points = new PointCollection { new Point(0, 0), new Point(0, 9), new Point(8, 4.5) },
+                Fill = Brushes.White,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(1.5, 0, 0, 0)
+            };
+        }
+
+        private UIElement BuildXGlyph() {
+            return new TextBlock {
+                Text = "X",
+                Foreground = Brushes.White,
+                FontSize = 13,
+                FontWeight = FontWeights.Bold,
+                FontFamily = new FontFamily("Segoe UI"),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+        }
+
         private void ShowTextPill() {
             isPillHovered = true;
             if (textFadeTimer != null) textFadeTimer.Stop();
@@ -2164,6 +2251,22 @@ namespace WaitPlayNative {
                 HorizontalAlignment = HorizontalAlignment.Center
             };
             buttonStack.Children.Add(toggleButton);
+
+            // Quick-launch site shortcuts near the power button
+            buttonStack.Children.Add(CreateSiteIcon("instagram",
+                new LinearGradientBrush(
+                    new GradientStopCollection {
+                        new GradientStop(Color.FromRgb(0xF5, 0x85, 0x29), 0.0),
+                        new GradientStop(Color.FromRgb(0xDD, 0x2A, 0x7B), 0.55),
+                        new GradientStop(Color.FromRgb(0x81, 0x34, 0xAF), 1.0)
+                    }, 45),
+                BuildCameraGlyph(), "Open Instagram"));
+            buttonStack.Children.Add(CreateSiteIcon("youtube",
+                new SolidColorBrush(Color.FromRgb(0xFF, 0x00, 0x00)),
+                BuildPlayGlyph(), "Open YouTube"));
+            buttonStack.Children.Add(CreateSiteIcon("x",
+                new SolidColorBrush(Color.FromRgb(0x10, 0x10, 0x12)),
+                BuildXGlyph(), "Open X"));
 
             UpdateFlowGridLayout();
 
@@ -2729,6 +2832,13 @@ namespace WaitPlayNative {
                     } else if (a == "--toggle") {
                         toggleOnly = true;
                     } else if (a == "--game" || a == "--open") {
+                        forceGame = true;
+                        if (string.IsNullOrEmpty(terminal)) terminal = "Desktop";
+                    } else if (a.StartsWith("--site=")) {
+                        string site = a.Substring("--site=".Length).ToLower();
+                        if (site == "youtube" || site == "yt") MainWindow.StartUrl = "https://www.youtube.com/";
+                        else if (site == "x" || site == "twitter") MainWindow.StartUrl = "https://x.com/home";
+                        else MainWindow.StartUrl = "https://www.instagram.com/";
                         forceGame = true;
                         if (string.IsNullOrEmpty(terminal)) terminal = "Desktop";
                     } else if (a.StartsWith("--session=")) {
