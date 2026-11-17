@@ -2010,9 +2010,8 @@ namespace WaitPlayNative {
         private DispatcherTimer collapseTimer;
         private DispatcherTimer statusTimer;
 
-        // Design.md palette
-        // WhisperFlow Soft White palette
-        static readonly Color Bg          = Color.FromRgb(255, 255, 255);     // #FFFFFF Main bg
+        // Design.md palette — WhisperFlow Soft White
+        static readonly Color Bg          = Color.FromRgb(255, 255, 255);     // #FFFFFF Main bg (capsule)
         static readonly Color BgSec       = Color.FromRgb(245, 245, 243);     // #F5F5F3 Secondary bg
         static readonly Color BgHover     = Color.FromRgb(235, 235, 231);     // #EBEBE7 Hover
         static readonly Color BgPressed   = Color.FromRgb(220, 220, 216);     // Pressed
@@ -2024,6 +2023,13 @@ namespace WaitPlayNative {
         static readonly Color GreenDot    = Color.FromRgb(99, 144, 133);      // #639085 Muted green
         static readonly Color AmberDot    = Color.FromRgb(200, 155, 50);      // Warm amber
         static readonly Color Slate       = Color.FromRgb(180, 180, 175);     // Neutral grey inactive
+        // Pill: dark like Image #3
+        static readonly Color PillBg      = Color.FromRgb(26, 26, 26);        // #1A1A1A dark pill
+        static readonly Color PillBrd     = Color.FromRgb(70, 70, 70);        // subtle grey border
+        static readonly Color PillTxt     = Color.FromRgb(240, 240, 240);     // white text on dark pill
+        // Edge handle: dark like Image #3
+        static readonly Color HandleBg    = Color.FromRgb(30, 30, 34);        // dark handle
+        static readonly Color HandleBrd   = Color.FromRgb(80, 80, 85);        // grey outline
 
         public FloatingFlowWidget() {
             Title = "WaitPlay";
@@ -2066,8 +2072,8 @@ namespace WaitPlayNative {
             edgeHandle = new Border {
                 Width = 10, Height = 40,
                 CornerRadius = new CornerRadius(5),
-                Background = new SolidColorBrush(BgSec),
-                BorderBrush = new SolidColorBrush(Brd),
+                Background = new SolidColorBrush(HandleBg),
+                BorderBrush = new SolidColorBrush(HandleBrd),
                 BorderThickness = new Thickness(1),
                 Cursor = Cursors.Hand
             };
@@ -2086,16 +2092,13 @@ namespace WaitPlayNative {
             row1.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // pill
             row1.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // capsule
 
-            // Text pill (overlaps behind capsule via negative margin)
+            // Text pill — dark background (Image #3 style), no overlap
             textPill = new Border {
-                Background = new SolidColorBrush(Bg),
-                BorderBrush = new SolidColorBrush(Brd),
+                Background = new SolidColorBrush(PillBg),
+                BorderBrush = new SolidColorBrush(PillBrd),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(16),
-                Padding = new Thickness(10, 5, 10, 5),
-                Effect = new System.Windows.Media.Effects.DropShadowEffect {
-                    Color = Color.FromRgb(26,26,15), BlurRadius = 6, ShadowDepth = 1, Opacity = 0.06, Direction = 270
-                },
+                Padding = new Thickness(12, 6, 20, 6),
                 VerticalAlignment = VerticalAlignment.Center,
                 Opacity = 0
             };
@@ -2105,7 +2108,7 @@ namespace WaitPlayNative {
                 Text = "WaitPlay",
                 FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
                 FontSize = 12, FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Txt),
+                Foreground = new SolidColorBrush(PillTxt),
                 VerticalAlignment = VerticalAlignment.Center
             };
             pillRow.Children.Add(pillDot);
