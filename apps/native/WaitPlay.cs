@@ -1903,90 +1903,9 @@ namespace WaitPlayNative {
         }
     }
 
-    public enum DockPosition {
-        Left,
-        Right,
-        Bottom,
-        Free
-    }
-
-    public enum WidgetLayout {
-        Vertical,
-        WisprFlow,
-        Horizontal
-    }
-
-    public class DockOverlayWindow : Window {
-        private Border leftTarget;
-        private Border rightTarget;
-        private Border bottomTarget;
-
-        public DockOverlayWindow() {
-            WindowStyle = WindowStyle.None;
-            AllowsTransparency = true;
-            Background = Brushes.Transparent;
-            Topmost = true;
-            ShowInTaskbar = false;
-            IsHitTestVisible = false;
-
-            Left = SystemParameters.WorkArea.Left;
-            Top = SystemParameters.WorkArea.Top;
-            Width = SystemParameters.WorkArea.Width;
-            Height = SystemParameters.WorkArea.Height;
-
-            var canvas = new Canvas();
-            double screenW = Width;
-            double screenH = Height;
-
-            leftTarget = CreateTarget(0, (screenH - 110) / 2, 28, 110, new CornerRadius(0, 14, 14, 0));
-            rightTarget = CreateTarget(screenW - 28, (screenH - 110) / 2, 28, 110, new CornerRadius(14, 0, 0, 14));
-            bottomTarget = CreateTarget((screenW - 130) / 2, screenH - 28, 130, 28, new CornerRadius(14, 14, 0, 0));
-
-            canvas.Children.Add(leftTarget);
-            canvas.Children.Add(rightTarget);
-            canvas.Children.Add(bottomTarget);
-
-            Content = canvas;
-        }
-
-        private Border CreateTarget(double x, double y, double w, double h, CornerRadius r) {
-            var b = new Border {
-                Width = w,
-                Height = h,
-                CornerRadius = r,
-                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(90, 255, 255, 255)),
-                BorderThickness = new Thickness(1.5)
-            };
-            Canvas.SetLeft(b, x);
-            Canvas.SetTop(b, y);
-            return b;
-        }
-
-        public void Highlight(DockPosition dock) {
-            ResetTarget(leftTarget);
-            ResetTarget(rightTarget);
-            ResetTarget(bottomTarget);
-
-            if (dock == DockPosition.Left) {
-                ActiveTarget(leftTarget);
-            } else if (dock == DockPosition.Right) {
-                ActiveTarget(rightTarget);
-            } else if (dock == DockPosition.Bottom) {
-                ActiveTarget(bottomTarget);
-            }
-        }
-
-        private void ResetTarget(Border b) {
-            b.Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255));
-            b.BorderBrush = new SolidColorBrush(Color.FromArgb(90, 255, 255, 255));
-        }
-
-        private void ActiveTarget(Border b) {
-            b.Background = new SolidColorBrush(Color.FromArgb(140, 0, 240, 255));
-            b.BorderBrush = new SolidColorBrush(Color.FromRgb(0, 240, 255));
-        }
-    }
+    // ─────────────────────────────────────────────────────────────────
+    //  WhisperFlow-style floating pill widget
+    // ─────────────────────────────────────────────────────────────────
 
     public class FloatingFlowWidget : Window {
         [DllImport("user32.dll")]
@@ -2002,260 +1921,107 @@ namespace WaitPlayNative {
         private const uint MOD_ALT = 0x0001;
         private const uint VK_W = 0x57;
 
-        private DockPosition currentDock = DockPosition.Right;
-        private bool isCollapsed = false;
+        // ── State ──────────────────────────────────────────────────
         private bool isEnabled = true;
+        private bool isExpanded = false;
+        private IntPtr myHwnd = IntPtr.Zero;
+        private MainWindow activeGameWindow = null;
 
-        private Border edgeHandle;
-        private Border fullWidget;
-        private Grid flowGrid;
-        private Border pillBorder;
-        private TextBlock pillTitle;
-        private TextBlock pillBadge;
-        private Border toggleButton;
-        private StackPanel buttonStack;
-        private System.Windows.Shapes.Path powerIconPath;
-        private Ellipse statusDot;
-        private DispatcherTimer collapseTimer;
-        private DispatcherTimer textFadeTimer;
-        private bool isPillHovered = false;
-        private DockOverlayWindow dockOverlay = null;
-
+        // ── Drag ───────────────────────────────────────────────────
         private bool isMouseDown = false;
         private bool isDragActive = false;
-        private Point mouseDownPoint;
-        private Point windowStartPoint;
-        private double savedLeft = 250;
-        private double savedTop = 250;
-        private DependencyObject clickedDownSource = null;
-        private MainWindow activeGameWindow = null;
-        private IntPtr myHwnd = IntPtr.Zero;
+        private Point mouseDownScreen;
+        private Point windowStartPos;
+
+        // ── UI refs ───────────────────────────────────────────────
+        private Border pillBorder;
+        private TextBlock statusText;
+        private Border actionButton;
+        private System.Windows.Shapes.Path actionIcon;
+        private Ellipse statusDot;
+        private Border secondaryButton;
+        private Border secondaryDot;
+        private StackPanel expandedMenu;
+        private DispatcherTimer hideMenuTimer;
+        private DispatcherTimer statusPollTimer;
+
+        // ── Design tokens ──────────────────────────────────────────
+        private static readonly Color BgColor       = Color.FromArgb(230, 18, 18, 24);
+        private static readonly Color BorderColor   = Color.FromArgb(60, 255, 255, 255);
+        private static readonly Color TextColor     = Color.FromRgb(220, 220, 225);
+        private static readonly Color TextMuted     = Color.FromRgb(140, 140, 150);
+        private static readonly Color Accent        = Color.FromRgb(0, 220, 240);
+        private static readonly Color GreenDot      = Color.FromRgb(74, 222, 128);
+        private static readonly Color AmberDot      = Color.FromRgb(251, 191, 36);
+        private static readonly Color GrayDot       = Color.FromRgb(100, 116, 139);
+        private static readonly Color HoverBg       = Color.FromArgb(255, 32, 32, 40);
+        private static readonly Color MenuBg        = Color.FromArgb(240, 22, 22, 30);
 
         public FloatingFlowWidget() {
-            InitializeComponent();
-        }
-        private void LaunchSite(string site) {
-            try {
-                string exe = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
-                var psi = new ProcessStartInfo(exe, "--game --site=" + site);
-                psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                Process.Start(psi);
-            } catch {}
+            BuildWindow();
         }
 
-        private Border CreateSiteIcon(string site, Brush bg, UIElement glyph, string tip) {
-            var b = new Border {
-                Width = 30,
-                Height = 30,
-                CornerRadius = new CornerRadius(15),
-                Background = bg,
-                BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72)),
-                BorderThickness = new Thickness(1),
-                Cursor = Cursors.Hand,
-                Margin = new Thickness(0, 4, 0, 0),
-                ToolTip = tip,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            var g = new Grid();
-            g.Children.Add(glyph);
-            b.Child = g;
-            b.MouseEnter += (s, e) => { b.Opacity = 0.82; };
-            b.MouseLeave += (s, e) => { b.Opacity = 1.0; };
-            b.MouseLeftButtonUp += (s, e) => { if (!isDragActive) { LaunchSite(site); e.Handled = true; } };
-            return b;
-        }
-
-        private UIElement BuildCameraGlyph() {
-            var grid = new Grid { Width = 16, Height = 16 };
-            var body = new Border {
-                Width = 16,
-                Height = 16,
-                CornerRadius = new CornerRadius(5),
-                BorderBrush = Brushes.White,
-                BorderThickness = new Thickness(1.8)
-            };
-            var lens = new Ellipse {
-                Width = 7,
-                Height = 7,
-                Stroke = Brushes.White,
-                StrokeThickness = 1.6,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            var dot = new Ellipse {
-                Width = 2.2,
-                Height = 2.2,
-                Fill = Brushes.White,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(0, 2.2, 2.2, 0)
-            };
-            grid.Children.Add(body);
-            grid.Children.Add(lens);
-            grid.Children.Add(dot);
-            return grid;
-        }
-
-        private UIElement BuildPlayGlyph() {
-            return new System.Windows.Shapes.Polygon {
-                Points = new PointCollection { new Point(0, 0), new Point(0, 9), new Point(8, 4.5) },
-                Fill = Brushes.White,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(1.5, 0, 0, 0)
-            };
-        }
-
-        private UIElement BuildXGlyph() {
-            return new TextBlock {
-                Text = "X",
-                Foreground = Brushes.White,
-                FontSize = 13,
-                FontWeight = FontWeights.Bold,
-                FontFamily = new FontFamily("Segoe UI"),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-        }
-
-        private void ShowTextPill() {
-            isPillHovered = true;
-            if (textFadeTimer != null) textFadeTimer.Stop();
-            if (pillBorder != null) {
-                pillBorder.Visibility = Visibility.Visible;
-                var anim = new System.Windows.Media.Animation.DoubleAnimation {
-                    To = 1.0,
-                    Duration = TimeSpan.FromMilliseconds(160)
-                };
-                pillBorder.BeginAnimation(UIElement.OpacityProperty, anim);
-            }
-        }
-
-        private void HideTextPill() {
-            isPillHovered = false;
-            if (textFadeTimer != null) textFadeTimer.Stop();
-            textFadeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
-            textFadeTimer.Tick += (s, e) => {
-                textFadeTimer.Stop();
-                if (!isPillHovered && !isDragActive && pillBorder != null) {
-                    var anim = new System.Windows.Media.Animation.DoubleAnimation {
-                        To = 0.0,
-                        Duration = TimeSpan.FromMilliseconds(200)
-                    };
-                    anim.Completed += (s2, e2) => {
-                        if (!isPillHovered && pillBorder != null) {
-                            pillBorder.Visibility = Visibility.Hidden;
-                        }
-                    };
-                    pillBorder.BeginAnimation(UIElement.OpacityProperty, anim);
-                }
-            };
-            textFadeTimer.Start();
-        }
-
-
-        private void InitializeComponent() {
-            Title = "WaitPlay Flow";
+        // ════════════════════════════════════════════════════════════
+        //  Window chrome
+        // ════════════════════════════════════════════════════════════
+        private void BuildWindow() {
+            Title = "WaitPlay";
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
             Background = Brushes.Transparent;
             Topmost = true;
             ShowInTaskbar = false;
             ResizeMode = ResizeMode.NoResize;
+            SizeToContent = SizeToContent.WidthAndHeight;
 
-            collapseTimer = new DispatcherTimer();
-            collapseTimer.Interval = TimeSpan.FromMilliseconds(1500);
-            collapseTimer.Tick += (s, e) => {
-                if (isDragActive) return;
-                POINT pt;
-                GetCursorPos(out pt);
-                bool cursorInside = (pt.X >= Left - 8 && pt.X <= Left + Width + 8 && pt.Y >= Top - 8 && pt.Y <= Top + Height + 8);
-                if (!cursorInside) {
-                    collapseTimer.Stop();
-                    SetCollapsed(true);
-                }
-            };
+            double screenW = SystemParameters.WorkArea.Width;
+            double screenH = SystemParameters.WorkArea.Height;
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = (screenW - 220) / 2;
+            Top = screenH - 100;
 
             SourceInitialized += (s, e) => {
                 try {
                     myHwnd = new WindowInteropHelper(this).Handle;
                     RegisterHotKey(myHwnd, HOTKEY_ID, MOD_ALT, VK_W);
                     var source = HwndSource.FromHwnd(myHwnd);
-                    if (source != null) {
-                        source.AddHook(HwndHook);
-                    }
+                    if (source != null) source.AddHook(HwndHook);
                 } catch {}
             };
 
             Closed += (s, e) => {
-                try {
-                    if (dockOverlay != null) { dockOverlay.Close(); dockOverlay = null; }
-                    if (myHwnd != IntPtr.Zero) {
-                        UnregisterHotKey(myHwnd, HOTKEY_ID);
-                    }
-                } catch {}
+                try { if (myHwnd != IntPtr.Zero) UnregisterHotKey(myHwnd, HOTKEY_ID); } catch {}
             };
 
-            var rootGrid = new Grid();
+            BuildUI();
+            LoadPosition();
+            StartMonitoring();
+        }
 
-            // 1. Minimal Collapsed Capsule Handle (Matches Image #1)
-            edgeHandle = new Border {
-                Width = 10,
-                Height = 48,
-                Background = new SolidColorBrush(Color.FromArgb(200, 20, 20, 28)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(148, 163, 184)),
-                BorderThickness = new Thickness(1.5),
-                CornerRadius = new CornerRadius(5),
-                Cursor = Cursors.Hand,
-                ToolTip = "WaitPlay (Hover to expand • Click to toggle)",
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Visibility = Visibility.Collapsed
+        // ════════════════════════════════════════════════════════════
+        //  Build entire visual tree
+        // ════════════════════════════════════════════════════════════
+        private void BuildUI() {
+            var root = new StackPanel {
+                Orientation = Orientation.Vertical,
+                HorizontalAlignment = HorizontalAlignment.Center
             };
 
-            edgeHandle.MouseEnter += (s, e) => {
-                collapseTimer.Stop();
-                SetCollapsed(false);
-                ShowTextPill();
-            };
-            edgeHandle.PreviewMouseLeftButtonDown += (s, e) => {
-                if (!isDragActive) {
-                    Toggle();
-                    e.Handled = true;
-                }
-            };
-
-            // 2. Full Expanded Widget (Exact Wispr Flow Layout: Short & Sweet)
-            fullWidget = new Border {
-                Background = Brushes.Transparent,
-                Visibility = Visibility.Collapsed
-            };
-
-            flowGrid = new Grid {
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            flowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            flowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            flowGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-            flowGrid.MouseEnter += (s, e) => ShowTextPill();
-            flowGrid.MouseLeave += (s, e) => HideTextPill();
-
-            // Item A: Text Pill (Hidden by default, smoothly fades in on hover like Wispr Flow)
+            // ── Main pill ─────────────────────────────────────────
             pillBorder = new Border {
-                Background = new SolidColorBrush(Color.FromRgb(17, 17, 22)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(38, 38, 50)),
-                BorderThickness = new Thickness(1.2),
-                CornerRadius = new CornerRadius(15),
-                Height = 30,
-                Padding = new Thickness(10, 0, 10, 0),
+                Background = new SolidColorBrush(BgColor),
+                BorderBrush = new SolidColorBrush(BorderColor),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(20),
+                Padding = new Thickness(6, 5, 6, 5),
                 Cursor = Cursors.Hand,
-                Opacity = 0.0,
-                Visibility = Visibility.Hidden,
-                ToolTip = "WaitPlay Status • Click to toggle ON/OFF"
+                Effect = new System.Windows.Media.Effects.DropShadowEffect {
+                    Color = Colors.Black,
+                    BlurRadius = 16,
+                    ShadowDepth = 4,
+                    Opacity = 0.45,
+                    Direction = 270
+                }
             };
 
             var pillContent = new StackPanel {
@@ -2263,174 +2029,198 @@ namespace WaitPlayNative {
                 VerticalAlignment = VerticalAlignment.Center
             };
 
-            pillTitle = new TextBlock {
-                Text = "WaitPlay",
-                FontSize = 11.5,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(255, 255, 255)),
+            statusDot = new Ellipse {
+                Width = 7,
+                Height = 7,
+                Fill = new SolidColorBrush(GreenDot),
+                Margin = new Thickness(8, 0, 7, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            statusText = new TextBlock {
+                Text = "WaitPlay Ready",
+                FontFamily = new FontFamily("Segoe UI, sans-serif"),
+                FontSize = 12,
+                FontWeight = FontWeights.Medium,
+                Foreground = new SolidColorBrush(TextColor),
                 VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 5, 0)
+                Margin = new Thickness(0, 0, 10, 0)
             };
 
-            pillBadge = new TextBlock {
-                Text = "ON",
-                FontSize = 11,
-                FontWeight = FontWeights.Bold,
-                Foreground = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
-                VerticalAlignment = VerticalAlignment.Center
-            };
-
-            pillContent.Children.Add(pillTitle);
-            pillContent.Children.Add(pillBadge);
-            pillBorder.Child = pillContent;
-
-            pillBorder.MouseEnter += (s, e) => {
-                pillBorder.Background = new SolidColorBrush(Color.FromRgb(26, 26, 34));
-                pillBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(60, 60, 78));
-                ShowTextPill();
-            };
-            pillBorder.MouseLeave += (s, e) => {
-                pillBorder.Background = new SolidColorBrush(Color.FromRgb(17, 17, 22));
-                pillBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(38, 38, 50));
-                HideTextPill();
-            };
-            pillBorder.MouseLeftButtonUp += (s, e) => {
-                if (!isDragActive) {
-                    Toggle();
-                    e.Handled = true;
-                }
-            };
-
-            // Circular Button (Power / Status toggle)
-            toggleButton = new Border {
-                Width = 30,
-                Height = 30,
-                CornerRadius = new CornerRadius(15),
-                Background = new SolidColorBrush(Color.FromRgb(34, 34, 44)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72)),
-                BorderThickness = new Thickness(1.2),
+            actionButton = new Border {
+                Width = 28,
+                Height = 28,
+                CornerRadius = new CornerRadius(14),
+                Background = new SolidColorBrush(Color.FromArgb(40, 0, 220, 240)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(80, 0, 220, 240)),
+                BorderThickness = new Thickness(1),
                 Cursor = Cursors.Hand,
-                ToolTip = "Toggle WaitPlay ON / OFF",
                 VerticalAlignment = VerticalAlignment.Center
             };
-
-            var powerGrid = new Grid();
-            powerIconPath = new System.Windows.Shapes.Path {
-                Data = Geometry.Parse("M11,3 L13,3 L13,11 L11,11 Z M6.5,6.5 C4.5,8 4,11 5,13.5 C6.5,16.5 10,18 13,17.5 C16,16.5 18,14 18,11 C18,8.5 16.5,6.5 15,5.5 L16,4 C18,5.5 20,8 20,11 C20,15 17,18.5 13,19.5 C8.5,20.5 4,18 2.5,14 C1,10 2.5,6 5,4 Z"),
-                Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
-                Width = 12,
-                Height = 12,
+            actionIcon = new System.Windows.Shapes.Path {
+                Data = Geometry.Parse("M12,3 L12,11 M6.3,6.3 A7,7 0 1,0 17.7,6.3"),
+                Stroke = new SolidColorBrush(Accent),
+                StrokeThickness = 1.8,
+                Fill = Brushes.Transparent,
+                Width = 14,
+                Height = 14,
                 Stretch = Stretch.Uniform,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
-            powerGrid.Children.Add(powerIconPath);
-
-            var outerDot = new Ellipse {
-                Width = 8,
-                Height = 8,
-                Fill = new SolidColorBrush(Color.FromRgb(20, 20, 28)),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(0, 1, 1, 0)
+            actionButton.Child = actionIcon;
+            actionButton.MouseEnter += (s, e) => {
+                actionButton.Background = new SolidColorBrush(Color.FromArgb(70, 0, 220, 240));
             };
-            statusDot = new Ellipse {
-                Width = 5,
-                Height = 5,
-                Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255)),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(0, 2.5, 2.5, 0)
+            actionButton.MouseLeave += (s, e) => {
+                actionButton.Background = new SolidColorBrush(Color.FromArgb(40, 0, 220, 240));
             };
-            powerGrid.Children.Add(outerDot);
-            powerGrid.Children.Add(statusDot);
-            toggleButton.Child = powerGrid;
-
-            toggleButton.MouseEnter += (s, e) => {
-                toggleButton.Background = new SolidColorBrush(Color.FromRgb(46, 46, 60));
-                toggleButton.BorderBrush = new SolidColorBrush(Color.FromRgb(80, 80, 105));
-                ShowTextPill();
+            actionButton.MouseLeftButtonUp += (s, e) => {
+                if (!isDragActive) { ToggleEnabled(); e.Handled = true; }
             };
-            toggleButton.MouseLeave += (s, e) => {
-                toggleButton.Background = new SolidColorBrush(Color.FromRgb(34, 34, 44));
-                toggleButton.BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72));
-                HideTextPill();
+
+            pillContent.Children.Add(statusDot);
+            pillContent.Children.Add(statusText);
+            pillContent.Children.Add(actionButton);
+            pillBorder.Child = pillContent;
+
+            pillBorder.MouseEnter += (s, e) => {
+                pillBorder.Background = new SolidColorBrush(HoverBg);
             };
-            buttonStack = new StackPanel {
-                Orientation = Orientation.Vertical,
-                VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Center
+            pillBorder.MouseLeave += (s, e) => {
+                pillBorder.Background = new SolidColorBrush(BgColor);
             };
-            buttonStack.Children.Add(toggleButton);
 
-            // Quick-launch Instagram shortcut near the power button
-            buttonStack.Children.Add(CreateSiteIcon("instagram",
-                new LinearGradientBrush(
-                    new GradientStopCollection {
-                        new GradientStop(Color.FromRgb(0xF5, 0x85, 0x29), 0.0),
-                        new GradientStop(Color.FromRgb(0xDD, 0x2A, 0x7B), 0.55),
-                        new GradientStop(Color.FromRgb(0x81, 0x34, 0xAF), 1.0)
-                    }, 45),
-                BuildCameraGlyph(), "Open Instagram"));
-
-            UpdateFlowGridLayout();
-
-            fullWidget.Child = flowGrid;
-            rootGrid.Children.Add(edgeHandle);
-            rootGrid.Children.Add(fullWidget);
-            Content = rootGrid;
-
-            MouseEnter += (s, e) => {
-                collapseTimer.Stop();
+            // ── Secondary button ──────────────────────────────────
+            var secWrapper = new StackPanel {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 6, 0, 0)
             };
-            MouseLeave += (s, e) => {
-                if (!isDragActive) {
-                    collapseTimer.Start();
+
+            secondaryButton = new Border {
+                Width = 34,
+                Height = 34,
+                CornerRadius = new CornerRadius(17),
+                Background = new SolidColorBrush(BgColor),
+                BorderBrush = new SolidColorBrush(BorderColor),
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+                Effect = new System.Windows.Media.Effects.DropShadowEffect {
+                    Color = Colors.Black,
+                    BlurRadius = 10,
+                    ShadowDepth = 2,
+                    Opacity = 0.35,
+                    Direction = 270
                 }
             };
 
-            // Drag vs Click Detection on Root Window
+            var secGrid = new Grid();
+            var secLabel = new TextBlock {
+                Text = "W",
+                FontFamily = new FontFamily("Segoe UI, sans-serif"),
+                FontSize = 14,
+                FontWeight = FontWeights.Bold,
+                Foreground = new SolidColorBrush(Accent),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            secondaryDot = new Border {
+                Width = 8,
+                Height = 8,
+                CornerRadius = new CornerRadius(4),
+                Background = new SolidColorBrush(GreenDot),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(18, 18, 24)),
+                BorderThickness = new Thickness(1.5),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 2, 2, 0)
+            };
+
+            secGrid.Children.Add(secLabel);
+            secGrid.Children.Add(secondaryDot);
+            secondaryButton.Child = secGrid;
+
+            secondaryButton.MouseEnter += (s, e) => {
+                secondaryButton.Background = new SolidColorBrush(HoverBg);
+            };
+            secondaryButton.MouseLeave += (s, e) => {
+                secondaryButton.Background = new SolidColorBrush(BgColor);
+            };
+            secondaryButton.MouseLeftButtonUp += (s, e) => {
+                if (!isDragActive) { ToggleExpandedMenu(); e.Handled = true; }
+            };
+
+            secWrapper.Children.Add(secondaryButton);
+
+            // ── Expanded menu (hidden by default) ─────────────────
+            expandedMenu = new StackPanel {
+                Orientation = Orientation.Vertical,
+                Margin = new Thickness(0, 6, 0, 0),
+                Visibility = Visibility.Collapsed
+            };
+
+            var menuBorder = new Border {
+                Background = new SolidColorBrush(MenuBg),
+                BorderBrush = new SolidColorBrush(BorderColor),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(4),
+                Effect = new System.Windows.Media.Effects.DropShadowEffect {
+                    Color = Colors.Black,
+                    BlurRadius = 14,
+                    ShadowDepth = 3,
+                    Opacity = 0.4,
+                    Direction = 270
+                }
+            };
+
+            var menuStack = new StackPanel();
+            menuStack.Children.Add(MakeMenuItem("\uD83C\uDFAE  Open WaitPlay", () => OpenGameWindow()));
+            menuStack.Children.Add(MakeMenuItem("\uD83D\uDCF7  Instagram", () => LaunchSite("instagram")));
+            menuStack.Children.Add(MakeMenuItem("\u25B6  YouTube", () => LaunchSite("youtube")));
+            menuStack.Children.Add(MakeMenuItem("\u2715  Twitter / X", () => LaunchSite("x")));
+            menuStack.Children.Add(MakeMenuSeparator());
+            menuStack.Children.Add(MakeMenuItem("\uD83D\uDEAA  Exit Widget", () => Close()));
+            menuBorder.Child = menuStack;
+            expandedMenu.Children.Add(menuBorder);
+
+            root.Children.Add(pillBorder);
+            root.Children.Add(secWrapper);
+            root.Children.Add(expandedMenu);
+
+            Content = root;
+
+            // ── Drag handling ─────────────────────────────────────
             PreviewMouseLeftButtonDown += (s, e) => {
                 isMouseDown = true;
                 isDragActive = false;
-                clickedDownSource = e.OriginalSource as DependencyObject;
-                POINT pt;
-                GetCursorPos(out pt);
-                mouseDownPoint = new Point(pt.X, pt.Y);
-                windowStartPoint = new Point(Left, Top);
+                POINT pt; GetCursorPos(out pt);
+                mouseDownScreen = new Point(pt.X, pt.Y);
+                windowStartPos = new Point(Left, Top);
             };
 
             PreviewMouseMove += (s, e) => {
-                if (isMouseDown && e.LeftButton == MouseButtonState.Pressed) {
-                    POINT pt;
-                    GetCursorPos(out pt);
-                    double deltaX = pt.X - mouseDownPoint.X;
-                    double deltaY = pt.Y - mouseDownPoint.Y;
-
-                    if (!isDragActive && (Math.Abs(deltaX) > 10 || Math.Abs(deltaY) > 10)) {
-                        isDragActive = true;
-                        CaptureMouse();
-                        if (dockOverlay == null) dockOverlay = new DockOverlayWindow();
-                        dockOverlay.Show();
-                    }
-
-                    if (isDragActive) {
-                        Left = windowStartPoint.X + deltaX;
-                        Top = windowStartPoint.Y + deltaY;
-
-                        double screenW = SystemParameters.WorkArea.Width;
-                        double screenH = SystemParameters.WorkArea.Height;
-
-                        if (pt.X < 90) {
-                            if (dockOverlay != null) dockOverlay.Highlight(DockPosition.Left);
-                        } else if (pt.X > screenW - 90) {
-                            if (dockOverlay != null) dockOverlay.Highlight(DockPosition.Right);
-                        } else if (pt.Y > screenH - 90) {
-                            if (dockOverlay != null) dockOverlay.Highlight(DockPosition.Bottom);
-                        } else {
-                            if (dockOverlay != null) dockOverlay.Highlight(DockPosition.Free);
-                        }
-                    }
+                if (!isMouseDown || e.LeftButton != MouseButtonState.Pressed) return;
+                POINT pt; GetCursorPos(out pt);
+                double dx = pt.X - mouseDownScreen.X;
+                double dy = pt.Y - mouseDownScreen.Y;
+                if (!isDragActive && (Math.Abs(dx) > 6 || Math.Abs(dy) > 6)) {
+                    isDragActive = true;
+                    CaptureMouse();
+                }
+                if (isDragActive) {
+                    double newL = windowStartPos.X + dx;
+                    double newT = windowStartPos.Y + dy;
+                    double sw = SystemParameters.WorkArea.Width;
+                    double sh = SystemParameters.WorkArea.Height;
+                    if (newL < 0) newL = 0;
+                    if (newT < 0) newT = 0;
+                    if (newL + ActualWidth > sw) newL = sw - ActualWidth;
+                    if (newT + ActualHeight > sh) newT = sh - ActualHeight;
+                    Left = newL;
+                    Top = newT;
                 }
             };
 
@@ -2438,248 +2228,113 @@ namespace WaitPlayNative {
                 if (isMouseDown) {
                     isMouseDown = false;
                     if (isDragActive) {
-                        StopDragging();
-                        e.Handled = true;
-                    } else {
-                        // Genuine click without drag
-                        DependencyObject dep = clickedDownSource;
-                        bool handledClick = false;
-                        while (dep != null && dep != this) {
-                            if (dep == toggleButton) {
-                                Toggle();
-                                handledClick = true;
-                                break;
-                            }
-                            if (dep == pillBorder) {
-                                Toggle();
-                                handledClick = true;
-                                break;
-                            }
-                            dep = VisualTreeHelper.GetParent(dep);
-                        }
-                        if (!handledClick) {
-                            Toggle();
-                        }
+                        isDragActive = false;
+                        ReleaseMouseCapture();
+                        SnapToNearestEdge();
+                        SavePosition();
                         e.Handled = true;
                     }
                 }
             };
 
-            // Context Menu
-            var menu = new ContextMenu();
-            var toggleItem = new MenuItem { Header = "Toggle WaitPlay (Alt+W)" };
-            toggleItem.Click += (s, e) => Toggle();
-            var gameItem = new MenuItem { Header = "Open Companion Game" };
-            gameItem.Click += (s, e) => OpenGameWindow();
+            // Auto-close menu on mouse leave
+            MouseLeave += (s, e) => {
+                if (isExpanded) {
+                    if (hideMenuTimer != null) hideMenuTimer.Stop();
+                    hideMenuTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+                    hideMenuTimer.Tick += (s2, e2) => {
+                        hideMenuTimer.Stop();
+                        CollapseMenu();
+                    };
+                    hideMenuTimer.Start();
+                }
+            };
+            MouseEnter += (s, e) => {
+                if (hideMenuTimer != null) hideMenuTimer.Stop();
+            };
 
-            var dockMenu = new MenuItem { Header = "📍 Place Button..." };
-            var dockLeftItem = new MenuItem { Header = "👈 1. Left Edge" };
-            dockLeftItem.Click += (s, e) => SetDock(DockPosition.Left);
-            var dockRightItem = new MenuItem { Header = "👉 2. Right Edge" };
-            dockRightItem.Click += (s, e) => SetDock(DockPosition.Right);
-            var dockBottomItem = new MenuItem { Header = "👇 3. Bottom Edge" };
-            dockBottomItem.Click += (s, e) => SetDock(DockPosition.Bottom);
-            dockMenu.Items.Add(dockLeftItem);
-            dockMenu.Items.Add(dockRightItem);
-            dockMenu.Items.Add(dockBottomItem);
-
-            var exitItem = new MenuItem { Header = "Exit Desktop Widget" };
-            exitItem.Click += (s, e) => Close();
-
-            menu.Items.Add(toggleItem);
-            menu.Items.Add(gameItem);
-            menu.Items.Add(new Separator());
-            menu.Items.Add(dockMenu);
-            menu.Items.Add(new Separator());
-            menu.Items.Add(exitItem);
-            ContextMenu = menu;
+            // Context menu
+            var ctx = new ContextMenu();
+            var ctxToggle = new MenuItem { Header = "Toggle WaitPlay (Alt+W)" };
+            ctxToggle.Click += (s, e) => ToggleEnabled();
+            var ctxOpen = new MenuItem { Header = "Open WaitPlay" };
+            ctxOpen.Click += (s, e) => OpenGameWindow();
+            var ctxReset = new MenuItem { Header = "Reset Position" };
+            ctxReset.Click += (s, e) => ResetPosition();
+            var ctxExit = new MenuItem { Header = "Exit Widget" };
+            ctxExit.Click += (s, e) => Close();
+            ctx.Items.Add(ctxToggle);
+            ctx.Items.Add(ctxOpen);
+            ctx.Items.Add(new Separator());
+            ctx.Items.Add(ctxReset);
+            ctx.Items.Add(new Separator());
+            ctx.Items.Add(ctxExit);
+            ContextMenu = ctx;
 
             isEnabled = WaitPlayStateManager.IsEnabled();
-            UpdateUI();
-
-            LoadPosition();
+            UpdateVisuals();
         }
 
-        private void UpdateFlowGridLayout() {
-            flowGrid.Children.Clear();
-            if (buttonStack == null) return;
-            if (currentDock == DockPosition.Left) {
-                // When docked on Left edge: Buttons on Left (Col 0), Text Pill extends to Right (Col 1)
-                flowGrid.HorizontalAlignment = HorizontalAlignment.Left;
-                Grid.SetRow(buttonStack, 0);
-                Grid.SetColumn(buttonStack, 0);
-                flowGrid.Children.Add(buttonStack);
-
-                Grid.SetRow(pillBorder, 0);
-                Grid.SetColumn(pillBorder, 1);
-                pillBorder.VerticalAlignment = VerticalAlignment.Center;
-                pillBorder.Margin = new Thickness(6, 0, 0, 0);
-                flowGrid.Children.Add(pillBorder);
-            } else {
-                // When docked on Right edge or Free: Text Pill on Left (Col 0), Buttons on Right (Col 1)
-                // EXACT MATCH FOR IMAGE #1
-                flowGrid.HorizontalAlignment = HorizontalAlignment.Right;
-                Grid.SetRow(pillBorder, 0);
-                Grid.SetColumn(pillBorder, 0);
-                pillBorder.VerticalAlignment = VerticalAlignment.Center;
-                pillBorder.Margin = new Thickness(0, 0, 6, 0);
-                flowGrid.Children.Add(pillBorder);
-
-                Grid.SetRow(buttonStack, 0);
-                Grid.SetColumn(buttonStack, 1);
-                flowGrid.Children.Add(buttonStack);
-            }
+        // ════════════════════════════════════════════════════════════
+        //  Menu items
+        // ════════════════════════════════════════════════════════════
+        private Border MakeMenuItem(string label, Action onClick) {
+            var b = new Border {
+                Background = Brushes.Transparent,
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(12, 7, 12, 7),
+                Cursor = Cursors.Hand
+            };
+            var tb = new TextBlock {
+                Text = label,
+                FontFamily = new FontFamily("Segoe UI, sans-serif"),
+                FontSize = 12,
+                Foreground = new SolidColorBrush(TextColor)
+            };
+            b.Child = tb;
+            b.MouseEnter += (s, e) => { b.Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)); };
+            b.MouseLeave += (s, e) => { b.Background = Brushes.Transparent; };
+            b.MouseLeftButtonUp += (s, e) => {
+                CollapseMenu();
+                onClick();
+                e.Handled = true;
+            };
+            return b;
         }
 
-        private void StopDragging() {
-            isDragActive = false;
-            ReleaseMouseCapture();
-
-            if (dockOverlay != null) {
-                dockOverlay.Hide();
-            }
-
-            POINT pt;
-            GetCursorPos(out pt);
-            double screenW = SystemParameters.WorkArea.Width;
-            double screenH = SystemParameters.WorkArea.Height;
-
-            if (pt.X < 90) {
-                SetDock(DockPosition.Left, pt.Y - 42);
-            } else if (pt.X > screenW - 90) {
-                SetDock(DockPosition.Right, pt.Y - 42);
-            } else if (pt.Y > screenH - 90) {
-                SetDock(DockPosition.Bottom, pt.X - 82);
-            } else {
-                // Snap to nearest edge — never free-float
-                double distLeft = pt.X;
-                double distRight = screenW - pt.X;
-                double distBottom = screenH - pt.Y;
-                double minDist = Math.Min(distLeft, Math.Min(distRight, distBottom));
-                if (minDist == distLeft) {
-                    SetDock(DockPosition.Left, pt.Y - 42);
-                } else if (minDist == distRight) {
-                    SetDock(DockPosition.Right, pt.Y - 42);
-                } else {
-                    SetDock(DockPosition.Bottom, pt.X - 82);
-                }
-            }
+        private Border MakeMenuSeparator() {
+            return new Border {
+                Height = 1,
+                Background = new SolidColorBrush(Color.FromArgb(30, 255, 255, 255)),
+                Margin = new Thickness(8, 3, 8, 3)
+            };
         }
 
-        public void SetDock(DockPosition dock, double pos = -1) {
-            currentDock = dock;
-            double screenW = SystemParameters.WorkArea.Width;
-            double screenH = SystemParameters.WorkArea.Height;
-
-            double expW = 170;
-            double expH = 80;
-
-            Width = expW;
-            Height = expH;
-
-            switch (dock) {
-                case DockPosition.Left:
-                    Left = 4;
-                    if (pos > 10 && pos < screenH - expH - 10) Top = pos;
-                    else if (Top <= 0 || Top > screenH - expH - 10) Top = (screenH - expH) / 2;
-                    break;
-                case DockPosition.Right:
-                    Left = screenW - expW - 4;
-                    if (pos > 10 && pos < screenH - expH - 10) Top = pos;
-                    else if (Top <= 0 || Top > screenH - expH - 10) Top = (screenH - expH) / 2;
-                    break;
-                case DockPosition.Bottom:
-                    Top = screenH - expH - 4;
-                    if (pos > 10 && pos < screenW - expW - 10) Left = pos;
-                    else Left = (screenW - expW) / 2;
-                    break;
-                case DockPosition.Free:
-                    break;
-            }
-
-            savedLeft = Left;
-            savedTop = Top;
-            UpdateFlowGridLayout();
-            SetCollapsed(false);
-            SavePosition();
-            collapseTimer.Start();
+        // ════════════════════════════════════════════════════════════
+        //  Expanded menu
+        // ════════════════════════════════════════════════════════════
+        private void ToggleExpandedMenu() {
+            if (isExpanded) CollapseMenu();
+            else ExpandMenu();
         }
 
-        private void SetCollapsed(bool collapsed) {
-            isCollapsed = collapsed;
-            double screenW = SystemParameters.WorkArea.Width;
-            double screenH = SystemParameters.WorkArea.Height;
-
-            double expW = 170;
-            double expH = 80;
-
-            if (collapsed) {
-                fullWidget.Visibility = Visibility.Collapsed;
-                edgeHandle.Visibility = Visibility.Visible;
-
-                if (currentDock == DockPosition.Right) {
-                    Width = 14;
-                    Height = 52;
-                    Left = screenW - 14;
-                    Top = savedTop + 16;
-                    edgeHandle.Width = 10;
-                    edgeHandle.Height = 48;
-                    edgeHandle.CornerRadius = new CornerRadius(5);
-                } else if (currentDock == DockPosition.Left) {
-                    Width = 14;
-                    Height = 52;
-                    Left = 2;
-                    Top = savedTop + 16;
-                    edgeHandle.Width = 10;
-                    edgeHandle.Height = 48;
-                    edgeHandle.CornerRadius = new CornerRadius(5);
-                } else if (currentDock == DockPosition.Bottom) {
-                    Width = 52;
-                    Height = 14;
-                    Left = savedLeft + 56;
-                    Top = screenH - 14;
-                    edgeHandle.Width = 48;
-                    edgeHandle.Height = 10;
-                    edgeHandle.CornerRadius = new CornerRadius(5);
-                } else {
-                    // Fallback: treat as Right edge
-                    Width = 14;
-                    Height = 52;
-                    Left = screenW - 14;
-                    Top = savedTop + 16;
-                    edgeHandle.Width = 10;
-                    edgeHandle.Height = 48;
-                    edgeHandle.CornerRadius = new CornerRadius(5);
-                }
-            } else {
-                edgeHandle.Visibility = Visibility.Collapsed;
-                fullWidget.Visibility = Visibility.Visible;
-                Width = expW;
-                Height = expH;
-
-                if (currentDock == DockPosition.Right) {
-                    Left = screenW - expW - 4;
-                    Top = savedTop;
-                } else if (currentDock == DockPosition.Left) {
-                    Left = 4;
-                    Top = savedTop;
-                } else if (currentDock == DockPosition.Bottom) {
-                    Left = savedLeft;
-                    Top = screenH - expH - 4;
-                } else {
-                    // Fallback: treat as Right edge
-                    Left = screenW - expW - 4;
-                    Top = savedTop;
-                }
-
-                collapseTimer.Stop();
-            }
+        private void ExpandMenu() {
+            isExpanded = true;
+            expandedMenu.Visibility = Visibility.Visible;
         }
 
-        private void Toggle() {
+        private void CollapseMenu() {
+            isExpanded = false;
+            expandedMenu.Visibility = Visibility.Collapsed;
+        }
+
+        // ════════════════════════════════════════════════════════════
+        //  Toggle ON/OFF
+        // ════════════════════════════════════════════════════════════
+        private void ToggleEnabled() {
             isEnabled = !isEnabled;
             WaitPlayStateManager.SetEnabled(isEnabled);
-            UpdateUI();
+            UpdateVisuals();
             if (!isEnabled) {
                 if (activeGameWindow != null) {
                     try { activeGameWindow.Close(); } catch {}
@@ -2691,6 +2346,226 @@ namespace WaitPlayNative {
             }
         }
 
+        private void UpdateVisuals() {
+            if (isEnabled) {
+                statusText.Text = "WaitPlay Ready";
+                statusText.Foreground = new SolidColorBrush(TextColor);
+                statusDot.Fill = new SolidColorBrush(GreenDot);
+                secondaryDot.Background = new SolidColorBrush(GreenDot);
+                actionIcon.Stroke = new SolidColorBrush(Accent);
+                actionButton.Background = new SolidColorBrush(Color.FromArgb(40, 0, 220, 240));
+                actionButton.BorderBrush = new SolidColorBrush(Color.FromArgb(80, 0, 220, 240));
+            } else {
+                statusText.Text = "WaitPlay Paused";
+                statusText.Foreground = new SolidColorBrush(TextMuted);
+                statusDot.Fill = new SolidColorBrush(GrayDot);
+                secondaryDot.Background = new SolidColorBrush(GrayDot);
+                actionIcon.Stroke = new SolidColorBrush(Color.FromRgb(100, 116, 139));
+                actionButton.Background = new SolidColorBrush(Color.FromArgb(20, 100, 116, 139));
+                actionButton.BorderBrush = new SolidColorBrush(Color.FromArgb(40, 100, 116, 139));
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════
+        //  Edge snapping
+        // ════════════════════════════════════════════════════════════
+        private void SnapToNearestEdge() {
+            double sw = SystemParameters.WorkArea.Width;
+            double sh = SystemParameters.WorkArea.Height;
+            double margin = 12;
+
+            double distL = Left;
+            double distR = sw - (Left + ActualWidth);
+            double distB = sh - (Top + ActualHeight);
+            const double snapThresh = 60;
+
+            if (distL < snapThresh) Left = margin;
+            else if (distR < snapThresh) Left = sw - ActualWidth - margin;
+
+            if (distB < snapThresh) Top = sh - ActualHeight - margin;
+            else if (Top < snapThresh) Top = margin;
+        }
+
+        // ════════════════════════════════════════════════════════════
+        //  Position persistence
+        // ════════════════════════════════════════════════════════════
+        private string GetPosPath() {
+            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay");
+            try { if (!System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir); } catch {}
+            return System.IO.Path.Combine(dir, ".waitplay-widget-pos.json");
+        }
+
+        private void SavePosition() {
+            try {
+                var dict = new Dictionary<string, object>();
+                dict["left"] = Left;
+                dict["top"] = Top;
+                var ser = new JavaScriptSerializer();
+                System.IO.File.WriteAllText(GetPosPath(), ser.Serialize(dict));
+            } catch {}
+        }
+
+        private void LoadPosition() {
+            try {
+                string p = GetPosPath();
+                if (System.IO.File.Exists(p)) {
+                    string json = System.IO.File.ReadAllText(p);
+                    var ser = new JavaScriptSerializer();
+                    var dict = ser.Deserialize<Dictionary<string, object>>(json);
+                    if (dict != null) {
+                        double l = dict.ContainsKey("left") ? Convert.ToDouble(dict["left"]) : -1;
+                        double t = dict.ContainsKey("top") ? Convert.ToDouble(dict["top"]) : -1;
+                        double sw = SystemParameters.WorkArea.Width;
+                        double sh = SystemParameters.WorkArea.Height;
+                        if (l >= 0 && l < sw - 40 && t >= 0 && t < sh - 20) {
+                            Left = l;
+                            Top = t;
+                            return;
+                        }
+                    }
+                }
+            } catch {}
+            ResetPosition();
+        }
+
+        private void ResetPosition() {
+            double sw = SystemParameters.WorkArea.Width;
+            double sh = SystemParameters.WorkArea.Height;
+            Left = (sw - 220) / 2;
+            Top = sh - 100;
+            SavePosition();
+        }
+
+        // ════════════════════════════════════════════════════════════
+        //  Agent status monitoring
+        // ════════════════════════════════════════════════════════════
+        private void StartMonitoring() {
+            statusPollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            statusPollTimer.Tick += (s, e) => PollAgentStatus();
+            statusPollTimer.Start();
+        }
+
+        private void PollAgentStatus() {
+            if (!isEnabled) return;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ => {
+                try {
+                    string url = string.Format("http://127.0.0.1:{0}/sessions", 3150);
+                    var req = (HttpWebRequest)WebRequest.Create(url);
+                    req.Timeout = 500;
+                    using (var res = (HttpWebResponse)req.GetResponse()) {
+                        if (res.StatusCode == HttpStatusCode.OK) {
+                            using (var r = new StreamReader(res.GetResponseStream())) {
+                                string json = r.ReadToEnd();
+                                Dispatcher.BeginInvoke(new Action(() => UpdateFromSessions(json)));
+                            }
+                        }
+                    }
+                } catch {
+                    Dispatcher.BeginInvoke(new Action(() => {
+                        if (isEnabled) {
+                            statusText.Text = "WaitPlay Ready";
+                            statusDot.Fill = new SolidColorBrush(GreenDot);
+                            secondaryDot.Background = new SolidColorBrush(GreenDot);
+                        }
+                    }));
+                }
+            });
+        }
+
+        private void UpdateFromSessions(string json) {
+            try {
+                var ser = new JavaScriptSerializer();
+                var root = ser.Deserialize<Dictionary<string, object>>(json);
+                if (root == null || !root.ContainsKey("sessions")) return;
+                var sessions = root["sessions"] as System.Collections.ArrayList;
+                if (sessions == null) return;
+
+                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                bool anyWorking = false;
+                bool anyWaiting = false;
+                string agentName = "";
+
+                foreach (object item in sessions) {
+                    var s = item as Dictionary<string, object>;
+                    if (s == null) continue;
+                    string st = s.ContainsKey("status") ? Convert.ToString(s["status"]) : "";
+                    long ev = s.ContainsKey("lastEventAt") && s["lastEventAt"] != null ? Convert.ToInt64(s["lastEventAt"]) : 0;
+                    if ((now - ev) > 20000) continue;
+
+                    if (st == "WORKING" || st == "GAME_ACTIVE") {
+                        anyWorking = true;
+                        agentName = s.ContainsKey("agent") ? Convert.ToString(s["agent"]) : "Agent";
+                    } else if (st == "WAITING_FOR_INPUT") {
+                        anyWaiting = true;
+                    }
+                }
+
+                if (anyWorking) {
+                    string display = !string.IsNullOrEmpty(agentName) ? agentName : "Agent";
+                    if (display.Length > 16) display = display.Substring(0, 16);
+                    statusText.Text = display + " Working\u2026";
+                    statusDot.Fill = new SolidColorBrush(Accent);
+                    secondaryDot.Background = new SolidColorBrush(Accent);
+                } else if (anyWaiting) {
+                    statusText.Text = "Input Required";
+                    statusDot.Fill = new SolidColorBrush(AmberDot);
+                    secondaryDot.Background = new SolidColorBrush(AmberDot);
+                } else {
+                    statusText.Text = "WaitPlay Ready";
+                    statusDot.Fill = new SolidColorBrush(GreenDot);
+                    secondaryDot.Background = new SolidColorBrush(GreenDot);
+                }
+            } catch {}
+        }
+
+        // ════════════════════════════════════════════════════════════
+        //  Launch helpers
+        // ════════════════════════════════════════════════════════════
+        private void LaunchSite(string site) {
+            try {
+                string exe = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+                var psi = new ProcessStartInfo(exe, "--game --site=" + site);
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                Process.Start(psi);
+            } catch {}
+        }
+
+        private void OpenGameWindow() {
+            try {
+                if (!isEnabled) {
+                    isEnabled = true;
+                    WaitPlayStateManager.SetEnabled(true);
+                    UpdateVisuals();
+                }
+                int currentPid = System.Diagnostics.Process.GetCurrentProcess().Id;
+                var procs = System.Diagnostics.Process.GetProcessesByName("WaitPlay");
+                foreach (var p in procs) {
+                    if (p.Id != currentPid && p.MainWindowHandle != IntPtr.Zero) {
+                        string title = p.MainWindowTitle;
+                        if (!string.IsNullOrEmpty(title) && title != "WaitPlay") {
+                            EntryPoint.ShowWindowAsync(p.MainWindowHandle, 9);
+                            EntryPoint.SetForegroundWindow(p.MainWindowHandle);
+                            return;
+                        }
+                    }
+                }
+                if (activeGameWindow == null || !activeGameWindow.IsLoaded) {
+                    activeGameWindow = new MainWindow("", 0, "Desktop", 0, IntPtr.Zero);
+                    activeGameWindow.Closed += (s, e) => { activeGameWindow = null; };
+                    activeGameWindow.Show();
+                    activeGameWindow.Activate();
+                } else {
+                    activeGameWindow.Show();
+                    activeGameWindow.Activate();
+                }
+            } catch {
+                try {
+                    Process.Start(System.Reflection.Assembly.GetExecutingAssembly().Location, "--game");
+                } catch {}
+            }
+        }
+
         private void CloseOtherGameWindows() {
             try {
                 int currentPid = System.Diagnostics.Process.GetCurrentProcess().Id;
@@ -2699,11 +2574,9 @@ namespace WaitPlayNative {
                     if (p.Id != currentPid) {
                         try {
                             string title = p.MainWindowTitle;
-                            if (string.IsNullOrEmpty(title) || (!title.Contains("Widget") && !title.Contains("Flow"))) {
+                            if (string.IsNullOrEmpty(title) || !title.Contains("WaitPlay")) {
                                 p.CloseMainWindow();
-                                if (!p.WaitForExit(150)) {
-                                    p.Kill();
-                                }
+                                if (!p.WaitForExit(150)) p.Kill();
                             }
                         } catch {}
                     }
@@ -2723,9 +2596,7 @@ namespace WaitPlayNative {
                                 string json = r.ReadToEnd();
                                 if (json.Contains("\"status\":\"WORKING\"") || json.Contains("\"status\":\"GAME_ACTIVE\"")) {
                                     Dispatcher.BeginInvoke(new Action(() => {
-                                        if (isEnabled) {
-                                            OpenGameWindow();
-                                        }
+                                        if (isEnabled) OpenGameWindow();
                                     }));
                                 }
                             }
@@ -2735,129 +2606,16 @@ namespace WaitPlayNative {
             });
         }
 
-        private void UpdateUI() {
-            if (isEnabled) {
-                pillBadge.Text = "ON";
-                pillBadge.Foreground = new SolidColorBrush(Color.FromRgb(0, 240, 255));
-                statusDot.Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255));
-                if (powerIconPath != null) powerIconPath.Fill = new SolidColorBrush(Color.FromRgb(0, 240, 255));
-                pillBorder.ToolTip = "WaitPlay is ON • Companion micro-games pop out while agents are working (Click to turn OFF)";
-            } else {
-                pillBadge.Text = "OFF";
-                pillBadge.Foreground = new SolidColorBrush(Color.FromRgb(148, 163, 184));
-                if (powerIconPath != null) powerIconPath.Fill = new SolidColorBrush(Color.FromRgb(100, 116, 139));
-                pillBorder.ToolTip = "WaitPlay is OFF • Interface muted across all terminal tabs (Click to turn ON)";
-            }
-        }
-
-        private void OpenGameWindow() {
-            try {
-                if (!isEnabled) {
-                    isEnabled = true;
-                    WaitPlayStateManager.SetEnabled(true);
-                    UpdateUI();
-                }
-                int currentPid = System.Diagnostics.Process.GetCurrentProcess().Id;
-                var procs = System.Diagnostics.Process.GetProcessesByName("WaitPlay");
-                foreach (var p in procs) {
-                    if (p.Id != currentPid && p.MainWindowHandle != IntPtr.Zero) {
-                        string title = p.MainWindowTitle;
-                        if (!string.IsNullOrEmpty(title) && title.Contains("Companion Game")) {
-                            EntryPoint.ShowWindowAsync(p.MainWindowHandle, 9);
-                            EntryPoint.SetForegroundWindow(p.MainWindowHandle);
-                            return;
-                        }
-                    }
-                }
-                if (activeGameWindow == null || !activeGameWindow.IsLoaded) {
-                    activeGameWindow = new MainWindow("", 0, "Desktop", 0, IntPtr.Zero);
-                    activeGameWindow.Closed += (s, e) => { activeGameWindow = null; };
-                    activeGameWindow.Show();
-                    activeGameWindow.WindowState = WindowState.Normal;
-                    activeGameWindow.Activate();
-                    activeGameWindow.Topmost = true;
-                    activeGameWindow.Focus();
-                } else {
-                    activeGameWindow.WindowState = WindowState.Normal;
-                    activeGameWindow.Show();
-                    activeGameWindow.Activate();
-                    activeGameWindow.Topmost = true;
-                    activeGameWindow.Focus();
-                }
-            } catch {
-                try {
-                    System.Diagnostics.Process.Start(
-                        System.Reflection.Assembly.GetExecutingAssembly().Location,
-                        "--game"
-                    );
-                } catch {}
-            }
-        }
-
+        // ════════════════════════════════════════════════════════════
+        //  Hotkey
+        // ════════════════════════════════════════════════════════════
         private IntPtr HwndHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) {
             const int WM_HOTKEY = 0x0312;
             if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID) {
-                Toggle();
+                ToggleEnabled();
                 handled = true;
             }
             return IntPtr.Zero;
-        }
-
-        private string GetWidgetPosPath() {
-            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay");
-            if (!System.IO.Directory.Exists(dir)) {
-                try { System.IO.Directory.CreateDirectory(dir); } catch {}
-            }
-            return System.IO.Path.Combine(dir, ".waitplay-widget-pos.json");
-        }
-
-        private void LoadPosition() {
-            try {
-                string[] paths = new string[] {
-                    GetWidgetPosPath(),
-                    @"C:\Users\ASUS\waitplay\.waitplay-widget-pos.json"
-                };
-                foreach (var p in paths) {
-                    if (System.IO.File.Exists(p)) {
-                        string json = System.IO.File.ReadAllText(p);
-                        var ser = new JavaScriptSerializer();
-                        var dict = ser.Deserialize<Dictionary<string, object>>(json);
-                        if (dict != null) {
-                            string dockStr = dict.ContainsKey("dock") ? dict["dock"].ToString() : "Free";
-                            double l = dict.ContainsKey("left") ? Convert.ToDouble(dict["left"]) : 250;
-                            double t = dict.ContainsKey("top") ? Convert.ToDouble(dict["top"]) : 250;
-
-                            if (dockStr == "Left") {
-                                SetDock(DockPosition.Left, t);
-                                return;
-                            } else if (dockStr == "Right") {
-                                SetDock(DockPosition.Right, t);
-                                return;
-                            } else if (dockStr == "Bottom") {
-                                SetDock(DockPosition.Bottom, l);
-                                return;
-                            } else {
-                                // Legacy "Free" saved position: migrate to Right edge
-                                SetDock(DockPosition.Right, t);
-                                return;
-                            }
-                        }
-                    }
-                }
-            } catch {}
-            // Default: dock to right edge, vertically centered
-            SetDock(DockPosition.Right);
-        }
-
-        private void SavePosition() {
-            try {
-                var dict = new Dictionary<string, object>();
-                dict["dock"] = currentDock.ToString();
-                dict["left"] = Left;
-                dict["top"] = Top;
-                var ser = new JavaScriptSerializer();
-                System.IO.File.WriteAllText(GetWidgetPosPath(), ser.Serialize(dict));
-            } catch {}
         }
     }
 
