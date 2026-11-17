@@ -120,6 +120,8 @@ namespace WaitPlayNative {
         private IntPtr myHwnd = IntPtr.Zero;
         private int missingParentTicks = 0;
         private int parentNotForegroundTicks = 0;
+        private IntPtr launchForegroundWindow = IntPtr.Zero;
+        private bool autoCloseArmed = false;
         private Microsoft.Web.WebView2.Wpf.WebView2 webView;
         private DispatcherTimer webReadyTimer;
         private const int WEB_PORT = 5200;
@@ -160,10 +162,29 @@ namespace WaitPlayNative {
                 this.monitoredWindowHandle = ParentWindowTracker.FindWindowForAgent(this.activeAgentName);
             }
 
+            // Capture what window was in front when we launched.
+            // This is used for auto-close: if something OTHER than this
+            // foreground window (or us) becomes foreground, we close.
+            launchForegroundWindow = ParentWindowTracker.GetForegroundWindow();
+            uint myLaunchPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+            uint fgLaunchPid;
+            ParentWindowTracker.GetWindowThreadProcessId(launchForegroundWindow, out fgLaunchPid);
+            if (fgLaunchPid == myLaunchPid) launchForegroundWindow = IntPtr.Zero;
+
+            // Use monitoredWindowHandle as primary, launchForeground as fallback
+            if (monitoredWindowHandle == IntPtr.Zero && launchForegroundWindow != IntPtr.Zero) {
+                monitoredWindowHandle = launchForegroundWindow;
+            }
+
             InitializeWindow();
             BuildUI();
-            // Game disabled: the companion opens the Instagram browser directly.
             StartMonitoring();
+
+            // Arm auto-close after 2 seconds so the window has time to
+            // fully appear and get focus without immediately closing.
+            var armTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            armTimer.Tick += (s, e) => { armTimer.Stop(); autoCloseArmed = true; };
+            armTimer.Start();
         }
 
         public static string DetectActiveAgent() {
@@ -1030,30 +1051,43 @@ namespace WaitPlayNative {
                         }
                     }
                 }
+            }
 
-                // Terminal-tab-switch detection: if parent terminal is not
-                // the foreground window for several ticks, auto-close so the
-                // user can inspect the previous terminal's results without
-                // the companion window blocking the view.
-                if (terminalLabel != "Desktop") {
-                    IntPtr fg = ParentWindowTracker.GetForegroundWindow();
-                    if (fg != IntPtr.Zero && fg != monitoredWindowHandle && fg != myHwnd) {
-                        // Foreground is some other window — could be another terminal tab
-                        parentNotForegroundTicks++;
-                        if (parentNotForegroundTicks >= 3) {
-                            // Parent terminal lost focus for 300ms+ (3 ticks × 100ms poll)
-                            // Check it's not just a transient switch to the companion itself
-                            uint fgPid;
-                            ParentWindowTracker.GetWindowThreadProcessId(fg, out fgPid);
-                            uint myPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
-                            if (fgPid != myPid) {
-                                // Another app/terminal has focus — auto-close companion
-                                try { Close(); } catch {}
-                                return;
-                            }
-                        }
-                    } else {
+            // ── Terminal-tab-switch auto-close ────────────────────────
+            // Works for ALL companion windows (terminal-launched AND
+            // desktop/widget-launched). After the 2s arm delay, if
+            // some other process's window holds foreground for 5+ ticks
+            // (500ms), auto-close this companion so the user can see
+            // whatever they switched to without obstruction.
+            if (autoCloseArmed) {
+                IntPtr fg = ParentWindowTracker.GetForegroundWindow();
+                if (fg == IntPtr.Zero) {
+                    // No foreground window (screen locked, etc.) — ignore
+                    parentNotForegroundTicks = 0;
+                } else {
+                    // Is it us (the companion window)?
+                    bool isSelf = (fg == myHwnd);
+                    if (!isSelf) {
+                        uint fgPid;
+                        ParentWindowTracker.GetWindowThreadProcessId(fg, out fgPid);
+                        uint selfPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+                        isSelf = (fgPid == selfPid);
+                    }
+
+                    // Is it the parent terminal we're attached to?
+                    bool isParent = (monitoredWindowHandle != IntPtr.Zero && fg == monitoredWindowHandle);
+
+                    if (isSelf || isParent) {
+                        // Our own window or parent terminal is in front — stay open
                         parentNotForegroundTicks = 0;
+                    } else {
+                        // Something else has focus
+                        parentNotForegroundTicks++;
+                        if (parentNotForegroundTicks >= 5) {
+                            // 500ms of another window in focus — close
+                            try { Close(); } catch {}
+                            return;
+                        }
                     }
                 }
             }
