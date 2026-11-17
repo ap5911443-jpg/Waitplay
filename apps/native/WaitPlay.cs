@@ -95,43 +95,44 @@ namespace WaitPlayNative {
         private TextBlock bannerTitle;
         private TextBlock bannerSubtitle;
         private TextBlock countdownText;
-        private DispatcherTimer exitTimer;
         private int countdownRemaining = 8;
 
         private DispatcherTimer gameTimer;
         private DispatcherTimer statusPollTimer;
         private DispatcherTimer pulseTimer;
         private bool dotState = false;
-        private bool hasFinished = false;
-        private bool hasBeenActive = false;
         private string activeAgentName = "AI Agent";
         private Button btnExit;
         private TextBlock hintText;
         private string targetSessionId = "";
         private string terminalLabel = "";
         private long currentPromptTimestamp = 0;
-        private int debounceCompletedTicks = 0;
-        private int idleTicks = 0;
         private Border terminalPill;
         private TextBlock terminalText;
-        private IntPtr monitoredWindowHandle = IntPtr.Zero;
-        private uint parentProcessId = 0;
-        private bool wasMinimizedByParent = false;
         private IntPtr myHwnd = IntPtr.Zero;
-        private int missingParentTicks = 0;
-        // When the user left the owning tab/terminal (0 = not away). Time-based: poll ticks can
-        // run far slower than their 100ms interval because each one makes a blocking bridge call.
-        private DateTime awaySince = DateTime.MinValue;
-        private IntPtr launchForegroundWindow = IntPtr.Zero;
+        // Widget-launched windows (no session) follow the window that was in front when they opened
+        private IntPtr desktopParent = IntPtr.Zero;
+        private DateTime awaySince = DateTime.MinValue;   // when the user left every owning tab
         private bool autoCloseArmed = false;
-        // Per-tab visibility (Windows Terminal: every tab shares one HWND)
-        private TerminalTabTracker tabTracker;
-        private System.Threading.Timer tabTimer;
-        private int tabCaptureGen = 0, otherTabTicks = 0, tabPollBusy = 0;
-        private volatile bool onOtherTab = false;     // set by the tab poll, read on the UI thread
-        private bool hiddenAway = false;              // hidden because the user left the owning tab
-        private bool launchedFromTerminal = false;    // widget-launched windows have no tab to return to
-        private long lastIpcRequest = 0;
+        private bool hiddenAway = false;                  // hidden while the user is in another tab/app
+
+        // ── Multi-terminal session registry (UI thread only) ─────────────────────
+        // One companion process serves every terminal. Each prompt registers its session together
+        // with the terminal tab it came from. The window is shown only while the focused tab belongs
+        // to a session that is still working, hidden while the user is elsewhere, and closed as soon
+        // as no session is left working.
+        private sealed class AgentSession {
+            public string Id;
+            public string Terminal;
+            public IntPtr Hwnd;          // terminal's top-level window
+            public bool? OnOwnTab;       // latest poll: true / false, null = unknown (no tab strip)
+            public bool Finished;        // turn ended, or the user stepped aside for this prompt
+            public long StartedAt;       // launch time; older close signals belong to earlier turns
+        }
+        private readonly Dictionary<string, AgentSession> sessions = new Dictionary<string, AgentSession>(StringComparer.OrdinalIgnoreCase);
+        private string ownerId = null;   // session whose tab is currently in front
+        private SignalPoller poller;
+        private TerminalInputWatcher inputWatcher;
         private Microsoft.Web.WebView2.Wpf.WebView2 webView;
         private DispatcherTimer webReadyTimer;
         private const int WEB_PORT = 5200;
@@ -139,6 +140,9 @@ namespace WaitPlayNative {
         private const string YT_URL = "https://www.youtube.com/";
         private const string X_URL = "https://x.com/home";
         internal static string StartUrl = null;
+        // Set by EntryPoint for the single-instance companion. Windows created inside the widget
+        // process (Games button) must not consume launch/close files meant for the companion.
+        internal static bool OwnsSignalFiles = false;
         private TextBox addressBar;
         private Button btnBack;
         private Button btnForward;
@@ -149,13 +153,6 @@ namespace WaitPlayNative {
             this.targetSessionId = sessionId;
             this.currentPromptTimestamp = promptTime;
             this.terminalLabel = terminal;
-            this.launchedFromTerminal = terminal != "Desktop";
-            this.parentProcessId = parentPid;
-            this.monitoredWindowHandle = parentHwnd;
-
-            if (this.monitoredWindowHandle == IntPtr.Zero && this.parentProcessId > 0) {
-                this.monitoredWindowHandle = ParentWindowTracker.FindTopWindowForPid(this.parentProcessId);
-            }
 
             if (string.IsNullOrEmpty(this.terminalLabel) && !string.IsNullOrEmpty(sessionId) && sessionId.Contains("term")) {
                 var match = System.Text.RegularExpressions.Regex.Match(sessionId, @"\d+");
@@ -169,65 +166,34 @@ namespace WaitPlayNative {
                 this.activeAgentName = DetectActiveAgent();
             }
 
-            if (this.monitoredWindowHandle == IntPtr.Zero && this.terminalLabel != "Desktop") {
-                this.monitoredWindowHandle = ParentWindowTracker.FindWindowForAgent(this.activeAgentName);
-            }
-
-            // Capture what window was in front when we launched.
-            // This is used for auto-close: if something OTHER than this
-            // foreground window (or us) becomes foreground, we close.
-            launchForegroundWindow = ParentWindowTracker.GetForegroundWindow();
-            uint myLaunchPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
-            uint fgLaunchPid;
-            ParentWindowTracker.GetWindowThreadProcessId(launchForegroundWindow, out fgLaunchPid);
-            if (fgLaunchPid == myLaunchPid) launchForegroundWindow = IntPtr.Zero;
-
-            // Use monitoredWindowHandle as primary, launchForeground as fallback
-            if (monitoredWindowHandle == IntPtr.Zero && launchForegroundWindow != IntPtr.Zero) {
-                monitoredWindowHandle = launchForegroundWindow;
-            }
+            desktopParent = ParentWindowTracker.GetForegroundWindow();
+            if (IsWaitPlayWindow(desktopParent)) desktopParent = IntPtr.Zero;
 
             InitializeWindow();
             BuildUI();
+
+            inputWatcher = new TerminalInputWatcher();
+            inputWatcher.Interacted += () => Dispatcher.BeginInvoke(new Action(OnTerminalInteraction));
+            poller = new SignalPoller(this);
+            if (!string.IsNullOrEmpty(sessionId) && terminal != "Desktop") {
+                IntPtr launchHwnd = parentHwnd != IntPtr.Zero ? parentHwnd : desktopParent;
+                poller.Enqueue(new LaunchRequest { SessionId = sessionId, Terminal = terminalLabel, Ts = NowMs(), Hwnd = launchHwnd });
+                Loaded += (s, e) => KeepClearOfTabRow(launchHwnd);   // before the first frame, so it doesn't jump later
+            }
+            Closed += (s, e) => { poller.Dispose(); inputWatcher.Dispose(); };
             StartMonitoring();
 
-            // Arm auto-close after 2 seconds so the window has time to
-            // fully appear and get focus without immediately closing.
-            var armTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            // Give the window a moment to appear before visibility rules apply
+            var armTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             armTimer.Tick += (s, e) => { armTimer.Stop(); autoCloseArmed = true; };
             armTimer.Start();
-
-            // Remember which terminal tab launched us: we hide while the user is elsewhere and come back with them.
-            if (launchedFromTerminal) CaptureLaunchTab(monitoredWindowHandle);
-            tabTimer = new System.Threading.Timer(_ => PollTerminalTab(), null, 250, 250);
-            Closed += (s, e) => { try { tabTimer.Dispose(); } catch {} };
         }
 
-        // UIA lookup takes ~200ms the first time, so it runs off the UI thread.
-        // The generation counter discards a stale capture if the companion was retargeted meanwhile.
-        private void CaptureLaunchTab(IntPtr hwnd) {
-            int gen = Interlocked.Increment(ref tabCaptureGen);
-            tabTracker = null;
-            onOtherTab = false;
-            if (hwnd == IntPtr.Zero) return;
-            ThreadPool.QueueUserWorkItem(_ => {
-                var t = TerminalTabTracker.Capture(hwnd);
-                if (gen == Volatile.Read(ref tabCaptureGen)) { otherTabTicks = 0; tabTracker = t; }
-            });
-        }
-
-        // Timer thread. Two consecutive hits (~500ms) so a quick tab peek-and-back doesn't hide us.
-        private void PollTerminalTab() {
-            if (Interlocked.Exchange(ref tabPollBusy, 1) == 1) return;   // previous UIA call still running
-            try {
-                var t = tabTracker;
-                if (t == null || !t.OtherTabSelected()) { otherTabTicks = 0; onOtherTab = false; return; }
-                if (++otherTabTicks >= 2) onOtherTab = true;
-            } finally { Volatile.Write(ref tabPollBusy, 0); }
-        }
+        private static long NowMs() { return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(); }
 
         private void HideWhileAway() {
             hiddenAway = true;
+            inputWatcher.Target = IntPtr.Zero;
             SetMuted(true);    // a playing reel shouldn't keep talking from an invisible window
             Hide();
         }
@@ -244,7 +210,15 @@ namespace WaitPlayNative {
         }
 
         // Our own process or a sibling WaitPlay (the widget) holding focus doesn't count as leaving.
+        // Cached per window: this runs every tick and process lookups aren't free.
+        private IntPtr lastCheckedFg = IntPtr.Zero;
+        private bool lastCheckedFgIsWaitPlay = false;
+        private bool IsWaitPlayWindowCached(IntPtr hwnd) {
+            if (hwnd != lastCheckedFg) { lastCheckedFg = hwnd; lastCheckedFgIsWaitPlay = IsWaitPlayWindow(hwnd); }
+            return lastCheckedFgIsWaitPlay;
+        }
         private static bool IsWaitPlayWindow(IntPtr hwnd) {
+            if (hwnd == IntPtr.Zero) return false;
             uint pid;
             ParentWindowTracker.GetWindowThreadProcessId(hwnd, out pid);
             var self = System.Diagnostics.Process.GetCurrentProcess();
@@ -342,29 +316,8 @@ namespace WaitPlayNative {
             SourceInitialized += (s, e) => {
                 try { myHwnd = new WindowInteropHelper(this).Handle; } catch {}
             };
-            StateChanged += (s, e) => {
-                if (this.WindowState != WindowState.Minimized) {
-                    wasMinimizedByParent = false;
-                }
-            };
-            Closing += (s, e) => {
-                if (hasBeenActive && !hasFinished) {
-                    RecordUserDismiss();
-                }
-            };
             KeyDown += (s, e) => {
-                if (hasFinished && bannerBorder != null && bannerBorder.Visibility == Visibility.Visible) {
-                    if (e.Key == Key.Enter || e.Key == Key.Escape) {
-                        Close();
-                    } else if (e.Key == Key.Space) {
-                        bannerBorder.Visibility = Visibility.Collapsed;
-                    }
-                } else if (e.Key == Key.Escape) {
-                    if (hasBeenActive && !hasFinished) {
-                        RecordUserDismiss();
-                    }
-                    Close();
-                }
+                if (e.Key == Key.Escape) { DismissAll(); Close(); }
             };
         }
 
@@ -442,10 +395,7 @@ namespace WaitPlayNative {
                 Cursor = Cursors.Hand,
                 Margin = new Thickness(0, 0, 4, 0)
             };
-            btnMin.Click += (s, e) => {
-                wasMinimizedByParent = false;
-                WindowState = WindowState.Minimized;
-            };
+            btnMin.Click += (s, e) => { WindowState = WindowState.Minimized; };
 
             var btnClose = new Button {
                 Content = "\u2715",
@@ -464,12 +414,7 @@ namespace WaitPlayNative {
             btnClose.MouseLeave += (s, e) => {
                 btnClose.Foreground = new SolidColorBrush(InkSoftColor);
             };
-            btnClose.Click += (s, e) => {
-                if (hasBeenActive && !hasFinished) {
-                    RecordUserDismiss();
-                }
-                Close();
-            };
+            btnClose.Click += (s, e) => { DismissAll(); Close(); };
 
             controlsPanel.Children.Add(btnMin);
             controlsPanel.Children.Add(btnClose);
@@ -680,10 +625,6 @@ namespace WaitPlayNative {
                 Template = CreateRoundedButtonTemplate(new CornerRadius(10))
             };
             btnKeepPlaying.Click += (s, e) => {
-                if (exitTimer != null) {
-                    exitTimer.Stop();
-                    exitTimer = null;
-                }
                 bannerBorder.Visibility = Visibility.Collapsed;
                 if (webView != null) { try { webView.Visibility = Visibility.Visible; } catch {} }
             };
@@ -965,9 +906,7 @@ namespace WaitPlayNative {
             var restartTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             restartTimer.Tick += (s, e) => {
                 restartTimer.Stop();
-                if (!hasFinished) {
-                    StartGame();
-                }
+                StartGame();
             };
             restartTimer.Start();
         }
@@ -991,6 +930,7 @@ namespace WaitPlayNative {
             if (lower.Contains("codex") || lower.Contains("chatgpt")) return "ChatGPT";
             return raw;
         }
+        // UI thread, every 100ms. Only cheap Win32 calls and dictionary work happen here; all I/O is in SignalPoller.
         private void CheckAgentStatus() {
             if (!WaitPlayStateManager.IsEnabled()) {
                 // Don't close - user controls the window; just stop polling
@@ -1004,469 +944,318 @@ namespace WaitPlayNative {
             if (myHwnd == IntPtr.Zero) {
                 try { myHwnd = new WindowInteropHelper(this).Handle; } catch {}
             }
+            if (!autoCloseArmed) return;
 
-            // Bridge-independent close signal: any watcher can request close by
-            // writing { sessionId, ts } so completion works without the bridge.
-            try {
-                string closeFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", ".waitplay-close.json");
-                if (System.IO.File.Exists(closeFile)) {
-                    string cj = System.IO.File.ReadAllText(closeFile);
-                    var cser = new JavaScriptSerializer();
-                    var cdict = cser.Deserialize<Dictionary<string, object>>(cj);
-                    if (cdict != null) {
-                        string csid = cdict.ContainsKey("sessionId") ? Convert.ToString(cdict["sessionId"]) : "";
-                        long cts = cdict.ContainsKey("ts") && cdict["ts"] != null ? Convert.ToInt64(cdict["ts"]) : 0;
-                        long cnow = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                        if (cts > 0 && (cnow - cts) < 6000 &&
-                            (csid == "*" || string.Equals(csid, targetSessionId, StringComparison.OrdinalIgnoreCase))) {
-                            try { System.IO.File.Delete(closeFile); } catch {}
-                            OnTurnCompleted();
-                            return;
-                        }
-                    }
-                }
-            } catch {}
-            // 1. Check IPC file for session switch requested by another process
-            try {
-                string ipcFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", ".waitplay-active-session.txt");
-                if (System.IO.File.Exists(ipcFile)) {
-                    string content = System.IO.File.ReadAllText(ipcFile).Trim();
-                    string[] parts = content.Split('|');
-                    if (parts.Length >= 2) {
-                        string reqSession = parts[0];
-                        string reqTerm = parts.Length >= 3 ? parts[1] : "";
-                        long reqTime = 0;
-                        if (parts.Length >= 3) long.TryParse(parts[2], out reqTime);
-                        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                        // The file is re-read every tick for 10s; act on each request only once
-                        bool freshRequest = (now - reqTime) < 10000 && reqTime != lastIpcRequest;
-                        if (freshRequest) lastIpcRequest = reqTime;
-                        if ((now - reqTime) < 10000 && !string.IsNullOrEmpty(reqSession)) {
-                            bool retargeted = false;
-                            if (reqSession != targetSessionId) {
-                                retargeted = true;
-                                targetSessionId = reqSession;
-                                activeAgentName = GetAgentDisplayName(reqSession);
-                                statusPillText.Text = string.Format("{0} is Working...", activeAgentName);
-                                if (!string.IsNullOrEmpty(reqTerm)) {
-                                    terminalLabel = reqTerm;
-                                    terminalText.Text = reqTerm;
-                                    terminalPill.Visibility = Visibility.Visible;
-                                }
-                            }
-                            if (parts.Length >= 4) {
-                                long h;
-                                if (long.TryParse(parts[3], out h) && h != 0) {
-                                    monitoredWindowHandle = (IntPtr)h;
-                                }
-                            }
-                            if (parts.Length >= 5) {
-                                uint p;
-                                if (uint.TryParse(parts[4], out p) && p != 0) {
-                                    parentProcessId = p;
-                                    if (monitoredWindowHandle == IntPtr.Zero) {
-                                        monitoredWindowHandle = ParentWindowTracker.FindTopWindowForPid(p);
-                                    }
-                                }
-                            }
-                            // New prompt came from the tab the user is in now: that tab owns us
-                            if (retargeted) CaptureLaunchTab(monitoredWindowHandle);
-                        }
-                        // A new launch (prompt in the current tab, or a widget button) wants us visible here
-                        if (freshRequest && hiddenAway) {
-                            CaptureLaunchTab(monitoredWindowHandle);
-                            ShowAfterAway();
-                        }
-                    }
-                }
-            } catch {}
+            // Every terminal's agent has finished: nothing left to wait for.
+            if (sessions.Count > 0 && !AnyUnfinished()) { Close(); return; }
 
-            // Fallback resolution of parent window if still unknown
-            if (monitoredWindowHandle == IntPtr.Zero && terminalLabel != "Desktop") {
-                if (parentProcessId > 0) {
-                    monitoredWindowHandle = ParentWindowTracker.FindTopWindowForPid(parentProcessId);
-                }
-                if (monitoredWindowHandle == IntPtr.Zero) {
-                    monitoredWindowHandle = ParentWindowTracker.FindWindowForAgent(activeAgentName);
-                }
+            IntPtr fg = ParentWindowTracker.GetForegroundWindow();
+            if (fg == IntPtr.Zero) { awaySince = DateTime.MinValue; return; }   // locked screen etc.
+            if (fg == myHwnd || IsWaitPlayWindowCached(fg)) { awaySince = DateTime.MinValue; return; }
+
+            if (sessions.Count == 0) {
+                // Widget-launched: no owning tab, so leaving the window that was in front closes it
+                if (fg == desktopParent) { awaySince = DateTime.MinValue; return; }
+                if (AwayFor(500)) Close();
+                return;
             }
 
-            // Sync with parent window state (minimize / restore / close)
-            if (monitoredWindowHandle != IntPtr.Zero && !hiddenAway) {
-                if (!ParentWindowTracker.IsWindow(monitoredWindowHandle)) {
-                    missingParentTicks++;
-                    if (missingParentTicks >= 5) {
-                        // Parent gone: detach tracking instead of closing
-                        monitoredWindowHandle = IntPtr.Zero;
-                        missingParentTicks = 0;
-                    }
-                } else {
-                    missingParentTicks = 0;
-                    bool isParentMin = ParentWindowTracker.IsIconic(monitoredWindowHandle);
-                    if (isParentMin) {
-                        if (this.WindowState != WindowState.Minimized && !wasMinimizedByParent) {
-                            wasMinimizedByParent = true;
-                            this.WindowState = WindowState.Minimized;
-                            if (myHwnd != IntPtr.Zero) {
-                                ParentWindowTracker.ShowWindowAsync(myHwnd, 6); // SW_MINIMIZE
-                            }
-                        }
-                    } else {
-                        if (wasMinimizedByParent && this.WindowState == WindowState.Minimized) {
-                            if (!WaitPlayStateManager.IsEnabled()) {
-                                // Don't close, just skip restore
-                                return;
-                            }
-                            wasMinimizedByParent = false;
-                            if (myHwnd != IntPtr.Zero) {
-                                ParentWindowTracker.ShowWindowAsync(myHwnd, 9); // SW_RESTORE
-                            }
-                            this.WindowState = WindowState.Normal;
-                            Topmost = true;
-                        }
-                    }
-                }
+            AgentSession owner = OwnerOf(fg);
+            if (owner != null) {
+                awaySince = DateTime.MinValue;
+                ShowSession(owner);
+                if (hiddenAway) ShowAfterAway();
+                inputWatcher.Target = owner.Hwnd;   // scrolling/typing in this terminal now dismisses
+                return;
             }
+            ownerId = null;
+            inputWatcher.Target = IntPtr.Zero;
+            // 500ms grace so peeking at another tab and straight back doesn't flicker the window
+            if (AwayFor(500) && !hiddenAway) HideWhileAway();
+        }
 
-            // ── Follow the owning terminal tab ────────────────────────
-            // Terminal-launched: leaving the tab (another WT tab, or another app) for 500ms hides us;
-            // coming back to the owning tab shows us again while the agent is still working. Once the
-            // turn has finished, leaving closes us for good. Widget-launched windows have no owning
-            // tab, so leaving simply closes them.
-            if (autoCloseArmed) {
-                IntPtr fg = ParentWindowTracker.GetForegroundWindow();
-                if (fg == IntPtr.Zero) {
-                    // No foreground window (screen locked, etc.) — ignore
-                    awaySince = DateTime.MinValue;
-                } else {
-                    bool isSelf = fg == myHwnd || IsWaitPlayWindow(fg);
-                    bool isParent = monitoredWindowHandle != IntPtr.Zero && fg == monitoredWindowHandle;
-                    bool away = !(isSelf || isParent) || (isParent && onOtherTab);
+        private bool AwayFor(int ms) {
+            if (awaySince == DateTime.MinValue) awaySince = DateTime.UtcNow;
+            return (DateTime.UtcNow - awaySince).TotalMilliseconds >= ms;
+        }
 
-                    if (hiddenAway) {
-                        if (hasFinished) { try { Close(); } catch {} return; }
-                        if (isParent && !onOtherTab) ShowAfterAway();
-                    } else {
-                        if (!away) awaySince = DateTime.MinValue;
-                        else if (awaySince == DateTime.MinValue) awaySince = DateTime.UtcNow;
-                        if (away && (DateTime.UtcNow - awaySince).TotalMilliseconds >= 500) {
-                            if (!launchedFromTerminal || hasFinished) { try { Close(); } catch {} return; }
-                            HideWhileAway();
-                        }
-                    }
-                }
+        private bool AnyUnfinished() {
+            foreach (var s in sessions.Values) if (!s.Finished) return true;
+            return false;
+        }
+
+        // The unfinished session living in the focused terminal window's selected tab.
+        // Unknown tab state (non-tabbed terminal, or capture still running) counts as a match.
+        private AgentSession OwnerOf(IntPtr fg) {
+            AgentSession best = null;
+            foreach (var s in sessions.Values) {
+                if (s.Finished || s.Hwnd != fg || s.OnOwnTab == false) continue;
+                if (best == null
+                    || (s.OnOwnTab == true && best.OnOwnTab != true)
+                    || (s.OnOwnTab == best.OnOwnTab && s.StartedAt > best.StartedAt)) best = s;
             }
-            try {
-                string url = string.Format("http://127.0.0.1:{0}/sessions", BRIDGE_PORT);
-                var request = (HttpWebRequest)WebRequest.Create(url);
-                request.Timeout = 400;
-                request.Method = "GET";
+            return best;
+        }
 
-                using (var response = (HttpWebResponse)request.GetResponse()) {
-                    if (response.StatusCode == HttpStatusCode.OK) {
-                        using (var reader = new StreamReader(response.GetResponseStream())) {
-                            string json = reader.ReadToEnd();
-                            ParseSessionsJson(json);
-                        }
-                    }
-                }
-            } catch {
-                // Bridge might be idle
+        // Point the header at the session whose tab is in front
+        private void ShowSession(AgentSession s) {
+            if (ownerId == s.Id) return;
+            ownerId = s.Id;
+            targetSessionId = s.Id;
+            activeAgentName = GetAgentDisplayName(s.Id);
+            if (!string.IsNullOrEmpty(s.Terminal)) {
+                terminalLabel = s.Terminal;
+                terminalText.Text = s.Terminal;
+                terminalPill.Visibility = Visibility.Visible;
             }
-            CheckOmpNativeSession();
+            SetWorkingStatus(activeAgentName, "");
+            KeepClearOfTabRow(s.Hwnd);
         }
 
-        private void CheckOmpNativeSession() {
+        [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
+        [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+
+        // Never cover the owning terminal's tab row, or the user can't click over to another tab.
+        // In Windows Terminal the tabs share the title row: the top ~48px of the window.
+        private void KeepClearOfTabRow(IntPtr terminal) {
+            RECT r;
+            if (terminal == IntPtr.Zero || !GetWindowRect(terminal, out r)) return;
+            var src = PresentationSource.FromVisual(this);
+            Matrix toDip = src != null && src.CompositionTarget != null ? src.CompositionTarget.TransformFromDevice : Matrix.Identity;
+            Point tl = toDip.Transform(new Point(r.Left, r.Top));
+            Point br = toDip.Transform(new Point(r.Right, r.Bottom));
+            double rowBottom = tl.Y + 48;
+            bool overlapsX = Left < br.X && Left + Width > tl.X;
+            if (!overlapsX || Top >= rowBottom) return;
+            double newTop = rowBottom + 8;
+            double room = SystemParameters.WorkArea.Bottom - newTop - 8;
+            if (room < MinHeight) return;   // terminal sits too low to clear it; leave the window as is
+            Height = Math.Min(Height, room);
+            Top = newTop;
+        }
+
+        private void FinishSession(AgentSession s) {
+            if (s.Finished) return;
+            s.Finished = true;
+            poller.Forget(s.Id);
+            DismissalTracker.ClearDismissal(s.Id);
+        }
+
+        // User scrolled or typed in the terminal that owns the window: they want the agent's
+        // output, so step aside for this prompt (other terminals' sessions are unaffected).
+        private void OnTerminalInteraction() {
+            AgentSession s;
+            if (ownerId == null || !sessions.TryGetValue(ownerId, out s)) return;
+            FinishSession(s);
+            ownerId = null;
+            if (!AnyUnfinished()) Close();
+            else HideWhileAway();
+        }
+
+        // X button / Escape: don't re-pop for any prompt that is still running
+        private void DismissAll() {
+            foreach (var s in sessions.Values) if (!s.Finished) DismissalTracker.RecordDismissal(s.Id);
+        }
+
+        // Results from the background poller, applied on the UI thread.
+        private void ApplyPoll(PollResult r) {
+            foreach (var l in r.Launches) {
+                if (string.IsNullOrEmpty(l.SessionId)) {   // widget button while we're running: show here
+                    if (hiddenAway) ShowAfterAway();
+                    continue;
+                }
+                AgentSession s;
+                if (!sessions.TryGetValue(l.SessionId, out s)) { s = new AgentSession { Id = l.SessionId }; sessions[l.SessionId] = s; }
+                if (!string.IsNullOrEmpty(l.Terminal)) s.Terminal = l.Terminal;
+                s.Hwnd = l.Hwnd;
+                s.StartedAt = l.Ts;
+                s.Finished = false;
+                s.OnOwnTab = null;
+                if (ownerId == s.Id) ownerId = null;   // refresh the header for the new prompt
+            }
+            foreach (var c in r.Closed) {
+                AgentSession s;
+                if (sessions.TryGetValue(c.Key, out s) && c.Value >= s.StartedAt) FinishSession(s);
+            }
+            foreach (var kv in r.OwnTab) {
+                AgentSession s;
+                if (sessions.TryGetValue(kv.Key, out s)) s.OnOwnTab = kv.Value;
+            }
+            if (r.BridgeJson != null) ApplyBridge(r.BridgeJson);
+        }
+
+        // Bridge (when running) adds model/tool/waiting detail and is a second completion source.
+        private void ApplyBridge(string json) {
             try {
-                string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                string ompDir = System.IO.Path.Combine(userProfile, ".omp", "agent", "sessions", "-tmp");
-                if (!System.IO.Directory.Exists(ompDir)) return;
-
-                string latestFile = null;
-                DateTime latestTime = DateTime.MinValue;
-                var files = System.IO.Directory.GetFiles(ompDir, "*.jsonl");
-                foreach (var f in files) {
-                    var fi = new System.IO.FileInfo(f);
-                    if (fi.LastWriteTime > latestTime) {
-                        latestTime = fi.LastWriteTime;
-                        latestFile = f;
-                    }
-                }
-                if (latestFile == null || (DateTime.Now - latestTime).TotalSeconds > 10) return;
-                // Read last 12KB of file
-                using (var fs = new System.IO.FileStream(latestFile, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite)) {
-                    long len = fs.Length;
-                    if (len == 0) return;
-                    long seekPos = Math.Max(0, len - 12288);
-                    fs.Seek(seekPos, System.IO.SeekOrigin.Begin);
-                    using (var reader = new System.IO.StreamReader(fs)) {
-                        string tail = reader.ReadToEnd();
-                        string[] lines = tail.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                        if (lines.Length == 0) return;
-
-                        for (int i = lines.Length - 1; i >= 0; i--) {
-                            string line = lines[i].Trim();
-                            if (string.IsNullOrEmpty(line) || !line.StartsWith("{")) continue;
-
-                            var ser = new JavaScriptSerializer();
-                            var entry = ser.Deserialize<Dictionary<string, object>>(line);
-                            if (entry == null) continue;
-
-                            string type = entry.ContainsKey("type") ? Convert.ToString(entry["type"]) : "";
-
-                            if (type == "custom") {
-                                string customType = entry.ContainsKey("customType") ? Convert.ToString(entry["customType"]) : "";
-                                if (customType == "tool_execution_start") {
-                                    hasBeenActive = true;
-                                    idleTicks = 0;
-                                    CancelPendingClose();
-                                    break;
-                                }
-                            } else if (type == "message") {
-                                var msg = entry.ContainsKey("message") ? entry["message"] as Dictionary<string, object> : null;
-                                if (msg == null) continue;
-                                string role = msg.ContainsKey("role") ? Convert.ToString(msg["role"]) : "";
-
-                                if (role == "user" || role == "toolResult") {
-                                    hasBeenActive = true;
-                                    idleTicks = 0;
-                                    CancelPendingClose();
-                                    break;
-                                } else if (role == "assistant") {
-                                    string stopReason = msg.ContainsKey("stopReason") ? Convert.ToString(msg["stopReason"]) : "";
-                                    var content = msg.ContainsKey("content") ? msg["content"] as ArrayList : null;
-                                    bool hasToolCall = false;
-                                    if (content != null) {
-                                        foreach (object c in content) {
-                                            var cd = c as Dictionary<string, object>;
-                                            if (cd != null && cd.ContainsKey("type") && Convert.ToString(cd["type"]) == "toolCall") {
-                                                hasToolCall = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-
-                                    if (hasToolCall || stopReason == "toolUse") {
-                                        hasBeenActive = true;
-                                        idleTicks = 0;
-                                        CancelPendingClose();
-                                        break;
-                                    } else if (stopReason == "stop" || stopReason == "end_turn") {
-                                        // Final assistant message is the newest log line: the
-                                        // output is written. Arm the grace close (cancelled if
-                                        // the agent resumes before it elapses).
-                                        if (hasBeenActive) OnTurnCompleted();
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch {}
-        }
-
-
-        private void RecordUserDismiss() {
-            string sid = !string.IsNullOrEmpty(targetSessionId) ? targetSessionId : activeAgentName;
-            DismissalTracker.RecordDismissal(sid);
-        }
-
-        private static bool IsWorking(Dictionary<string, object> s) {
-            if (s == null || !s.ContainsKey("status")) return false;
-            string st = Convert.ToString(s["status"]);
-            return st == "WORKING" || st == "GAME_ACTIVE";
-        }
-
-        private void ParseSessionsJson(string json) {
-            try {
-                var serializer = new JavaScriptSerializer();
-                var root = serializer.Deserialize<Dictionary<string, object>>(json);
-                if (root == null || !root.ContainsKey("sessions")) return;
-
-                var sessionsList = root["sessions"] as ArrayList;
-                if (sessionsList == null) return;
-
-                // Collect all currently working or input-waiting sessions within the last 20 seconds
-                var workingSessions = new List<Dictionary<string, object>>();
-                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-                foreach (object item in sessionsList) {
-                    var s = item as Dictionary<string, object>;
-                    if (s == null) continue;
-                    if (IsWorking(s) || Convert.ToString(s["status"]) == "WAITING_FOR_INPUT") {
-                        long evTime = s.ContainsKey("lastEventAt") && s["lastEventAt"] != null ? Convert.ToInt64(s["lastEventAt"]) : 0;
-                        if ((now - evTime) < 20000) {
-                            workingSessions.Add(s);
-                        }
-                    }
-                }
-
-                Dictionary<string, object> activeSession = null;
-
-                // 1. Try to find the targeted session among working sessions first
-                if (!string.IsNullOrEmpty(targetSessionId)) {
-                    foreach (var s in workingSessions) {
-                        string sid = s.ContainsKey("sessionId") ? Convert.ToString(s["sessionId"]) : "";
-                        string ag = s.ContainsKey("agent") ? Convert.ToString(s["agent"]) : "";
-                        if (string.Equals(sid, targetSessionId, StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(ag, targetSessionId, StringComparison.OrdinalIgnoreCase)) {
-                            activeSession = s;
-                            break;
-                        }
-                    }
-                }
-
-                // 2. If target session is not currently working, dynamically pick the working session with the most recent event!
-                if (activeSession == null && workingSessions.Count > 0) {
-                    workingSessions.Sort((a, b) => {
-                        long tA = a.ContainsKey("lastEventAt") && a["lastEventAt"] != null ? Convert.ToInt64(a["lastEventAt"]) : 0;
-                        long tB = b.ContainsKey("lastEventAt") && b["lastEventAt"] != null ? Convert.ToInt64(b["lastEventAt"]) : 0;
-                        return tB.CompareTo(tA); // Newest event first!
-                    });
-                    activeSession = workingSessions[0];
-                    targetSessionId = activeSession.ContainsKey("sessionId") ? Convert.ToString(activeSession["sessionId"]) : "";
-                }
-
-                // 3. Fallback to completed session if all working sessions settled
-                if (activeSession == null && hasBeenActive) {
-                    foreach (object item in sessionsList) {
-                        var s = item as Dictionary<string, object>;
-                        if (s == null) continue;
-                        string sid = s.ContainsKey("sessionId") ? Convert.ToString(s["sessionId"]) : "";
-                        if (string.Equals(sid, targetSessionId, StringComparison.OrdinalIgnoreCase)) {
-                            activeSession = s;
-                            break;
-                        }
-                    }
-                }
-
-                if (activeSession != null) {
-                    string status = activeSession.ContainsKey("status") ? Convert.ToString(activeSession["status"]) : "";
-                    if (activeSession.ContainsKey("currentTaskStartedAt") && activeSession["currentTaskStartedAt"] != null) {
-                        try {
-                            currentPromptTimestamp = Convert.ToInt64(activeSession["currentTaskStartedAt"]);
-                        } catch {}
-                    }
-
-                    string rawAgent = activeSession.ContainsKey("agent") ? Convert.ToString(activeSession["agent"]) : "";
-                    string rawSessionId = activeSession.ContainsKey("sessionId") ? Convert.ToString(activeSession["sessionId"]) : "";
-                    string model = activeSession.ContainsKey("model") ? Convert.ToString(activeSession["model"]) : "";
-                    string tool = activeSession.ContainsKey("tool") ? Convert.ToString(activeSession["tool"]) : "";
-
-                    if (activeSession.ContainsKey("terminal") && activeSession["terminal"] != null) {
-                        string t = Convert.ToString(activeSession["terminal"]);
-                        if (!string.IsNullOrEmpty(t)) {
-                            terminalLabel = t;
-                            terminalText.Text = t;
-                            terminalPill.Visibility = Visibility.Visible;
-                        }
-                    }
-
-                    string agentName = GetAgentDisplayName(!string.IsNullOrEmpty(rawAgent) ? rawAgent : rawSessionId);
-                    activeAgentName = agentName;
-                    // Check dismissal for this specific session
-                    string checkSid = !string.IsNullOrEmpty(targetSessionId) ? targetSessionId : rawSessionId;
-                    if (DismissalTracker.IsPromptDismissed(checkSid)) {
-                        Close();
-                        return;
-                    }
-
+                var root = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json);
+                var list = root != null && root.ContainsKey("sessions") ? root["sessions"] as ArrayList : null;
+                if (list == null) return;
+                foreach (object item in list) {
+                    var b = item as Dictionary<string, object>;
+                    if (b == null) continue;
+                    string sid = b.ContainsKey("sessionId") ? Convert.ToString(b["sessionId"]) : "";
+                    AgentSession s;
+                    if (!sessions.TryGetValue(sid, out s)) continue;
+                    string status = b.ContainsKey("status") ? Convert.ToString(b["status"]) : "";
+                    long ev = b.ContainsKey("lastEventAt") && b["lastEventAt"] != null ? Convert.ToInt64(b["lastEventAt"]) : 0;
+                    // A COMPLETED left over from the previous turn predates this launch
+                    if (status == "COMPLETED" && ev >= s.StartedAt) { FinishSession(s); continue; }
+                    if (sid != ownerId) continue;
                     if (status == "WORKING" || status == "GAME_ACTIVE") {
-                        hasBeenActive = true;
-                        debounceCompletedTicks = 0;
-                        idleTicks = 0;
-
-                        if (hasFinished) {
-                            hasFinished = false;
-                            if (exitTimer != null) exitTimer.Stop();
-                            bannerBorder.Visibility = Visibility.Collapsed;
-                        }
-
-                        if (workingSessions.Count > 1) {
-                            statusPillText.Text = string.Format("{0} \u2022 {1} (+{2} active)", agentName, !string.IsNullOrEmpty(model) ? model : "Working", workingSessions.Count - 1);
-                        } else if (!string.IsNullOrEmpty(model)) {
-                            statusPillText.Text = string.Format("{0} \u2022 {1}", agentName, model);
-                        } else {
-                            statusPillText.Text = string.Format("{0} is Working...", agentName);
-                        }
-
-                        if (!string.IsNullOrEmpty(tool) && hintText != null) {
-                            hintText.Text = string.Format("Active Tool: {0} \u2022 Working on your task...", tool);
-                        }
-
-                        statusPill.Background = new SolidColorBrush(Color.FromArgb(28, 3, 79, 70));
-                        statusPill.BorderBrush = new SolidColorBrush(Color.FromArgb(80, 3, 79, 70));
-                        statusDot.Fill = new SolidColorBrush(ForestColor);
-                        statusPillText.Foreground = new SolidColorBrush(ForestColor);
-                    }
-                    else if (status == "WAITING_FOR_INPUT") {
-                        hasBeenActive = true;
-                        debounceCompletedTicks = 0;
-                        idleTicks = 0;
-
-                        if (hasFinished) {
-                            hasFinished = false;
-                            if (exitTimer != null) exitTimer.Stop();
-                            bannerBorder.Visibility = Visibility.Collapsed;
-                        }
-
-                        statusPillText.Text = string.Format("\u23F8 {0} waiting for input", agentName);
+                        string model = b.ContainsKey("model") ? Convert.ToString(b["model"]) : "";
+                        string tool = b.ContainsKey("tool") ? Convert.ToString(b["tool"]) : "";
+                        SetWorkingStatus(activeAgentName, model);
+                        if (!string.IsNullOrEmpty(tool) && hintText != null) hintText.Text = string.Format("Active Tool: {0} \u2022 Working on your task...", tool);
+                    } else if (status == "WAITING_FOR_INPUT") {
+                        statusPillText.Text = string.Format("\u23F8 {0} waiting for input", activeAgentName);
                         statusPill.Background = new SolidColorBrush(Color.FromArgb(30, 255, 169, 70));
                         statusPill.BorderBrush = new SolidColorBrush(Color.FromArgb(120, 255, 169, 70));
                         statusDot.Fill = new SolidColorBrush(OrangeColor);
                         statusPillText.Foreground = new SolidColorBrush(Color.FromRgb(180, 83, 9));
-
-                        string prompt = activeSession.ContainsKey("waitingForInputPrompt") ? Convert.ToString(activeSession["waitingForInputPrompt"]) : "";
-                        if (!string.IsNullOrEmpty(prompt) && hintText != null) {
-                            hintText.Text = string.Format("Input required: {0}", prompt);
-                        }
-                    }
-                    else if (status == "COMPLETED") {
-                        if (hasBeenActive && !hasFinished && workingSessions.Count == 0) {
-                            debounceCompletedTicks++;
-                            if (debounceCompletedTicks >= 2) {
-                                OnTurnCompleted();
-                            }
-                        }
-                    }
-                    else {
-                        if (hasBeenActive && !hasFinished && workingSessions.Count == 0) {
-                            idleTicks++;
-                            if (idleTicks >= 8) {
-                                OnTurnCompleted();
-                            }
-                        }
-                    }
-                } else if (hasBeenActive && !hasFinished && workingSessions.Count == 0) {
-                    idleTicks++;
-                    if (idleTicks >= 8) {
-                        OnTurnCompleted();
+                        string prompt = b.ContainsKey("waitingForInputPrompt") ? Convert.ToString(b["waitingForInputPrompt"]) : "";
+                        if (!string.IsNullOrEmpty(prompt) && hintText != null) hintText.Text = string.Format("Input required: {0}", prompt);
                     }
                 }
             } catch {}
         }
 
-        private void OnTurnCompleted() {
-            if (hasFinished) return;
-            hasFinished = true;
-            if (webReadyTimer != null) { try { webReadyTimer.Stop(); } catch {} }
-            DismissalTracker.ClearDismissal(targetSessionId);
-            // Don't auto-close: the user controls when to close the widget.
-            // Just update status to show agent is done.
-            try {
-                statusPillText.Text = activeAgentName + " \u2022 Done";
-                statusDot.Fill = new SolidColorBrush(Color.FromRgb(100, 200, 120));
-            } catch {}
+        private void SetWorkingStatus(string agent, string model) {
+            statusPillText.Text = !string.IsNullOrEmpty(model) ? string.Format("{0} \u2022 {1}", agent, model) : string.Format("{0} is Working...", agent);
+            statusPill.Background = new SolidColorBrush(Color.FromArgb(28, 3, 79, 70));
+            statusPill.BorderBrush = new SolidColorBrush(Color.FromArgb(80, 3, 79, 70));
+            statusDot.Fill = new SolidColorBrush(ForestColor);
+            statusPillText.Foreground = new SolidColorBrush(ForestColor);
         }
 
-        private void CancelPendingClose() {
-            if (hasFinished) {
-                hasFinished = false;
-                if (exitTimer != null) { try { exitTimer.Stop(); } catch {} }
+        // ── Background signal poller ─────────────────────────────────────────────
+        // Hand-off files are per session so terminals never consume or delete each other's signals:
+        //   .waitplay-launch-<id>.txt   "id|terminal|unixMs|hwnd"       (written by later WaitPlay launches)
+        //   .waitplay-close-<id>.json   {"sessionId":..,"ts":..}         (written by agent hooks on turn end)
+        internal static string SignalFileId(string sessionId) {
+            var sb = new StringBuilder();
+            foreach (char ch in sessionId ?? "") sb.Append(char.IsLetterOrDigit(ch) || ch == '-' || ch == '_' ? ch : '_');
+            return sb.Length > 0 ? sb.ToString() : "_summon";
+        }
+        internal static string SignalDir() { return System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay"); }
+
+        private sealed class LaunchRequest {
+            public string SessionId, Terminal;
+            public long Ts;
+            public IntPtr Hwnd;
+            public TerminalTabTracker Tab;   // captured on the poller thread
+        }
+        private sealed class PollResult {
+            public readonly List<LaunchRequest> Launches = new List<LaunchRequest>();
+            public readonly List<KeyValuePair<string, long>> Closed = new List<KeyValuePair<string, long>>();   // id, signal time
+            public readonly Dictionary<string, bool?> OwnTab = new Dictionary<string, bool?>(StringComparer.OrdinalIgnoreCase);
+            public string BridgeJson;
+        }
+
+        // All file, UI Automation and HTTP work happens here, off the UI thread, so the companion
+        // (and the low-level input hook, which runs on the UI thread) never stalls.
+        private sealed class SignalPoller : IDisposable {
+            private readonly MainWindow owner;
+            private readonly System.Threading.Timer timer;
+            private readonly object gate = new object();
+            private readonly List<LaunchRequest> pending = new List<LaunchRequest>();
+            private readonly Dictionary<string, LaunchRequest> live = new Dictionary<string, LaunchRequest>(StringComparer.OrdinalIgnoreCase);
+            private DateTime nextBridgePoll = DateTime.MinValue;
+            private int busy;
+            private volatile bool disposed;
+
+            public SignalPoller(MainWindow owner) {
+                this.owner = owner;
+                timer = new System.Threading.Timer(_ => Tick(), null, 0, 150);
+            }
+            public void Enqueue(LaunchRequest r) { lock (gate) pending.Add(r); }
+            public void Forget(string id) { lock (gate) live.Remove(id); }
+            public void Dispose() { disposed = true; timer.Dispose(); }
+
+            private void Tick() {
+                if (disposed || Interlocked.Exchange(ref busy, 1) == 1) return;   // previous tick still running
+                try {
+                    var r = new PollResult();
+                    List<LaunchRequest> batch;
+                    lock (gate) { batch = new List<LaunchRequest>(pending); pending.Clear(); }
+                    if (OwnsSignalFiles) batch.AddRange(ReadLaunchFiles());
+                    foreach (var l in batch) {
+                        // The prompt was just submitted, so the selected tab right now is the session's tab
+                        if (!string.IsNullOrEmpty(l.SessionId) && l.Hwnd != IntPtr.Zero) l.Tab = TerminalTabTracker.Capture(l.Hwnd);
+                        if (!string.IsNullOrEmpty(l.SessionId)) lock (gate) live[l.SessionId] = l;
+                        r.Launches.Add(l);
+                    }
+                    if (OwnsSignalFiles) r.Closed.AddRange(ReadCloseFiles());
+
+                    List<LaunchRequest> watched;
+                    lock (gate) watched = new List<LaunchRequest>(live.Values);
+                    foreach (var l in watched) {
+                        // Terminal window or tab closed: that session can never finish normally
+                        bool? own = l.Tab != null ? l.Tab.OwnTabSelected() : (bool?)null;
+                        if ((l.Hwnd != IntPtr.Zero && !ParentWindowTracker.IsWindow(l.Hwnd)) || (l.Tab != null && l.Tab.Gone)) {
+                            r.Closed.Add(new KeyValuePair<string, long>(l.SessionId, long.MaxValue));
+                            continue;
+                        }
+                        r.OwnTab[l.SessionId] = own;
+                    }
+
+                    if (DateTime.UtcNow >= nextBridgePoll) r.BridgeJson = PollBridge();
+                    if (!disposed) owner.Dispatcher.BeginInvoke(new Action(() => owner.ApplyPoll(r)));
+                } catch {
+                } finally { Volatile.Write(ref busy, 0); }
+            }
+
+            private static List<LaunchRequest> ReadLaunchFiles() {
+                var list = new List<LaunchRequest>();
+                string dir = SignalDir();
+                if (!System.IO.Directory.Exists(dir)) return list;
+                foreach (var f in System.IO.Directory.GetFiles(dir, ".waitplay-launch-*.txt")) {
+                    try {
+                        string[] p = System.IO.File.ReadAllText(f).Trim().Split('|');
+                        long ts, h;
+                        if (p.Length < 4 || !long.TryParse(p[2], out ts) || !long.TryParse(p[3], out h)) { DeleteIfOld(f); continue; }   // mid-write: retry next tick
+                        System.IO.File.Delete(f);
+                        if (NowMs() - ts > 15000) continue;   // left over from a companion that died
+                        list.Add(new LaunchRequest { SessionId = p[0], Terminal = p[1], Ts = ts, Hwnd = (IntPtr)h });
+                    } catch {}
+                }
+                return list;
+            }
+
+            private static List<KeyValuePair<string, long>> ReadCloseFiles() {
+                var list = new List<KeyValuePair<string, long>>();
+                string dir = SignalDir();
+                if (!System.IO.Directory.Exists(dir)) return list;
+                foreach (var f in System.IO.Directory.GetFiles(dir, ".waitplay-close-*.json")) {
+                    try {
+                        var d = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(System.IO.File.ReadAllText(f));
+                        if (d == null || !d.ContainsKey("sessionId") || !d.ContainsKey("ts")) { DeleteIfOld(f); continue; }
+                        System.IO.File.Delete(f);
+                        list.Add(new KeyValuePair<string, long>(Convert.ToString(d["sessionId"]), Convert.ToInt64(d["ts"])));
+                    } catch { DeleteIfOld(f); }
+                }
+                return list;
+            }
+
+            private static void DeleteIfOld(string f) {
+                try { if ((DateTime.UtcNow - System.IO.File.GetLastWriteTimeUtc(f)).TotalSeconds > 30) System.IO.File.Delete(f); } catch {}
+            }
+
+            // Short timeout and a 5s back-off while the bridge is down (a refused localhost connect costs ~420ms)
+            private string PollBridge() {
+                try {
+                    var req = (HttpWebRequest)WebRequest.Create(string.Format("http://127.0.0.1:{0}/sessions", BRIDGE_PORT));
+                    req.Timeout = 300;
+                    using (var res = (HttpWebResponse)req.GetResponse())
+                    using (var rd = new StreamReader(res.GetResponseStream())) {
+                        nextBridgePoll = DateTime.UtcNow.AddSeconds(1);
+                        return rd.ReadToEnd();
+                    }
+                } catch {
+                    nextBridgePoll = DateTime.UtcNow.AddSeconds(5);
+                    return null;
+                }
             }
         }
-
         // --- Instagram WebView2 companion plumbing -------------------------------
 
         private bool IsPortOpen(int port) {
@@ -2659,36 +2448,192 @@ namespace WaitPlayNative {
         }
     }
 
-    // Identifies the Windows Terminal tab a companion belongs to. All WT tabs share one top-level
-    // window, so foreground checks can't see a tab switch; UI Automation exposes the selected
-    // TabItem. Tabs are matched by UIA RuntimeId — titles change constantly (agent spinners).
+    // Identifies the Windows Terminal tab a session belongs to. All WT tabs share one top-level window,
+    // so foreground checks can't see a tab switch; UI Automation exposes the tab strip instead.
+    // Tabs are tracked by position: UIA RuntimeIds are NOT stable (WT rebuilds a tab's peer when it is
+    // selected/hovered), and titles churn (agent spinners). When tabs are added or closed, the tab is
+    // re-located by its ASCII-only title; if it can't be found, the tab is gone.
     internal class TerminalTabTracker {
+        private readonly IntPtr hwnd;
         private System.Windows.Automation.AutomationElement strip;
-        private int[] ownTab;
-        private static readonly System.Windows.Automation.Condition SelectedTab = new System.Windows.Automation.AndCondition(
-            new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.ControlTypeProperty, System.Windows.Automation.ControlType.TabItem),
-            new System.Windows.Automation.PropertyCondition(System.Windows.Automation.SelectionItemPattern.IsSelectedProperty, true));
+        private int ownIndex;
+        private string ownTitle;
+        private int lastCount;
+        public bool Gone { get; private set; }   // the session's tab was closed
+        private int pendingCount = -1, pendingPolls = 0;
 
-        // Null when the window has no tab strip (non-tabbed terminal) — caller then relies on foreground checks.
+        private static readonly System.Windows.Automation.Condition TabItemCond =
+            new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.ControlTypeProperty, System.Windows.Automation.ControlType.TabItem);
+
+        private TerminalTabTracker(IntPtr hwnd) { this.hwnd = hwnd; }
+
+        // Null when the window has no tab strip (non-tabbed terminal): caller then goes by window only.
         public static TerminalTabTracker Capture(IntPtr hwnd) {
-            try {
-                var root = System.Windows.Automation.AutomationElement.FromHandle(hwnd);
-                var strip = root.FindFirst(System.Windows.Automation.TreeScope.Descendants,
-                    new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.ControlTypeProperty, System.Windows.Automation.ControlType.Tab));
-                if (strip == null) return null;
-                var sel = strip.FindFirst(System.Windows.Automation.TreeScope.Descendants, SelectedTab);
-                if (sel == null) return null;
-                return new TerminalTabTracker { strip = strip, ownTab = sel.GetRuntimeId() };
-            } catch { return null; }
+            var t = new TerminalTabTracker(hwnd);
+            var items = t.Items();
+            if (items == null) return null;
+            for (int i = 0; i < items.Count; i++) {
+                if (!IsSelected(items[i])) continue;
+                t.ownIndex = i; t.ownTitle = StableTitle(items[i]); t.lastCount = items.Count;
+                return t;
+            }
+            return null;
         }
 
-        // True only when a different tab is positively selected; unknown/errors count as "ours".
-        public bool OtherTabSelected() {
-            try {
-                var sel = strip.FindFirst(System.Windows.Automation.TreeScope.Descendants, SelectedTab);
-                return sel != null && !System.Windows.Automation.Automation.Compare(sel.GetRuntimeId(), ownTab);
-            } catch { return false; }
+        // true: our tab is selected; false: another tab is; null: unknown (minimized, UIA error, tab list
+        // in flux, or tab gone — see Gone).
+        public bool? OwnTabSelected() {
+            if (Gone) return null;
+            // A minimized WT exposes an empty/partial tab list; don't read anything into it
+            if (ParentWindowTracker.IsIconic(hwnd)) { pendingPolls = 0; return null; }
+            var items = Items();
+            if (items == null || items.Count == 0) return null;
+            if (items.Count != lastCount) {
+                // Only trust a new tab count once it has held for 3 polls (~450ms): right after a
+                // restore WT briefly reports a partial list, which must not look like closed tabs.
+                if (items.Count != pendingCount) { pendingCount = items.Count; pendingPolls = 1; return null; }
+                if (++pendingPolls < 3) return null;
+                bool grew = items.Count > lastCount;
+                lastCount = items.Count;
+                pendingCount = -1;
+                if (!Relocate(items, grew)) { Gone = true; return null; }
+            } else {
+                pendingCount = -1;
+            }
+            if (ownIndex >= items.Count) return null;
+            bool selected = IsSelected(items[ownIndex]);
+            if (selected) ownTitle = StableTitle(items[ownIndex]);   // follow renames while we're looking at it
+            return selected;
         }
+
+        // Tabs were opened/closed: find ours again by title, preferring the slot nearest its old position.
+        // If the title changed while unselected and tabs were only added (WT appends them), keep our slot.
+        private bool Relocate(List<System.Windows.Automation.AutomationElement> items, bool grew) {
+            int best = -1;
+            for (int i = 0; i < items.Count; i++) {
+                if (StableTitle(items[i]) != ownTitle) continue;
+                if (best < 0 || Math.Abs(i - ownIndex) < Math.Abs(best - ownIndex)) best = i;
+            }
+            if (best < 0) return grew && ownIndex < items.Count;
+            ownIndex = best;
+            return true;
+        }
+
+        private List<System.Windows.Automation.AutomationElement> Items() {
+            try {
+                if (strip == null) {
+                    var root = System.Windows.Automation.AutomationElement.FromHandle(hwnd);
+                    strip = root.FindFirst(System.Windows.Automation.TreeScope.Descendants,
+                        new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.ControlTypeProperty, System.Windows.Automation.ControlType.Tab));
+                    if (strip == null) return null;
+                }
+                var list = new List<System.Windows.Automation.AutomationElement>();
+                foreach (System.Windows.Automation.AutomationElement e in strip.FindAll(System.Windows.Automation.TreeScope.Descendants, TabItemCond)) list.Add(e);
+                return list;
+            } catch {
+                strip = null;   // stale element (e.g. tab row rebuilt): look it up again next time
+                return null;
+            }
+        }
+
+        private static bool IsSelected(System.Windows.Automation.AutomationElement e) {
+            try { return ((System.Windows.Automation.SelectionItemPattern)e.GetCurrentPattern(System.Windows.Automation.SelectionItemPattern.Pattern)).Current.IsSelected; }
+            catch { return false; }
+        }
+
+        // Title with spinner/emoji/status glyphs removed: ASCII only, leading punctuation trimmed
+        private static string StableTitle(System.Windows.Automation.AutomationElement e) {
+            string name;
+            try { name = e.Current.Name ?? ""; } catch { return ""; }
+            var sb = new StringBuilder();
+            foreach (char ch in name) if (ch >= 0x20 && ch < 0x7F) sb.Append(ch);
+            string s = sb.ToString();
+            int start = 0;
+            while (start < s.Length && !char.IsLetterOrDigit(s[start])) start++;
+            return s.Substring(start).Trim();
+        }
+    }
+
+    // Fires when the user scrolls over, or types into, the watched terminal window — i.e. goes back to
+    // reading the agent's output. Low-level hooks are installed only while a target is set, so nothing
+    // sits in the system input path while the companion is hidden. Callbacks run on the UI thread.
+    internal sealed class TerminalInputWatcher : IDisposable {
+        private delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
+        [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
+        [StructLayout(LayoutKind.Sequential)] private struct MSLLHOOKSTRUCT { public POINT pt; public uint mouseData, flags, time; public IntPtr extra; }
+        [StructLayout(LayoutKind.Sequential)] private struct KBDLLHOOKSTRUCT { public uint vkCode, scanCode, flags, time; public IntPtr extra; }
+        [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr SetWindowsHookEx(int idHook, HookProc fn, IntPtr hMod, uint threadId);
+        [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hook);
+        [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandle(string name);
+        [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(POINT p);
+        [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+        [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vk);
+
+        private const int WH_KEYBOARD_LL = 13, WH_MOUSE_LL = 14, WM_KEYDOWN = 0x0100, WM_MOUSEWHEEL = 0x020A, WM_MOUSEHWHEEL = 0x020E;
+        private const uint GA_ROOT = 2;
+        private readonly HookProc mouseProc, keyProc;   // held in fields so the GC can't collect them while hooked
+        private IntPtr mouseHook = IntPtr.Zero, keyHook = IntPtr.Zero;
+        private IntPtr target = IntPtr.Zero;
+        public event Action Interacted;
+
+        public TerminalInputWatcher() { mouseProc = OnMouse; keyProc = OnKey; }
+
+        public IntPtr Target {
+            get { return target; }
+            set {
+                if (value == target) return;
+                target = value;
+                if (target != IntPtr.Zero && mouseHook == IntPtr.Zero) {
+                    IntPtr mod = GetModuleHandle(null);
+                    mouseHook = SetWindowsHookEx(WH_MOUSE_LL, mouseProc, mod, 0);
+                    keyHook = SetWindowsHookEx(WH_KEYBOARD_LL, keyProc, mod, 0);
+                } else if (target == IntPtr.Zero) {
+                    Unhook();
+                }
+            }
+        }
+
+        private IntPtr OnMouse(int code, IntPtr wParam, IntPtr lParam) {
+            if (code >= 0 && target != IntPtr.Zero) {
+                int msg = wParam.ToInt32();
+                if (msg == WM_MOUSEWHEEL || msg == WM_MOUSEHWHEEL) {
+                    var info = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
+                    if (GetAncestor(WindowFromPoint(info.pt), GA_ROOT) == target) Fire();
+                }
+            }
+            return CallNextHookEx(mouseHook, code, wParam, lParam);
+        }
+
+        // WM_KEYDOWN only: Alt combinations arrive as WM_SYSKEYDOWN and are ignored by design.
+        private IntPtr OnKey(int code, IntPtr wParam, IntPtr lParam) {
+            if (code >= 0 && target != IntPtr.Zero && wParam.ToInt32() == WM_KEYDOWN && GetForegroundWindow() == target) {
+                var info = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+                if (!IsModifier(info.vkCode) && !ChordHeld()) Fire();
+            }
+            return CallNextHookEx(keyHook, code, wParam, lParam);
+        }
+
+        // Shift/Ctrl/Alt (incl. left/right), Win, CapsLock on their own don't count
+        private static bool IsModifier(uint vk) { return (vk >= 0x10 && vk <= 0x12) || (vk >= 0xA0 && vk <= 0xA5) || vk == 0x5B || vk == 0x5C || vk == 0x14; }
+        // Ctrl/Win chords are terminal or OS shortcuts (Ctrl+Tab switches tabs), not reading the output
+        private static bool ChordHeld() {
+            return (GetAsyncKeyState(0x11) & 0x8000) != 0 || (GetAsyncKeyState(0x5B) & 0x8000) != 0 || (GetAsyncKeyState(0x5C) & 0x8000) != 0;
+        }
+
+        // One-shot until the companion sets a target again
+        private void Fire() {
+            Target = IntPtr.Zero;
+            var h = Interacted;
+            if (h != null) h();
+        }
+
+        private void Unhook() {
+            if (mouseHook != IntPtr.Zero) { UnhookWindowsHookEx(mouseHook); mouseHook = IntPtr.Zero; }
+            if (keyHook != IntPtr.Zero) { UnhookWindowsHookEx(keyHook); keyHook = IntPtr.Zero; }
+        }
+        public void Dispose() { target = IntPtr.Zero; Unhook(); }
     }
 
     // Full-work-area overlay shown while dragging the widget: light dim, three drop zones
@@ -2944,12 +2889,19 @@ namespace WaitPlayNative {
                 if (!WaitPlayStateManager.IsEnabled()) {
                     return;
                 }
+                // Hand the launch to the running companion. One file per session so simultaneous
+                // prompts from different terminals can't overwrite each other; written under a name
+                // the companion doesn't scan, then renamed, so it never reads a half-written line.
                 try {
-                    string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay");
+                    string dir = MainWindow.SignalDir();
                     if (!System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
-                    string ipcFile = System.IO.Path.Combine(dir, ".waitplay-active-session.txt");
+                    string id = MainWindow.SignalFileId(targetSession);
+                    string final = System.IO.Path.Combine(dir, ".waitplay-launch-" + id + ".txt");
+                    string pending = System.IO.Path.Combine(dir, ".pending-launch-" + id + "-" + currentPid);
                     IntPtr passHwnd = parentHwnd != IntPtr.Zero ? parentHwnd : initialForeground;
-                    System.IO.File.WriteAllText(ipcFile, targetSession + "|" + terminal + "|" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + "|" + passHwnd.ToInt64() + "|" + parentPid);
+                    System.IO.File.WriteAllText(pending, targetSession + "|" + terminal + "|" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + "|" + passHwnd.ToInt64());
+                    try { System.IO.File.Delete(final); } catch {}
+                    System.IO.File.Move(pending, final);
                 } catch {}
                 BringExistingWindowToFront();
                 return;
@@ -2957,6 +2909,7 @@ namespace WaitPlayNative {
 
             try {
                 var app = new Application();
+                MainWindow.OwnsSignalFiles = true;
                 app.Run(new MainWindow(targetSession, promptTime, terminal, parentPid, parentHwnd));
             } finally {
                 if (singleInstanceMutex != null) {

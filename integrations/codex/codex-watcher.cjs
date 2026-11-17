@@ -22,12 +22,15 @@ const CODEX_DB_PATH = path.join(os.homedir(), '.codex', 'logs_2.sqlite');
 const BRIDGE_PORT = parseInt(process.env.BRIDGE_PORT || '3150', 10);
 const NATIVE_APP = path.join(__dirname, '..', '..', 'apps', 'native', 'WaitPlay.exe');
 const DISMISS_FILE = path.join(os.tmpdir(), 'waitplay', '.waitplay-dismissed.json');
-const CLOSE_FILE = path.join(os.tmpdir(), 'waitplay', '.waitplay-close.json');
+// One close file per session (matches the companion's .waitplay-close-<id>.json scan)
+const CLOSE_FILE = path.join(os.tmpdir(), 'waitplay', '.waitplay-close-codex-session.json');
 
 function writeCloseSignal() {
   try {
     fs.mkdirSync(path.dirname(CLOSE_FILE), { recursive: true });
-    fs.writeFileSync(CLOSE_FILE, JSON.stringify({ sessionId: 'codex-session', ts: Date.now() }));
+    const tmp = `${CLOSE_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ sessionId: 'codex-session', ts: Date.now() }));
+    fs.renameSync(tmp, CLOSE_FILE);
   } catch {}
 }
 

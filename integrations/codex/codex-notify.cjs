@@ -85,11 +85,13 @@ function emitCompleted() {
 
 emitCompleted();
 
-// Widget-safe close: signal the companion to close (not taskkill, which would
-// also kill the floating desktop widget). The native app polls this file.
+// Widget-safe close: signal the companion (not taskkill, which would also kill the floating
+// desktop widget). Per-session file, written then renamed so it is never read half-written.
 try {
-  const CLOSE_FILE = path.join(os.tmpdir(), 'waitplay', '.waitplay-close.json');
+  const CLOSE_FILE = path.join(os.tmpdir(), 'waitplay', '.waitplay-close-codex-session.json');
   fs.mkdirSync(path.dirname(CLOSE_FILE), { recursive: true });
-  fs.writeFileSync(CLOSE_FILE, JSON.stringify({ sessionId: 'codex-session', ts: Date.now() }));
+  const tmp = `${CLOSE_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ sessionId: 'codex-session', ts: Date.now() }));
+  fs.renameSync(tmp, CLOSE_FILE);
 } catch {}
 setTimeout(() => process.exit(0), 500);
