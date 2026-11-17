@@ -87,6 +87,19 @@ npm test
 
 ---
 
+### Phone completion notifications (optional)
+
+The bridge can send an SMS through Twilio whenever an agent transitions to `COMPLETED`. Set these environment variables before starting the bridge:
+
+```bash
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+TWILIO_FROM_NUMBER=+15550001111
+WAITPLAY_NOTIFICATION_PHONE=+15550002222
+```
+
+If any variable is missing, phone notifications stay disabled and WaitPlay continues normally. Notification failures are logged without blocking agent events.
+
 ## 🕹️ Running WaitPlay
 
 ### Mode A: Wispr Flow Floating Widget (Desktop Overlay)

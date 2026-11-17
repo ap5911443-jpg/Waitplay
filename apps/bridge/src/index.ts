@@ -4,7 +4,7 @@ import { createExpressApp } from "./server/expressApp.js";
 import { SessionManager } from "./events/sessionManager.js";
 import { BridgeWebSocketServer } from "./websocket/wsServer.js";
 import { initializeBridgeToken, getBridgeToken } from "./security/tokenAuth.js";
-
+import { isPhoneNotificationConfigured, notifyTaskCompleted } from "./notifications/phoneNotifier.js";
 const DEFAULT_PORT = 3150;
 const port = parseInt(process.env.BRIDGE_PORT || process.env.PORT || `${DEFAULT_PORT}`, 10);
 const startTime = Date.now();
@@ -12,8 +12,19 @@ const startTime = Date.now();
 // Initialize security token
 const token = initializeBridgeToken();
 console.log(`[WaitPlay Bridge] Security token initialized: ${token.slice(0, 6)}...`);
+console.log(
+  `[WaitPlay Bridge] Phone completion notifications: ${isPhoneNotificationConfigured() ? "enabled" : "disabled"}`
+);
+const sessionManager = new SessionManager({
+  onTaskCompleted: async (session) => {
+    await notifyTaskCompleted({
+      agent: session.agent,
+      sessionId: session.sessionId,
+      durationMs: session.lastTaskDurationMs,
+    });
+  },
+});
 
-const sessionManager = new SessionManager();
 let wsServer: BridgeWebSocketServer | null = null;
 
 const getHealth = (): BridgeHealth => {

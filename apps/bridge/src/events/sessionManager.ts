@@ -7,14 +7,22 @@ import {
 } from "@waitplay/shared";
 
 export type SessionChangeCallback = (session: AgentSessionInfo) => void;
+export type TaskCompletedCallback = (session: AgentSessionInfo) => void | Promise<void>;
+
+export interface SessionManagerOptions {
+  defaultStartDelayMs?: number;
+  onTaskCompleted?: TaskCompletedCallback;
+}
 
 export class SessionManager {
   private sessions: Map<string, AgentStateMachine> = new Map();
   private defaultStartDelayMs: number;
   private changeCallbacks: Set<SessionChangeCallback> = new Set();
+  private onTaskCompleted?: TaskCompletedCallback;
 
-  constructor(options?: { defaultStartDelayMs?: number }) {
+  constructor(options?: SessionManagerOptions) {
     this.defaultStartDelayMs = options?.defaultStartDelayMs ?? 4000;
+    this.onTaskCompleted = options?.onTaskCompleted;
   }
 
   public onSessionChange(callback: SessionChangeCallback): () => void {
@@ -32,6 +40,18 @@ export class SessionManager {
     }
   }
 
+  private notifyTaskCompleted(session: AgentSessionInfo): void {
+    if (!this.onTaskCompleted) return;
+    try {
+      void Promise.resolve(this.onTaskCompleted(session)).catch((err) => {
+        console.error("Error in task completion callback:", err);
+      });
+    } catch (err) {
+      console.error("Error in task completion callback:", err);
+    }
+  }
+
+
   public getOrCreateSession(sessionId: string, agent?: AgentType): AgentStateMachine {
     let machine = this.sessions.get(sessionId);
     if (!machine) {
@@ -42,8 +62,11 @@ export class SessionManager {
       });
 
       machine.subscribe({
-        onStatusChange: (_newStatus, _prevStatus, session) => {
+        onStatusChange: (newStatus, _prevStatus, session) => {
           this.notify(session);
+          if (newStatus === "COMPLETED") {
+            this.notifyTaskCompleted(session);
+          }
         },
       });
 
