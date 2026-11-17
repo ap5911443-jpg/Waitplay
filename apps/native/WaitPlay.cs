@@ -119,13 +119,19 @@ namespace WaitPlayNative {
         private bool wasMinimizedByParent = false;
         private IntPtr myHwnd = IntPtr.Zero;
         private int missingParentTicks = 0;
-        private int parentNotForegroundTicks = 0;
+        // When the user left the owning tab/terminal (0 = not away). Time-based: poll ticks can
+        // run far slower than their 100ms interval because each one makes a blocking bridge call.
+        private DateTime awaySince = DateTime.MinValue;
         private IntPtr launchForegroundWindow = IntPtr.Zero;
         private bool autoCloseArmed = false;
-        // Per-tab auto-close (Windows Terminal: every tab shares one HWND)
+        // Per-tab visibility (Windows Terminal: every tab shares one HWND)
         private TerminalTabTracker tabTracker;
         private System.Threading.Timer tabTimer;
         private int tabCaptureGen = 0, otherTabTicks = 0, tabPollBusy = 0;
+        private volatile bool onOtherTab = false;     // set by the tab poll, read on the UI thread
+        private bool hiddenAway = false;              // hidden because the user left the owning tab
+        private bool launchedFromTerminal = false;    // widget-launched windows have no tab to return to
+        private long lastIpcRequest = 0;
         private Microsoft.Web.WebView2.Wpf.WebView2 webView;
         private DispatcherTimer webReadyTimer;
         private const int WEB_PORT = 5200;
@@ -143,6 +149,7 @@ namespace WaitPlayNative {
             this.targetSessionId = sessionId;
             this.currentPromptTimestamp = promptTime;
             this.terminalLabel = terminal;
+            this.launchedFromTerminal = terminal != "Desktop";
             this.parentProcessId = parentPid;
             this.monitoredWindowHandle = parentHwnd;
 
@@ -190,8 +197,8 @@ namespace WaitPlayNative {
             armTimer.Tick += (s, e) => { armTimer.Stop(); autoCloseArmed = true; };
             armTimer.Start();
 
-            // Remember which terminal tab launched us; close once the user moves to another tab.
-            if (terminalLabel != "Desktop") CaptureLaunchTab(monitoredWindowHandle);
+            // Remember which terminal tab launched us: we hide while the user is elsewhere and come back with them.
+            if (launchedFromTerminal) CaptureLaunchTab(monitoredWindowHandle);
             tabTimer = new System.Threading.Timer(_ => PollTerminalTab(), null, 250, 250);
             Closed += (s, e) => { try { tabTimer.Dispose(); } catch {} };
         }
@@ -201,6 +208,7 @@ namespace WaitPlayNative {
         private void CaptureLaunchTab(IntPtr hwnd) {
             int gen = Interlocked.Increment(ref tabCaptureGen);
             tabTracker = null;
+            onOtherTab = false;
             if (hwnd == IntPtr.Zero) return;
             ThreadPool.QueueUserWorkItem(_ => {
                 var t = TerminalTabTracker.Capture(hwnd);
@@ -208,18 +216,40 @@ namespace WaitPlayNative {
             });
         }
 
-        // Timer thread. Two consecutive hits (~500ms) so a quick tab peek-and-back doesn't close us.
+        // Timer thread. Two consecutive hits (~500ms) so a quick tab peek-and-back doesn't hide us.
         private void PollTerminalTab() {
             if (Interlocked.Exchange(ref tabPollBusy, 1) == 1) return;   // previous UIA call still running
             try {
                 var t = tabTracker;
-                if (!autoCloseArmed || t == null) { otherTabTicks = 0; return; }
-                if (!t.OtherTabSelected()) { otherTabTicks = 0; return; }
-                if (++otherTabTicks >= 2) {
-                    tabTracker = null;
-                    Dispatcher.BeginInvoke(new Action(() => { try { Close(); } catch {} }));
-                }
+                if (t == null || !t.OtherTabSelected()) { otherTabTicks = 0; onOtherTab = false; return; }
+                if (++otherTabTicks >= 2) onOtherTab = true;
             } finally { Volatile.Write(ref tabPollBusy, 0); }
+        }
+
+        private void HideWhileAway() {
+            hiddenAway = true;
+            SetMuted(true);    // a playing reel shouldn't keep talking from an invisible window
+            Hide();
+        }
+        private void ShowAfterAway() {
+            hiddenAway = false;
+            awaySince = DateTime.MinValue;
+            ShowActivated = false;   // reappear beside the terminal without stealing its keyboard focus
+            Show();
+            Topmost = true;
+            SetMuted(false);
+        }
+        private void SetMuted(bool muted) {
+            try { if (webView != null && webView.CoreWebView2 != null) webView.CoreWebView2.IsMuted = muted; } catch {}
+        }
+
+        // Our own process or a sibling WaitPlay (the widget) holding focus doesn't count as leaving.
+        private static bool IsWaitPlayWindow(IntPtr hwnd) {
+            uint pid;
+            ParentWindowTracker.GetWindowThreadProcessId(hwnd, out pid);
+            var self = System.Diagnostics.Process.GetCurrentProcess();
+            if (pid == (uint)self.Id) return true;
+            try { return System.Diagnostics.Process.GetProcessById((int)pid).ProcessName == self.ProcessName; } catch { return false; }
         }
 
         public static string DetectActiveAgent() {
@@ -290,18 +320,16 @@ namespace WaitPlayNative {
         private void InitializeWindow() {
             Title = "WaitPlay";
 
-            // Responsive sizing: use 35% of screen width, 50% of screen height
-            double screenW = SystemParameters.WorkArea.Width;
-            double screenH = SystemParameters.WorkArea.Height;
-            Width = Math.Max(420, Math.Min(700, screenW * 0.35));
-            Height = Math.Max(400, Math.Min(800, screenH * 0.55));
+            // Centred, large enough that the site's desktop layout fits without scrolling sideways
+            Rect wa = SystemParameters.WorkArea;
+            Width = Math.Max(480, Math.Min(1400, wa.Width * 0.70));
+            Height = Math.Max(420, Math.Min(950, wa.Height * 0.82));
             MinWidth = 360;
             MinHeight = 320;
 
-            // Position in bottom-right corner with padding
             WindowStartupLocation = WindowStartupLocation.Manual;
-            Left = screenW - Width - 16;
-            Top = screenH - Height - 16;
+            Left = wa.Left + (wa.Width - Width) / 2;
+            Top = wa.Top + (wa.Height - Height) / 2;
 
             Background = new SolidColorBrush(Color.FromRgb(0, 0, 0));
             Foreground = new SolidColorBrush(InkColor);
@@ -1010,6 +1038,9 @@ namespace WaitPlayNative {
                         long reqTime = 0;
                         if (parts.Length >= 3) long.TryParse(parts[2], out reqTime);
                         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                        // The file is re-read every tick for 10s; act on each request only once
+                        bool freshRequest = (now - reqTime) < 10000 && reqTime != lastIpcRequest;
+                        if (freshRequest) lastIpcRequest = reqTime;
                         if ((now - reqTime) < 10000 && !string.IsNullOrEmpty(reqSession)) {
                             bool retargeted = false;
                             if (reqSession != targetSessionId) {
@@ -1041,6 +1072,11 @@ namespace WaitPlayNative {
                             // New prompt came from the tab the user is in now: that tab owns us
                             if (retargeted) CaptureLaunchTab(monitoredWindowHandle);
                         }
+                        // A new launch (prompt in the current tab, or a widget button) wants us visible here
+                        if (freshRequest && hiddenAway) {
+                            CaptureLaunchTab(monitoredWindowHandle);
+                            ShowAfterAway();
+                        }
                     }
                 }
             } catch {}
@@ -1056,7 +1092,7 @@ namespace WaitPlayNative {
             }
 
             // Sync with parent window state (minimize / restore / close)
-            if (monitoredWindowHandle != IntPtr.Zero) {
+            if (monitoredWindowHandle != IntPtr.Zero && !hiddenAway) {
                 if (!ParentWindowTracker.IsWindow(monitoredWindowHandle)) {
                     missingParentTicks++;
                     if (missingParentTicks >= 5) {
@@ -1092,40 +1128,30 @@ namespace WaitPlayNative {
                 }
             }
 
-            // ── Terminal-tab-switch auto-close ────────────────────────
-            // Works for ALL companion windows (terminal-launched AND
-            // desktop/widget-launched). After the 2s arm delay, if
-            // some other process's window holds foreground for 5+ ticks
-            // (500ms), auto-close this companion so the user can see
-            // whatever they switched to without obstruction.
+            // ── Follow the owning terminal tab ────────────────────────
+            // Terminal-launched: leaving the tab (another WT tab, or another app) for 500ms hides us;
+            // coming back to the owning tab shows us again while the agent is still working. Once the
+            // turn has finished, leaving closes us for good. Widget-launched windows have no owning
+            // tab, so leaving simply closes them.
             if (autoCloseArmed) {
                 IntPtr fg = ParentWindowTracker.GetForegroundWindow();
                 if (fg == IntPtr.Zero) {
                     // No foreground window (screen locked, etc.) — ignore
-                    parentNotForegroundTicks = 0;
+                    awaySince = DateTime.MinValue;
                 } else {
-                    // Is it us (the companion window)?
-                    bool isSelf = (fg == myHwnd);
-                    if (!isSelf) {
-                        uint fgPid;
-                        ParentWindowTracker.GetWindowThreadProcessId(fg, out fgPid);
-                        uint selfPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
-                        isSelf = (fgPid == selfPid);
-                    }
+                    bool isSelf = fg == myHwnd || IsWaitPlayWindow(fg);
+                    bool isParent = monitoredWindowHandle != IntPtr.Zero && fg == monitoredWindowHandle;
+                    bool away = !(isSelf || isParent) || (isParent && onOtherTab);
 
-                    // Is it the parent terminal we're attached to?
-                    bool isParent = (monitoredWindowHandle != IntPtr.Zero && fg == monitoredWindowHandle);
-
-                    if (isSelf || isParent) {
-                        // Our own window or parent terminal is in front — stay open
-                        parentNotForegroundTicks = 0;
+                    if (hiddenAway) {
+                        if (hasFinished) { try { Close(); } catch {} return; }
+                        if (isParent && !onOtherTab) ShowAfterAway();
                     } else {
-                        // Something else has focus
-                        parentNotForegroundTicks++;
-                        if (parentNotForegroundTicks >= 5) {
-                            // 500ms of another window in focus — close
-                            try { Close(); } catch {}
-                            return;
+                        if (!away) awaySince = DateTime.MinValue;
+                        else if (awaySince == DateTime.MinValue) awaySince = DateTime.UtcNow;
+                        if (away && (DateTime.UtcNow - awaySince).TotalMilliseconds >= 500) {
+                            if (!launchedFromTerminal || hasFinished) { try { Close(); } catch {} return; }
+                            HideWhileAway();
                         }
                     }
                 }
