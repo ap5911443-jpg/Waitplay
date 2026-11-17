@@ -2013,6 +2013,11 @@ namespace WaitPlayNative {
         private DispatcherTimer collapseTimer;
         private DispatcherTimer statusTimer;
 
+        // Drag-to-dock
+        private bool capsulePressed, dragging;
+        private Point pressPoint;
+        private DockDragOverlay dragOverlay;
+
         // WhisperFlow dark palette — sampled from the reference widget
         static readonly Color PillBlack  = Color.FromRgb(10, 10, 11);       // Pill bg (near-black)
         static readonly Color PillBrd    = Color.FromRgb(46, 46, 48);       // Pill hairline
@@ -2145,10 +2150,13 @@ namespace WaitPlayNative {
                 VerticalAlignment = VerticalAlignment.Center
             };
             mainCapsule.Child = mainIcon;
-            mainCapsule.MouseEnter += (s, e) => { mainCapsule.Background = new SolidColorBrush(DarkHover); CancelCollapse(); ShowPill(); };
-            mainCapsule.MouseLeave += (s, e) => { mainCapsule.Background = new SolidColorBrush(Dark); ScheduleCollapse(); };
-            mainCapsule.MouseLeftButtonDown += (s, e) => { mainCapsule.Background = new SolidColorBrush(DarkPress); };
-            mainCapsule.MouseLeftButtonUp += (s, e) => { mainCapsule.Background = new SolidColorBrush(DarkHover); ToggleEnabled(); e.Handled = true; };
+            mainCapsule.MouseEnter += (s, e) => { if (capsulePressed) return; mainCapsule.Background = new SolidColorBrush(DarkHover); CancelCollapse(); ShowPill(); };
+            mainCapsule.MouseLeave += (s, e) => { if (capsulePressed) return; mainCapsule.Background = new SolidColorBrush(Dark); ScheduleCollapse(); };
+            // Click toggles; press + drag past a small threshold re-docks (see Capsule_* below)
+            mainCapsule.MouseLeftButtonDown += Capsule_Down;
+            mainCapsule.MouseMove += Capsule_Move;
+            mainCapsule.MouseLeftButtonUp += Capsule_Up;
+            mainCapsule.LostMouseCapture += Capsule_LostCapture;
 
             // Layout depends on dock side — will be set in ApplyDock
             Grid.SetColumn(textPill, 0);
@@ -2354,6 +2362,62 @@ namespace WaitPlayNative {
         private void OnDisplayChanged(object sender, EventArgs e) { Dispatcher.BeginInvoke(new Action(ApplyDock)); }
 
         // ════════════════════════════════════════════════════════════
+        //  Drag to re-dock (WhisperFlow): grab the capsule, drop on a zone
+        // ════════════════════════════════════════════════════════════
+        private void Capsule_Down(object s, MouseButtonEventArgs e) {
+            capsulePressed = true; dragging = false;
+            pressPoint = e.GetPosition(this);
+            mainCapsule.Background = new SolidColorBrush(DarkPress);
+            mainCapsule.CaptureMouse();
+            e.Handled = true;
+        }
+        private void Capsule_Move(object s, MouseEventArgs e) {
+            if (!capsulePressed) return;
+            Point p = e.GetPosition(this);
+            if (!dragging) {
+                if (Math.Abs(p.X - pressPoint.X) < 6 && Math.Abs(p.Y - pressPoint.Y) < 6) return;
+                BeginDrag();
+            }
+            dragOverlay.MoveBall(PointToScreen(p));
+        }
+        private void Capsule_Up(object s, MouseButtonEventArgs e) {
+            if (!capsulePressed) return;
+            capsulePressed = false;
+            Point screen = PointToScreen(e.GetPosition(this));
+            mainCapsule.ReleaseMouseCapture();
+            if (dragging) EndDrag(screen);
+            else { mainCapsule.Background = new SolidColorBrush(DarkHover); ToggleEnabled(); }
+            e.Handled = true;
+        }
+        private void Capsule_LostCapture(object s, MouseEventArgs e) {
+            // Capture stolen mid-drag (Alt-Tab, Win key): still land on the nearest zone
+            if (!capsulePressed) return;
+            capsulePressed = false;
+            if (dragging) EndDrag(PointToScreen(Mouse.GetPosition(this)));
+            else mainCapsule.Background = new SolidColorBrush(Dark);
+        }
+        private void BeginDrag() {
+            dragging = true;
+            CancelCollapse();
+            CloseAppPicker();
+            rootCanvas.Opacity = 0;   // widget stays alive (keeps capture); the overlay's ball stands in for it
+            dragOverlay = new DockDragOverlay(mainIcon.Data, isEnabled ? Txt : Slate, PillBlack, Brd);
+            dragOverlay.Show();
+        }
+        private void EndDrag(Point screen) {
+            dragging = false;
+            var ov = dragOverlay; dragOverlay = null;
+            if (ov == null) return;
+            dock = ov.Nearest(screen);
+            ov.SnapTo(dock, () => {
+                ov.Close();
+                SaveDock();
+                ApplyDock();
+                rootCanvas.Opacity = 1;
+            });
+        }
+
+        // ════════════════════════════════════════════════════════════
         //  3 fixed positions — pill direction flips per dock side
         // ════════════════════════════════════════════════════════════
         private void ApplyDock() {
@@ -2532,6 +2596,108 @@ namespace WaitPlayNative {
         private IntPtr HwndHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) {
             if (msg == 0x0312 && wParam.ToInt32() == HOTKEY_ID) { ToggleEnabled(); handled = true; }
             return IntPtr.Zero;
+        }
+    }
+
+    // Full-work-area overlay shown while dragging the widget: light dim, three drop zones
+    // (left, right, bottom) and a small dark ball under the cursor. Purely visual: the widget
+    // keeps mouse capture and feeds cursor positions in.
+    internal class DockDragOverlay : Window {
+        private readonly Canvas canvas;
+        private readonly Ellipse[] zones = new Ellipse[3];   // indexed by (int)DockSide
+        private readonly Point[] centers = new Point[3];
+        private readonly Border ball;
+        private DockSide? active;
+        const double BallSize = 38;
+
+        public DockDragOverlay(Geometry icon, Color iconColor, Color ballBg, Color ballBrd) {
+            Rect wa = SystemParameters.WorkArea;
+            WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
+            Topmost = true; ShowInTaskbar = false; ShowActivated = false; ResizeMode = ResizeMode.NoResize;
+            IsHitTestVisible = false;
+            Left = wa.Left; Top = wa.Top; Width = wa.Width; Height = wa.Height;
+
+            canvas = new Canvas { Width = wa.Width, Height = wa.Height, ClipToBounds = true };
+            canvas.Children.Add(new Rectangle { Width = wa.Width, Height = wa.Height, Fill = new SolidColorBrush(Color.FromArgb(70, 0, 0, 0)) });
+
+            // Zone centres sit where each dock's capsule lands; side zones are half-tucked past the edge
+            centers[(int)DockSide.Right]  = new Point(wa.Width - 22, wa.Height / 2);
+            centers[(int)DockSide.Left]   = new Point(22, wa.Height / 2);
+            centers[(int)DockSide.Bottom] = new Point(wa.Width / 2, wa.Height - 18);
+            for (int i = 0; i < 3; i++) {
+                bool bottom = i == (int)DockSide.Bottom;
+                double w = bottom ? 128 : 80, h = bottom ? 92 : 116;
+                var z = new Ellipse {
+                    Width = w, Height = h,
+                    Fill = new SolidColorBrush(Color.FromRgb(225, 225, 225)),
+                    Opacity = 0.55,
+                    RenderTransformOrigin = new Point(0.5, 0.5),
+                    RenderTransform = new ScaleTransform(1, 1)
+                };
+                Canvas.SetLeft(z, centers[i].X - w / 2); Canvas.SetTop(z, centers[i].Y - h / 2);
+                zones[i] = z; canvas.Children.Add(z);
+            }
+
+            ball = new Border {
+                Width = BallSize, Height = BallSize, CornerRadius = new CornerRadius(BallSize / 2),
+                Background = new SolidColorBrush(ballBg), BorderBrush = new SolidColorBrush(ballBrd), BorderThickness = new Thickness(1),
+                Child = new System.Windows.Shapes.Path {
+                    Data = icon, Stroke = new SolidColorBrush(iconColor), StrokeThickness = 2, Width = 15, Height = 15,
+                    Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
+                },
+                Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 12, ShadowDepth = 2, Opacity = 0.35, Direction = 270 }
+            };
+            Canvas.SetLeft(ball, -100); Canvas.SetTop(ball, -100);
+            canvas.Children.Add(ball);
+            Content = canvas;
+
+            Opacity = 0;
+            Loaded += (s, e) => BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(120)));
+        }
+
+        public DockSide Nearest(Point screen) {
+            Point p = PointFromScreen(screen);
+            int best = 0; double bestD = double.MaxValue;
+            for (int i = 0; i < 3; i++) {
+                double d = (p - centers[i]).LengthSquared;
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            return (DockSide)best;
+        }
+
+        public void MoveBall(Point screen) {
+            Point p = PointFromScreen(screen);
+            Canvas.SetLeft(ball, p.X - BallSize / 2); Canvas.SetTop(ball, p.Y - BallSize / 2);
+            Highlight(Nearest(screen));
+        }
+
+        private void Highlight(DockSide side) {
+            if (active == side) return;
+            active = side;
+            var dur = TimeSpan.FromMilliseconds(120);
+            for (int i = 0; i < 3; i++) {
+                bool on = i == (int)side;
+                var st = (ScaleTransform)zones[i].RenderTransform;
+                zones[i].BeginAnimation(OpacityProperty, new DoubleAnimation(on ? 0.9 : 0.55, dur));
+                st.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(on ? 1.08 : 1, dur));
+                st.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(on ? 1.08 : 1, dur));
+            }
+        }
+
+        // Glide the ball into the chosen zone, fade out, then hand control back
+        public void SnapTo(DockSide side, Action done) {
+            Highlight(side);
+            Point c = centers[(int)side];
+            var dur = TimeSpan.FromMilliseconds(160);
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            ball.BeginAnimation(Canvas.LeftProperty, new DoubleAnimation(c.X - BallSize / 2, dur) { EasingFunction = ease });
+            var top = new DoubleAnimation(c.Y - BallSize / 2, dur) { EasingFunction = ease };
+            top.Completed += (s, e) => {
+                var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(120));
+                fade.Completed += (s2, e2) => done();
+                BeginAnimation(OpacityProperty, fade);
+            };
+            ball.BeginAnimation(Canvas.TopProperty, top);
         }
     }
 
