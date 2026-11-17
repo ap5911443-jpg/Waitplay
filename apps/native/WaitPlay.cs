@@ -2116,7 +2116,7 @@ namespace WaitPlayNative {
             pillLabel = new TextBlock {
                 FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
                 FontSize = 14,
-                Foreground = new SolidColorBrush(PillTxt),
+                Foreground = new SolidColorBrush(Txt),
                 VerticalAlignment = VerticalAlignment.Center
             };
             pillLabel.Inlines.Add(pillAction);
@@ -2236,7 +2236,7 @@ namespace WaitPlayNative {
             // D-pad cross
             var dpad = new System.Windows.Shapes.Path {
                 Data = Geometry.Parse("M4.5,8.5 L4.5,10.5 M3.5,9.5 L5.5,9.5"),
-                Stroke = new SolidColorBrush(Bg),
+                Stroke = new SolidColorBrush(Dark),
                 StrokeThickness = 1.2,
                 Stretch = Stretch.None,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -2244,8 +2244,8 @@ namespace WaitPlayNative {
                 Margin = new Thickness(0,0,0,0)
             };
             // Action buttons (two dots)
-            var b1 = new Ellipse { Width = 2, Height = 2, Fill = new SolidColorBrush(Bg), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4,-2,0,0) };
-            var b2 = new Ellipse { Width = 2, Height = 2, Fill = new SolidColorBrush(Bg), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8,0,0,0) };
+            var b1 = new Ellipse { Width = 2, Height = 2, Fill = new SolidColorBrush(Dark), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4,-2,0,0) };
+            var b2 = new Ellipse { Width = 2, Height = 2, Fill = new SolidColorBrush(Dark), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8,0,0,0) };
             g.Children.Add(body);
             g.Children.Add(b1); g.Children.Add(b2);
             return g;
@@ -2308,7 +2308,7 @@ namespace WaitPlayNative {
                 VerticalAlignment = VerticalAlignment.Center
             });
             b.Child = sp;
-            b.MouseEnter += (s,e) => { b.Background = new SolidColorBrush(BgHover); };
+            b.MouseEnter += (s,e) => { b.Background = new SolidColorBrush(DarkHover); };
             b.MouseLeave += (s,e) => { b.Background = Brushes.Transparent; };
             b.MouseLeftButtonUp += (s,e) => { CloseAppPicker(); onClick(); e.Handled = true; };
             return b;
