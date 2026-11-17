@@ -1913,18 +1913,6 @@ namespace WaitPlayNative {
     //  Hover power button: text pill slides out to the left
     // ─────────────────────────────────────────────────────────────────
 
-    // ─────────────────────────────────────────────────────────────────
-    //  WaitPlay Floating Widget — WhisperFlow-exact replica
-    //
-    //  3 states:
-    //    1. IDLE   — tiny edge handle (8×36 capsule outline)
-    //    2. HOVER  — main capsule (28×44) + text pill + secondary btn
-    //    3. EXPAND — small app-picker popup (Games / Instagram / X)
-    //
-    //  3 fixed positions only: Right edge, Left edge, Bottom edge
-    //  No free dragging. Right-click to switch position.
-    // ─────────────────────────────────────────────────────────────────
-
     public enum DockSide { Right, Left, Bottom }
 
     public class FloatingFlowWidget : Window {
@@ -1941,7 +1929,6 @@ namespace WaitPlayNative {
 
         // State
         private bool isEnabled = true;
-        private bool isHovered = false;
         private bool isMenuOpen = false;
         private DockSide dock = DockSide.Right;
         private IntPtr myHwnd = IntPtr.Zero;
@@ -1949,12 +1936,8 @@ namespace WaitPlayNative {
 
         // UI
         private Canvas rootCanvas;
-
-        // Idle handle
         private Border edgeHandle;
-
-        // Hover group
-        private StackPanel hoverGroup;
+        private Grid hoverGroup;
         private Border mainCapsule;
         private System.Windows.Shapes.Path mainIcon;
         private Border textPill;
@@ -1962,24 +1945,27 @@ namespace WaitPlayNative {
         private Ellipse pillDot;
         private Border secButton;
         private Ellipse secDot;
-
-        // App picker
         private Border appPicker;
-
-        // Timers
         private DispatcherTimer collapseTimer;
         private DispatcherTimer statusTimer;
 
-        // Colors
-        static readonly Color Bg       = Color.FromArgb(220, 24, 24, 32);
-        static readonly Color BgHover  = Color.FromArgb(240, 36, 36, 46);
-        static readonly Color Brd      = Color.FromArgb(50, 180, 180, 190);
-        static readonly Color Txt      = Color.FromRgb(230, 230, 235);
-        static readonly Color TxtDim   = Color.FromRgb(120, 120, 130);
-        static readonly Color Cyan     = Color.FromRgb(0, 210, 230);
-        static readonly Color Green    = Color.FromRgb(74, 222, 128);
-        static readonly Color Amber    = Color.FromRgb(251, 191, 36);
-        static readonly Color Slate    = Color.FromRgb(90, 100, 116);
+        // Design.md palette
+        static readonly Color Forest      = Color.FromRgb(3, 79, 70);       // #034F46
+        static readonly Color ForestSoft  = Color.FromRgb(99, 144, 133);    // #639085
+        static readonly Color Lavender    = Color.FromRgb(240, 215, 255);   // #F0D7FF
+        static readonly Color Orange      = Color.FromRgb(255, 169, 70);    // #FFA946
+        static readonly Color Ink         = Color.FromRgb(26, 26, 26);      // #1A1A1A
+        static readonly Color InkSoft     = Color.FromRgb(102, 102, 102);   // #666666
+        static readonly Color CanvasClr      = Color.FromRgb(255, 255, 235);   // #FFFFEB
+        static readonly Color CardWhite   = Color.FromRgb(255, 255, 255);   // #FFFFFF
+        // Widget-specific dark tokens
+        static readonly Color Bg          = Color.FromArgb(235, 20, 24, 28);
+        static readonly Color BgHover     = Color.FromArgb(245, 30, 34, 40);
+        static readonly Color Brd         = Color.FromArgb(45, 160, 170, 160);
+        static readonly Color Txt         = Color.FromRgb(240, 240, 235);
+        static readonly Color GreenDot    = Color.FromRgb(74, 222, 128);
+        static readonly Color AmberDot    = Color.FromRgb(251, 191, 36);
+        static readonly Color Slate       = Color.FromRgb(100, 110, 120);
 
         public FloatingFlowWidget() {
             Title = "WaitPlay";
@@ -1989,210 +1975,264 @@ namespace WaitPlayNative {
             Topmost = true;
             ShowInTaskbar = false;
             ResizeMode = ResizeMode.NoResize;
-            // Fixed size canvas — large enough for all dock orientations
-            Width = 220;
-            Height = 160;
+            Width = 260; Height = 180;
 
             SourceInitialized += (s, e) => {
                 try {
                     myHwnd = new WindowInteropHelper(this).Handle;
-                    RegisterHotKey(myHwnd, HOTKEY_ID, 0x0001, 0x57); // Alt+W
+                    RegisterHotKey(myHwnd, HOTKEY_ID, 0x0001, 0x57);
                     var src = HwndSource.FromHwnd(myHwnd);
                     if (src != null) src.AddHook(HwndHook);
                 } catch {}
             };
-            Closed += (s, e) => {
-                try { if (myHwnd != IntPtr.Zero) UnregisterHotKey(myHwnd, HOTKEY_ID); } catch {}
-            };
+            Closed += (s, e) => { try { if (myHwnd != IntPtr.Zero) UnregisterHotKey(myHwnd, HOTKEY_ID); } catch {} };
 
             BuildUI();
             LoadDock();
             ApplyDock();
             SetIdle();
-
             isEnabled = WaitPlayStateManager.IsEnabled();
             UpdateVisuals();
-
-            // Status poll — lightweight, every 3s
             statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
             statusTimer.Tick += (s, e) => PollStatus();
             statusTimer.Start();
         }
 
         // ════════════════════════════════════════════════════════════
-        //  Build UI — all elements created once, shown/hidden by state
+        //  UI — builds once, state changes show/hide elements
         // ════════════════════════════════════════════════════════════
         private void BuildUI() {
-            rootCanvas = new Canvas { Width = 220, Height = 160 };
+            rootCanvas = new Canvas { Width = 260, Height = 180 };
 
-            // ── 1. Edge handle (idle state) ───────────────────────
+            // ── Edge handle (idle) ────────────────────────────────
             edgeHandle = new Border {
-                Width = 8, Height = 36,
-                CornerRadius = new CornerRadius(4),
-                Background = new SolidColorBrush(Color.FromArgb(100, 140, 140, 150)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(60, 200, 200, 210)),
+                Width = 10, Height = 40,
+                CornerRadius = new CornerRadius(5),
+                Background = new SolidColorBrush(Color.FromArgb(110, 99, 144, 133)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(50, 3, 79, 70)),
                 BorderThickness = new Thickness(1),
-                Cursor = Cursors.Hand,
-                Visibility = Visibility.Visible
+                Cursor = Cursors.Hand
             };
             edgeHandle.MouseEnter += (s, e) => Expand();
-            Canvas.SetRight(edgeHandle, 0);
-            Canvas.SetTop(edgeHandle, 62);
             rootCanvas.Children.Add(edgeHandle);
 
-            // ── 2. Hover group (main capsule + pill + secondary) ──
-            hoverGroup = new StackPanel {
-                Orientation = Orientation.Vertical,
-                Visibility = Visibility.Collapsed
-            };
-            Canvas.SetRight(hoverGroup, 0);
-            Canvas.SetTop(hoverGroup, 40);
+            // ── Hover group (Grid so pill + capsule overlap) ──────
+            hoverGroup = new Grid { Visibility = Visibility.Collapsed };
+            rootCanvas.Children.Add(hoverGroup);
 
-            // Row: text pill + main capsule
-            var row1 = new StackPanel {
-                Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Right
-            };
+            // We'll add the rows via a vertical StackPanel inside the Grid
+            var vstack = new StackPanel { Orientation = Orientation.Vertical };
 
-            // Text pill
+            // Row 1: pill + capsule
+            var row1 = new Grid();
+            row1.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // pill
+            row1.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // capsule
+
+            // Text pill (overlaps behind capsule via negative margin)
             textPill = new Border {
                 Background = new SolidColorBrush(Bg),
                 BorderBrush = new SolidColorBrush(Brd),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(14),
-                Padding = new Thickness(9, 4, 4, 4),
-                Margin = new Thickness(0, 0, -12, 0),
+                CornerRadius = new CornerRadius(16),
+                Padding = new Thickness(10, 5, 10, 5),
                 VerticalAlignment = VerticalAlignment.Center,
                 Opacity = 0
             };
             var pillRow = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            pillDot = new Ellipse { Width = 6, Height = 6, Fill = new SolidColorBrush(Green), Margin = new Thickness(0,0,6,0), VerticalAlignment = VerticalAlignment.Center };
+            pillDot = new Ellipse { Width = 7, Height = 7, Fill = new SolidColorBrush(GreenDot), Margin = new Thickness(0,0,7,0), VerticalAlignment = VerticalAlignment.Center };
             pillLabel = new TextBlock {
                 Text = "WaitPlay",
                 FontFamily = new FontFamily("Segoe UI"),
-                FontSize = 11, FontWeight = FontWeights.Medium,
+                FontSize = 12, FontWeight = FontWeights.SemiBold,
                 Foreground = new SolidColorBrush(Txt),
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0,0,14,0)
+                VerticalAlignment = VerticalAlignment.Center
             };
             pillRow.Children.Add(pillDot);
             pillRow.Children.Add(pillLabel);
             textPill.Child = pillRow;
 
-            // Main capsule button (28×44 dark oval)
+            // Main capsule (34×50 — slightly bigger)
             mainCapsule = new Border {
-                Width = 28, Height = 44,
-                CornerRadius = new CornerRadius(14),
+                Width = 34, Height = 50,
+                CornerRadius = new CornerRadius(17),
                 Background = new SolidColorBrush(Bg),
                 BorderBrush = new SolidColorBrush(Brd),
                 BorderThickness = new Thickness(1),
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                VerticalAlignment = VerticalAlignment.Center
             };
             Panel.SetZIndex(mainCapsule, 5);
             mainIcon = new System.Windows.Shapes.Path {
                 Data = Geometry.Parse("M12,3 L12,11 M6.3,6.3 A7,7 0 1,0 17.7,6.3"),
-                Stroke = new SolidColorBrush(Cyan),
-                StrokeThickness = 1.8,
+                Stroke = new SolidColorBrush(Forest),
+                StrokeThickness = 2.0,
                 Fill = Brushes.Transparent,
-                Width = 13, Height = 13,
+                Width = 15, Height = 15,
                 Stretch = Stretch.Uniform,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
             mainCapsule.Child = mainIcon;
-            mainCapsule.MouseEnter += (s, e) => {
-                mainCapsule.Background = new SolidColorBrush(BgHover);
-                CancelCollapse();
-                ShowPill();
-            };
-            mainCapsule.MouseLeave += (s, e) => {
-                mainCapsule.Background = new SolidColorBrush(Bg);
-                ScheduleCollapse();
-            };
+            mainCapsule.MouseEnter += (s, e) => { mainCapsule.Background = new SolidColorBrush(BgHover); CancelCollapse(); ShowPill(); };
+            mainCapsule.MouseLeave += (s, e) => { mainCapsule.Background = new SolidColorBrush(Bg); ScheduleCollapse(); };
             mainCapsule.MouseLeftButtonUp += (s, e) => { ToggleEnabled(); e.Handled = true; };
 
+            // Layout depends on dock side — will be set in ApplyDock
+            Grid.SetColumn(textPill, 0);
+            Grid.SetColumn(mainCapsule, 1);
             row1.Children.Add(textPill);
             row1.Children.Add(mainCapsule);
 
-            // Secondary button (24×24 circle)
-            var row2 = new StackPanel {
-                Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 3, 2, 0)
-            };
+            // Row 2: secondary button (28×28 — slightly bigger)
+            var row2wrap = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 3, 0) };
             secButton = new Border {
-                Width = 24, Height = 24,
-                CornerRadius = new CornerRadius(12),
-                Background = new SolidColorBrush(Color.FromArgb(180, 50, 50, 60)),
+                Width = 28, Height = 28,
+                CornerRadius = new CornerRadius(14),
+                Background = new SolidColorBrush(Color.FromArgb(180, 40, 44, 50)),
                 BorderBrush = new SolidColorBrush(Brd),
                 BorderThickness = new Thickness(1),
                 Cursor = Cursors.Hand
             };
             var secGrid = new Grid();
-            var ring = new Ellipse { Width = 10, Height = 10, Stroke = new SolidColorBrush(Txt), StrokeThickness = 1.2, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            var dot = new Ellipse { Width = 3.5, Height = 3.5, Fill = new SolidColorBrush(Txt), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            secDot = new Ellipse { Width = 6, Height = 6, Fill = new SolidColorBrush(Green), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0,0,-1,-1) };
-            var secDotBg = new Ellipse { Width = 8, Height = 8, Fill = new SolidColorBrush(Color.FromRgb(24,24,32)), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0,0,-2,-2) };
-            secGrid.Children.Add(ring);
-            secGrid.Children.Add(dot);
-            secGrid.Children.Add(secDotBg);
-            secGrid.Children.Add(secDot);
+            var ring = new Ellipse { Width = 12, Height = 12, Stroke = new SolidColorBrush(Txt), StrokeThickness = 1.3, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            var cdot = new Ellipse { Width = 4, Height = 4, Fill = new SolidColorBrush(Txt), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            var secDotBg = new Ellipse { Width = 9, Height = 9, Fill = new SolidColorBrush(Color.FromRgb(20,24,28)), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0,0,-1,-1) };
+            secDot = new Ellipse { Width = 7, Height = 7, Fill = new SolidColorBrush(GreenDot), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0,0,0,0) };
+            secGrid.Children.Add(ring); secGrid.Children.Add(cdot); secGrid.Children.Add(secDotBg); secGrid.Children.Add(secDot);
             secButton.Child = secGrid;
             secButton.MouseEnter += (s, e) => { secButton.Background = new SolidColorBrush(BgHover); CancelCollapse(); };
-            secButton.MouseLeave += (s, e) => { secButton.Background = new SolidColorBrush(Color.FromArgb(180,50,50,60)); ScheduleCollapse(); };
+            secButton.MouseLeave += (s, e) => { secButton.Background = new SolidColorBrush(Color.FromArgb(180,40,44,50)); ScheduleCollapse(); };
             secButton.MouseLeftButtonUp += (s, e) => { ToggleAppPicker(); e.Handled = true; };
-            row2.Children.Add(secButton);
+            row2wrap.Children.Add(secButton);
 
-            hoverGroup.Children.Add(row1);
-            hoverGroup.Children.Add(row2);
-            rootCanvas.Children.Add(hoverGroup);
+            vstack.Children.Add(row1);
+            vstack.Children.Add(row2wrap);
+            hoverGroup.Children.Add(vstack);
 
-            // ── 3. App picker (3 icons: Games, Instagram, X) ──────
+            // ── App picker ────────────────────────────────────────
             appPicker = new Border {
-                Background = new SolidColorBrush(Color.FromArgb(235, 20, 20, 28)),
+                Background = new SolidColorBrush(Color.FromArgb(240, 18, 22, 26)),
                 BorderBrush = new SolidColorBrush(Brd),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(5),
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(6, 5, 6, 5),
                 Visibility = Visibility.Collapsed
             };
             var appStack = new StackPanel();
-            appStack.Children.Add(AppItem("\uD83C\uDFAE", "Games", () => OpenGameWindow()));
-            appStack.Children.Add(AppItem("\uD83D\uDCF7", "Instagram", () => LaunchSite("instagram")));
-            appStack.Children.Add(AppItem("\u2715", "X", () => LaunchSite("x")));
+            // Games — gamepad icon
+            appStack.Children.Add(AppItem(BuildGamepadIcon(), "Games", () => OpenGameWindow()));
+            // Instagram — camera icon
+            appStack.Children.Add(AppItem(BuildInstagramIcon(), "Instagram", () => LaunchSite("instagram")));
+            // X — letter X
+            appStack.Children.Add(AppItem(BuildXIcon(), "X", () => LaunchSite("x")));
             appPicker.Child = appStack;
             appPicker.MouseEnter += (s, e) => CancelCollapse();
             appPicker.MouseLeave += (s, e) => ScheduleCollapse();
-            Canvas.SetRight(appPicker, 0);
-            Canvas.SetTop(appPicker, 110);
             rootCanvas.Children.Add(appPicker);
 
             Content = rootCanvas;
 
-            // Collapse timer
             collapseTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
             collapseTimer.Tick += (s, e) => { collapseTimer.Stop(); SetIdle(); };
 
-            // Context menu: switch dock position
+            // Context menu
             var ctx = new ContextMenu();
             var d1 = new MenuItem { Header = "▸ Right Edge" }; d1.Click += (s,e) => { dock = DockSide.Right; ApplyDock(); SaveDock(); };
             var d2 = new MenuItem { Header = "◂ Left Edge" }; d2.Click += (s,e) => { dock = DockSide.Left; ApplyDock(); SaveDock(); };
             var d3 = new MenuItem { Header = "▾ Bottom Edge" }; d3.Click += (s,e) => { dock = DockSide.Bottom; ApplyDock(); SaveDock(); };
-            var sep = new Separator();
-            var ex = new MenuItem { Header = "Exit" }; ex.Click += (s,e) => Close();
             ctx.Items.Add(d1); ctx.Items.Add(d2); ctx.Items.Add(d3);
-            ctx.Items.Add(sep); ctx.Items.Add(ex);
+            ctx.Items.Add(new Separator());
+            var ex = new MenuItem { Header = "Exit" }; ex.Click += (s,e) => Close();
+            ctx.Items.Add(ex);
             ContextMenu = ctx;
         }
 
-        private Border AppItem(string icon, string label, Action onClick) {
+        // ── Proper vector icons ───────────────────────────────────
+        private UIElement BuildGamepadIcon() {
+            var g = new Grid { Width = 16, Height = 16 };
+            // Gamepad body
+            var body = new System.Windows.Shapes.Path {
+                Data = Geometry.Parse("M4,6 C2,6 1,7.5 1,9.5 C1,11.5 2,13 4,13 L6,13 L7,11 L9,11 L10,13 L12,13 C14,13 15,11.5 15,9.5 C15,7.5 14,6 12,6 Z"),
+                Fill = new SolidColorBrush(Txt),
+                Stretch = Stretch.Uniform,
+                Width = 16, Height = 12,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            // D-pad cross
+            var dpad = new System.Windows.Shapes.Path {
+                Data = Geometry.Parse("M4.5,8.5 L4.5,10.5 M3.5,9.5 L5.5,9.5"),
+                Stroke = new SolidColorBrush(Bg),
+                StrokeThickness = 1.2,
+                Stretch = Stretch.None,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0,0,0,0)
+            };
+            // Action buttons (two dots)
+            var b1 = new Ellipse { Width = 2, Height = 2, Fill = new SolidColorBrush(Bg), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4,-2,0,0) };
+            var b2 = new Ellipse { Width = 2, Height = 2, Fill = new SolidColorBrush(Bg), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8,0,0,0) };
+            g.Children.Add(body);
+            g.Children.Add(b1); g.Children.Add(b2);
+            return g;
+        }
+
+        private UIElement BuildInstagramIcon() {
+            var g = new Grid { Width = 16, Height = 16 };
+            // Rounded square
+            var sq = new Border {
+                Width = 14, Height = 14,
+                CornerRadius = new CornerRadius(4),
+                BorderBrush = new SolidColorBrush(Txt),
+                BorderThickness = new Thickness(1.6),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            // Center circle (lens)
+            var lens = new Ellipse {
+                Width = 6, Height = 6,
+                Stroke = new SolidColorBrush(Txt),
+                StrokeThickness = 1.4,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            // Flash dot
+            var flash = new Ellipse {
+                Width = 2.5, Height = 2.5,
+                Fill = new SolidColorBrush(Txt),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 2.5, 2.5, 0)
+            };
+            g.Children.Add(sq); g.Children.Add(lens); g.Children.Add(flash);
+            return g;
+        }
+
+        private UIElement BuildXIcon() {
+            return new TextBlock {
+                Text = "\uD835\uDD4F", // 𝕏 math double-struck X
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 14, FontWeight = FontWeights.Bold,
+                Foreground = new SolidColorBrush(Txt),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+        }
+
+        private Border AppItem(UIElement icon, string label, Action onClick) {
             var b = new Border {
-                Background = Brushes.Transparent, CornerRadius = new CornerRadius(7),
-                Padding = new Thickness(8, 5, 8, 5), Cursor = Cursors.Hand
+                Background = Brushes.Transparent, CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(10, 6, 10, 6), Cursor = Cursors.Hand
             };
             var sp = new StackPanel { Orientation = Orientation.Horizontal };
-            sp.Children.Add(new TextBlock { Text = icon, FontSize = 12, Margin = new Thickness(0,0,6,0), VerticalAlignment = VerticalAlignment.Center });
-            sp.Children.Add(new TextBlock { Text = label, FontFamily = new FontFamily("Segoe UI"), FontSize = 11, Foreground = new SolidColorBrush(Txt), VerticalAlignment = VerticalAlignment.Center });
+            var iconWrap = new Border { Width = 20, Height = 18, Child = icon, Margin = new Thickness(0,0,8,0), VerticalAlignment = VerticalAlignment.Center };
+            sp.Children.Add(iconWrap);
+            sp.Children.Add(new TextBlock {
+                Text = label, FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 12, FontWeight = FontWeights.Medium,
+                Foreground = new SolidColorBrush(Txt),
+                VerticalAlignment = VerticalAlignment.Center
+            });
             b.Child = sp;
             b.MouseEnter += (s,e) => { b.Background = new SolidColorBrush(Color.FromArgb(30,255,255,255)); };
             b.MouseLeave += (s,e) => { b.Background = Brushes.Transparent; };
@@ -2201,85 +2241,86 @@ namespace WaitPlayNative {
         }
 
         // ════════════════════════════════════════════════════════════
-        //  State transitions — instant, no heavy animations
+        //  State transitions
         // ════════════════════════════════════════════════════════════
         private void SetIdle() {
-            isHovered = false;
             CloseAppPicker();
             hoverGroup.Visibility = Visibility.Collapsed;
             edgeHandle.Visibility = Visibility.Visible;
             textPill.Opacity = 0;
         }
-
         private void Expand() {
             CancelCollapse();
-            isHovered = true;
             edgeHandle.Visibility = Visibility.Collapsed;
             hoverGroup.Visibility = Visibility.Visible;
         }
-
         private void ShowPill() {
-            var a = new DoubleAnimation { To = 1, Duration = TimeSpan.FromMilliseconds(120) };
-            textPill.BeginAnimation(OpacityProperty, a);
+            textPill.BeginAnimation(OpacityProperty, new DoubleAnimation { To = 1, Duration = TimeSpan.FromMilliseconds(120) });
         }
-
-        private void ScheduleCollapse() {
-            collapseTimer.Stop();
-            collapseTimer.Start();
-        }
-
-        private void CancelCollapse() {
-            collapseTimer.Stop();
-        }
-
+        private void ScheduleCollapse() { collapseTimer.Stop(); collapseTimer.Start(); }
+        private void CancelCollapse() { collapseTimer.Stop(); }
         private void ToggleAppPicker() {
             if (isMenuOpen) CloseAppPicker();
             else { isMenuOpen = true; appPicker.Visibility = Visibility.Visible; }
         }
-        private void CloseAppPicker() {
-            isMenuOpen = false;
-            appPicker.Visibility = Visibility.Collapsed;
-        }
+        private void CloseAppPicker() { isMenuOpen = false; appPicker.Visibility = Visibility.Collapsed; }
 
         // ════════════════════════════════════════════════════════════
-        //  3 fixed dock positions
+        //  3 fixed positions — pill direction flips per dock side
         // ════════════════════════════════════════════════════════════
         private void ApplyDock() {
             double sw = SystemParameters.WorkArea.Width;
             double sh = SystemParameters.WorkArea.Height;
 
-            // Reset canvas layout
-            rootCanvas.RenderTransform = null;
+            // Get the row1 grid that contains pill + capsule
+            var vstack = hoverGroup.Children[0] as StackPanel;
+            var row1 = vstack.Children[0] as Grid;
+            var row2wrap = vstack.Children[1] as StackPanel;
 
             switch (dock) {
                 case DockSide.Right:
-                    Left = sw - Width;
-                    Top = (sh - Height) / 2;
-                    // Elements already right-aligned
+                    Left = sw - Width; Top = (sh - Height) / 2;
+                    // Pill on LEFT, capsule on RIGHT
+                    textPill.Margin = new Thickness(0, 0, -14, 0);
+                    Grid.SetColumn(textPill, 0); Grid.SetColumn(mainCapsule, 1);
+                    row1.HorizontalAlignment = HorizontalAlignment.Right;
+                    row2wrap.HorizontalAlignment = HorizontalAlignment.Right;
                     Canvas.SetRight(edgeHandle, 0); Canvas.SetLeft(edgeHandle, double.NaN);
-                    Canvas.SetTop(edgeHandle, 62);
-                    Canvas.SetRight(hoverGroup, 0); Canvas.SetLeft(hoverGroup, double.NaN);
-                    Canvas.SetRight(appPicker, 0); Canvas.SetLeft(appPicker, double.NaN);
-                    hoverGroup.HorizontalAlignment = HorizontalAlignment.Right;
+                    Canvas.SetTop(edgeHandle, 70);
+                    Canvas.SetRight(hoverGroup, 4); Canvas.SetLeft(hoverGroup, double.NaN);
+                    Canvas.SetTop(hoverGroup, 45);
+                    Canvas.SetRight(appPicker, 4); Canvas.SetLeft(appPicker, double.NaN);
+                    Canvas.SetTop(appPicker, 120);
                     break;
 
                 case DockSide.Left:
-                    Left = 0;
-                    Top = (sh - Height) / 2;
+                    Left = 0; Top = (sh - Height) / 2;
+                    // Capsule on LEFT, pill on RIGHT
+                    textPill.Margin = new Thickness(-14, 0, 0, 0);
+                    Grid.SetColumn(mainCapsule, 0); Grid.SetColumn(textPill, 1);
+                    row1.HorizontalAlignment = HorizontalAlignment.Left;
+                    row2wrap.HorizontalAlignment = HorizontalAlignment.Left;
+                    row2wrap.Margin = new Thickness(3, 4, 0, 0);
                     Canvas.SetLeft(edgeHandle, 0); Canvas.SetRight(edgeHandle, double.NaN);
-                    Canvas.SetTop(edgeHandle, 62);
-                    Canvas.SetLeft(hoverGroup, 0); Canvas.SetRight(hoverGroup, double.NaN);
-                    Canvas.SetLeft(appPicker, 0); Canvas.SetRight(appPicker, double.NaN);
-                    hoverGroup.HorizontalAlignment = HorizontalAlignment.Left;
+                    Canvas.SetTop(edgeHandle, 70);
+                    Canvas.SetLeft(hoverGroup, 4); Canvas.SetRight(hoverGroup, double.NaN);
+                    Canvas.SetTop(hoverGroup, 45);
+                    Canvas.SetLeft(appPicker, 4); Canvas.SetRight(appPicker, double.NaN);
+                    Canvas.SetTop(appPicker, 120);
                     break;
 
                 case DockSide.Bottom:
-                    Left = (sw - Width) / 2;
-                    Top = sh - Height;
-                    Canvas.SetRight(edgeHandle, (Width - 8) / 2); Canvas.SetLeft(edgeHandle, double.NaN);
-                    Canvas.SetTop(edgeHandle, Height - 10);
-                    Canvas.SetRight(hoverGroup, (Width - 60) / 2); Canvas.SetLeft(hoverGroup, double.NaN);
-                    Canvas.SetRight(appPicker, (Width - 100) / 2); Canvas.SetLeft(appPicker, double.NaN);
+                    Left = (sw - Width) / 2; Top = sh - Height;
+                    textPill.Margin = new Thickness(0, 0, -14, 0);
+                    Grid.SetColumn(textPill, 0); Grid.SetColumn(mainCapsule, 1);
+                    row1.HorizontalAlignment = HorizontalAlignment.Center;
+                    row2wrap.HorizontalAlignment = HorizontalAlignment.Center;
+                    Canvas.SetLeft(edgeHandle, (Width - 10) / 2); Canvas.SetRight(edgeHandle, double.NaN);
+                    Canvas.SetTop(edgeHandle, Height - 12);
+                    Canvas.SetLeft(hoverGroup, (Width - 80) / 2); Canvas.SetRight(hoverGroup, double.NaN);
+                    Canvas.SetTop(hoverGroup, 80);
+                    Canvas.SetLeft(appPicker, (Width - 120) / 2); Canvas.SetRight(appPicker, double.NaN);
+                    Canvas.SetTop(appPicker, 10);
                     break;
             }
             SetIdle();
@@ -2290,9 +2331,7 @@ namespace WaitPlayNative {
             try { if (!System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir); } catch {}
             return System.IO.Path.Combine(dir, ".waitplay-dock.txt");
         }
-        private void SaveDock() {
-            try { System.IO.File.WriteAllText(DockPath(), dock.ToString()); } catch {}
-        }
+        private void SaveDock() { try { System.IO.File.WriteAllText(DockPath(), dock.ToString()); } catch {} }
         private void LoadDock() {
             try {
                 string p = DockPath();
@@ -2308,7 +2347,7 @@ namespace WaitPlayNative {
         }
 
         // ════════════════════════════════════════════════════════════
-        //  Toggle & visuals
+        //  Toggle & visuals — design.md forest green accent
         // ════════════════════════════════════════════════════════════
         private void ToggleEnabled() {
             isEnabled = !isEnabled;
@@ -2319,13 +2358,12 @@ namespace WaitPlayNative {
                 CloseOtherGameWindows();
             }
         }
-
         private void UpdateVisuals() {
             if (isEnabled) {
                 pillLabel.Text = "WaitPlay";
-                mainIcon.Stroke = new SolidColorBrush(Cyan);
-                pillDot.Fill = new SolidColorBrush(Green);
-                secDot.Fill = new SolidColorBrush(Green);
+                mainIcon.Stroke = new SolidColorBrush(Forest);
+                pillDot.Fill = new SolidColorBrush(GreenDot);
+                secDot.Fill = new SolidColorBrush(GreenDot);
             } else {
                 pillLabel.Text = "Paused";
                 mainIcon.Stroke = new SolidColorBrush(Slate);
@@ -2333,15 +2371,12 @@ namespace WaitPlayNative {
                 secDot.Fill = new SolidColorBrush(Slate);
             }
         }
-
-        private void SetStatusText(string text, Color dotColor) {
-            pillLabel.Text = text;
-            pillDot.Fill = new SolidColorBrush(dotColor);
-            secDot.Fill = new SolidColorBrush(dotColor);
+        private void SetStatus(string text, Color c) {
+            pillLabel.Text = text; pillDot.Fill = new SolidColorBrush(c); secDot.Fill = new SolidColorBrush(c);
         }
 
         // ════════════════════════════════════════════════════════════
-        //  Agent polling — minimal, 3s interval, background thread
+        //  Agent polling
         // ════════════════════════════════════════════════════════════
         private void PollStatus() {
             if (!isEnabled) return;
@@ -2355,11 +2390,10 @@ namespace WaitPlayNative {
                         Dispatcher.BeginInvoke(new Action(() => ParseSessions(json)));
                     }
                 } catch {
-                    Dispatcher.BeginInvoke(new Action(() => { if (isEnabled) SetStatusText("WaitPlay", Green); }));
+                    Dispatcher.BeginInvoke(new Action(() => { if (isEnabled) SetStatus("WaitPlay", GreenDot); }));
                 }
             });
         }
-
         private void ParseSessions(string json) {
             try {
                 var root = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json);
@@ -2375,9 +2409,9 @@ namespace WaitPlayNative {
                     if (st == "WORKING" || st == "GAME_ACTIVE") working = true;
                     else if (st == "WAITING_FOR_INPUT") waiting = true;
                 }
-                if (working) SetStatusText("Working\u2026", Cyan);
-                else if (waiting) SetStatusText("Input", Amber);
-                else SetStatusText("WaitPlay", Green);
+                if (working) SetStatus("Working\u2026", Forest);
+                else if (waiting) SetStatus("Input", AmberDot);
+                else SetStatus("WaitPlay", GreenDot);
             } catch {}
         }
 
