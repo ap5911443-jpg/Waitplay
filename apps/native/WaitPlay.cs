@@ -2002,7 +2002,7 @@ namespace WaitPlayNative {
         private const uint MOD_ALT = 0x0001;
         private const uint VK_W = 0x57;
 
-        private DockPosition currentDock = DockPosition.Free;
+        private DockPosition currentDock = DockPosition.Right;
         private bool isCollapsed = false;
         private bool isEnabled = true;
 
@@ -2479,18 +2479,9 @@ namespace WaitPlayNative {
             dockRightItem.Click += (s, e) => SetDock(DockPosition.Right);
             var dockBottomItem = new MenuItem { Header = "👇 3. Bottom Edge" };
             dockBottomItem.Click += (s, e) => SetDock(DockPosition.Bottom);
-            var dockFreeItem = new MenuItem { Header = "✨ Free Floating" };
-            dockFreeItem.Click += (s, e) => {
-                currentDock = DockPosition.Free;
-                Left = 250; Top = 250;
-                UpdateFlowGridLayout();
-                SetCollapsed(false);
-                SavePosition();
-            };
             dockMenu.Items.Add(dockLeftItem);
             dockMenu.Items.Add(dockRightItem);
             dockMenu.Items.Add(dockBottomItem);
-            dockMenu.Items.Add(dockFreeItem);
 
             var exitItem = new MenuItem { Header = "Exit Desktop Widget" };
             exitItem.Click += (s, e) => Close();
@@ -2560,19 +2551,18 @@ namespace WaitPlayNative {
             } else if (pt.Y > screenH - 90) {
                 SetDock(DockPosition.Bottom, pt.X - 82);
             } else {
-                currentDock = DockPosition.Free;
-                Left = windowStartPoint.X + (pt.X - mouseDownPoint.X);
-                Top = windowStartPoint.Y + (pt.Y - mouseDownPoint.Y);
-                if (Left < 0) Left = 0;
-                if (Left > screenW - Width) Left = screenW - Width;
-                if (Top < 0) Top = 0;
-                if (Top > screenH - Height) Top = screenH - Height;
-                savedLeft = Left;
-                savedTop = Top;
-                UpdateFlowGridLayout();
-                SetCollapsed(false);
-                SavePosition();
-                collapseTimer.Start();
+                // Snap to nearest edge — never free-float
+                double distLeft = pt.X;
+                double distRight = screenW - pt.X;
+                double distBottom = screenH - pt.Y;
+                double minDist = Math.Min(distLeft, Math.Min(distRight, distBottom));
+                if (minDist == distLeft) {
+                    SetDock(DockPosition.Left, pt.Y - 42);
+                } else if (minDist == distRight) {
+                    SetDock(DockPosition.Right, pt.Y - 42);
+                } else {
+                    SetDock(DockPosition.Bottom, pt.X - 82);
+                }
             }
         }
 
@@ -2652,11 +2642,11 @@ namespace WaitPlayNative {
                     edgeHandle.Height = 10;
                     edgeHandle.CornerRadius = new CornerRadius(5);
                 } else {
-                    // Free floating position
-                    Width = 16;
+                    // Fallback: treat as Right edge
+                    Width = 14;
                     Height = 52;
-                    Left = savedLeft;
-                    Top = savedTop;
+                    Left = screenW - 14;
+                    Top = savedTop + 16;
                     edgeHandle.Width = 10;
                     edgeHandle.Height = 48;
                     edgeHandle.CornerRadius = new CornerRadius(5);
@@ -2677,7 +2667,8 @@ namespace WaitPlayNative {
                     Left = savedLeft;
                     Top = screenH - expH - 4;
                 } else {
-                    Left = savedLeft;
+                    // Fallback: treat as Right edge
+                    Left = screenW - expW - 4;
                     Top = savedTop;
                 }
 
@@ -2846,29 +2837,16 @@ namespace WaitPlayNative {
                                 SetDock(DockPosition.Bottom, l);
                                 return;
                             } else {
-                                currentDock = DockPosition.Free;
-                                Left = l;
-                                Top = t;
-                                savedLeft = Left;
-                                savedTop = Top;
-                                UpdateFlowGridLayout();
-                                SetCollapsed(false);
-                                collapseTimer.Start();
+                                // Legacy "Free" saved position: migrate to Right edge
+                                SetDock(DockPosition.Right, t);
                                 return;
                             }
                         }
                     }
                 }
             } catch {}
-            currentDock = DockPosition.Free;
-            Left = 250;
-            Top = 250;
-            savedLeft = Left;
-            savedTop = Top;
-            UpdateFlowGridLayout();
-            SetCollapsed(false);
-            SavePosition();
-            collapseTimer.Start();
+            // Default: dock to right edge, vertically centered
+            SetDock(DockPosition.Right);
         }
 
         private void SavePosition() {
