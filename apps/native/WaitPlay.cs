@@ -119,6 +119,7 @@ namespace WaitPlayNative {
         private bool wasMinimizedByParent = false;
         private IntPtr myHwnd = IntPtr.Zero;
         private int missingParentTicks = 0;
+        private int parentNotForegroundTicks = 0;
         private Microsoft.Web.WebView2.Wpf.WebView2 webView;
         private DispatcherTimer webReadyTimer;
         private const int WEB_PORT = 5200;
@@ -1027,6 +1028,32 @@ namespace WaitPlayNative {
                             this.WindowState = WindowState.Normal;
                             Topmost = true;
                         }
+                    }
+                }
+
+                // Terminal-tab-switch detection: if parent terminal is not
+                // the foreground window for several ticks, auto-close so the
+                // user can inspect the previous terminal's results without
+                // the companion window blocking the view.
+                if (terminalLabel != "Desktop") {
+                    IntPtr fg = ParentWindowTracker.GetForegroundWindow();
+                    if (fg != IntPtr.Zero && fg != monitoredWindowHandle && fg != myHwnd) {
+                        // Foreground is some other window — could be another terminal tab
+                        parentNotForegroundTicks++;
+                        if (parentNotForegroundTicks >= 3) {
+                            // Parent terminal lost focus for 300ms+ (3 ticks × 100ms poll)
+                            // Check it's not just a transient switch to the companion itself
+                            uint fgPid;
+                            ParentWindowTracker.GetWindowThreadProcessId(fg, out fgPid);
+                            uint myPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+                            if (fgPid != myPid) {
+                                // Another app/terminal has focus — auto-close companion
+                                try { Close(); } catch {}
+                                return;
+                            }
+                        }
+                    } else {
+                        parentNotForegroundTicks = 0;
                     }
                 }
             }
@@ -1950,22 +1977,19 @@ namespace WaitPlayNative {
         private DispatcherTimer statusTimer;
 
         // Design.md palette
-        static readonly Color Forest      = Color.FromRgb(3, 79, 70);       // #034F46
-        static readonly Color ForestSoft  = Color.FromRgb(99, 144, 133);    // #639085
-        static readonly Color Lavender    = Color.FromRgb(240, 215, 255);   // #F0D7FF
-        static readonly Color Orange      = Color.FromRgb(255, 169, 70);    // #FFA946
-        static readonly Color Ink         = Color.FromRgb(26, 26, 26);      // #1A1A1A
-        static readonly Color InkSoft     = Color.FromRgb(102, 102, 102);   // #666666
-        static readonly Color CanvasClr      = Color.FromRgb(255, 255, 235);   // #FFFFEB
-        static readonly Color CardWhite   = Color.FromRgb(255, 255, 255);   // #FFFFFF
-        // Widget-specific dark tokens
-        static readonly Color Bg          = Color.FromArgb(235, 20, 24, 28);
-        static readonly Color BgHover     = Color.FromArgb(245, 30, 34, 40);
-        static readonly Color Brd         = Color.FromArgb(45, 160, 170, 160);
-        static readonly Color Txt         = Color.FromRgb(240, 240, 235);
-        static readonly Color GreenDot    = Color.FromRgb(74, 222, 128);
-        static readonly Color AmberDot    = Color.FromRgb(251, 191, 36);
-        static readonly Color Slate       = Color.FromRgb(100, 110, 120);
+        // WhisperFlow Soft White palette
+        static readonly Color Bg          = Color.FromRgb(255, 255, 255);     // #FFFFFF Main bg
+        static readonly Color BgSec       = Color.FromRgb(245, 245, 243);     // #F5F5F3 Secondary bg
+        static readonly Color BgHover     = Color.FromRgb(235, 235, 231);     // #EBEBE7 Hover
+        static readonly Color BgPressed   = Color.FromRgb(220, 220, 216);     // Pressed
+        static readonly Color Brd         = Color.FromRgb(218, 218, 214);     // #DADAD6 Border
+        static readonly Color Txt         = Color.FromRgb(26, 26, 26);        // #1A1A1A Primary text
+        static readonly Color TxtSec      = Color.FromRgb(119, 119, 119);     // #777777 Secondary text
+        static readonly Color Active      = Color.FromRgb(99, 144, 133);      // #639085 Active indicator
+        static readonly Color Selected    = Color.FromRgb(240, 215, 255);     // #F0D7FF Lavender selected
+        static readonly Color GreenDot    = Color.FromRgb(99, 144, 133);      // #639085 Muted green
+        static readonly Color AmberDot    = Color.FromRgb(200, 155, 50);      // Warm amber
+        static readonly Color Slate       = Color.FromRgb(180, 180, 175);     // Neutral grey inactive
 
         public FloatingFlowWidget() {
             Title = "WaitPlay";
@@ -2008,8 +2032,8 @@ namespace WaitPlayNative {
             edgeHandle = new Border {
                 Width = 10, Height = 40,
                 CornerRadius = new CornerRadius(5),
-                Background = new SolidColorBrush(Color.FromArgb(110, 99, 144, 133)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(50, 3, 79, 70)),
+                Background = new SolidColorBrush(BgSec),
+                BorderBrush = new SolidColorBrush(Brd),
                 BorderThickness = new Thickness(1),
                 Cursor = Cursors.Hand
             };
@@ -2035,6 +2059,9 @@ namespace WaitPlayNative {
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(16),
                 Padding = new Thickness(10, 5, 10, 5),
+                Effect = new System.Windows.Media.Effects.DropShadowEffect {
+                    Color = Color.FromRgb(26,26,15), BlurRadius = 6, ShadowDepth = 1, Opacity = 0.06, Direction = 270
+                },
                 VerticalAlignment = VerticalAlignment.Center,
                 Opacity = 0
             };
@@ -2042,7 +2069,7 @@ namespace WaitPlayNative {
             pillDot = new Ellipse { Width = 7, Height = 7, Fill = new SolidColorBrush(GreenDot), Margin = new Thickness(0,0,7,0), VerticalAlignment = VerticalAlignment.Center };
             pillLabel = new TextBlock {
                 Text = "WaitPlay",
-                FontFamily = new FontFamily("Segoe UI"),
+                FontFamily = new FontFamily("Figtree, Segoe UI, sans-serif"),
                 FontSize = 12, FontWeight = FontWeights.SemiBold,
                 Foreground = new SolidColorBrush(Txt),
                 VerticalAlignment = VerticalAlignment.Center
@@ -2059,12 +2086,15 @@ namespace WaitPlayNative {
                 BorderBrush = new SolidColorBrush(Brd),
                 BorderThickness = new Thickness(1),
                 Cursor = Cursors.Hand,
-                VerticalAlignment = VerticalAlignment.Center
+                VerticalAlignment = VerticalAlignment.Center,
+                Effect = new System.Windows.Media.Effects.DropShadowEffect {
+                    Color = Color.FromRgb(26,26,15), BlurRadius = 8, ShadowDepth = 2, Opacity = 0.08, Direction = 270
+                }
             };
             Panel.SetZIndex(mainCapsule, 5);
             mainIcon = new System.Windows.Shapes.Path {
                 Data = Geometry.Parse("M12,3 L12,11 M6.3,6.3 A7,7 0 1,0 17.7,6.3"),
-                Stroke = new SolidColorBrush(Forest),
+                Stroke = new SolidColorBrush(Txt),
                 StrokeThickness = 2.0,
                 Fill = Brushes.Transparent,
                 Width = 15, Height = 15,
@@ -2088,20 +2118,23 @@ namespace WaitPlayNative {
             secButton = new Border {
                 Width = 28, Height = 28,
                 CornerRadius = new CornerRadius(14),
-                Background = new SolidColorBrush(Color.FromArgb(180, 40, 44, 50)),
+                Background = new SolidColorBrush(BgSec),
                 BorderBrush = new SolidColorBrush(Brd),
                 BorderThickness = new Thickness(1),
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                Effect = new System.Windows.Media.Effects.DropShadowEffect {
+                    Color = Color.FromRgb(26,26,15), BlurRadius = 6, ShadowDepth = 1, Opacity = 0.06, Direction = 270
+                }
             };
             var secGrid = new Grid();
             var ring = new Ellipse { Width = 12, Height = 12, Stroke = new SolidColorBrush(Txt), StrokeThickness = 1.3, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             var cdot = new Ellipse { Width = 4, Height = 4, Fill = new SolidColorBrush(Txt), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            var secDotBg = new Ellipse { Width = 9, Height = 9, Fill = new SolidColorBrush(Color.FromRgb(20,24,28)), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0,0,-1,-1) };
+            var secDotBg = new Ellipse { Width = 9, Height = 9, Fill = new SolidColorBrush(Bg), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0,0,-1,-1) };
             secDot = new Ellipse { Width = 7, Height = 7, Fill = new SolidColorBrush(GreenDot), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0,0,0,0) };
             secGrid.Children.Add(ring); secGrid.Children.Add(cdot); secGrid.Children.Add(secDotBg); secGrid.Children.Add(secDot);
             secButton.Child = secGrid;
             secButton.MouseEnter += (s, e) => { secButton.Background = new SolidColorBrush(BgHover); CancelCollapse(); };
-            secButton.MouseLeave += (s, e) => { secButton.Background = new SolidColorBrush(Color.FromArgb(180,40,44,50)); ScheduleCollapse(); };
+            secButton.MouseLeave += (s, e) => { secButton.Background = new SolidColorBrush(BgSec); ScheduleCollapse(); };
             secButton.MouseLeftButtonUp += (s, e) => { ToggleAppPicker(); e.Handled = true; };
             row2wrap.Children.Add(secButton);
 
@@ -2111,11 +2144,14 @@ namespace WaitPlayNative {
 
             // ── App picker ────────────────────────────────────────
             appPicker = new Border {
-                Background = new SolidColorBrush(Color.FromArgb(240, 18, 22, 26)),
+                Background = new SolidColorBrush(Bg),
                 BorderBrush = new SolidColorBrush(Brd),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(12),
                 Padding = new Thickness(6, 5, 6, 5),
+                Effect = new System.Windows.Media.Effects.DropShadowEffect {
+                    Color = Color.FromRgb(26,26,15), BlurRadius = 10, ShadowDepth = 2, Opacity = 0.08, Direction = 270
+                },
                 Visibility = Visibility.Collapsed
             };
             var appStack = new StackPanel();
@@ -2234,7 +2270,7 @@ namespace WaitPlayNative {
                 VerticalAlignment = VerticalAlignment.Center
             });
             b.Child = sp;
-            b.MouseEnter += (s,e) => { b.Background = new SolidColorBrush(Color.FromArgb(30,255,255,255)); };
+            b.MouseEnter += (s,e) => { b.Background = new SolidColorBrush(BgHover); };
             b.MouseLeave += (s,e) => { b.Background = Brushes.Transparent; };
             b.MouseLeftButtonUp += (s,e) => { CloseAppPicker(); onClick(); e.Handled = true; };
             return b;
@@ -2361,7 +2397,7 @@ namespace WaitPlayNative {
         private void UpdateVisuals() {
             if (isEnabled) {
                 pillLabel.Text = "WaitPlay";
-                mainIcon.Stroke = new SolidColorBrush(Forest);
+                mainIcon.Stroke = new SolidColorBrush(Txt);
                 pillDot.Fill = new SolidColorBrush(GreenDot);
                 secDot.Fill = new SolidColorBrush(GreenDot);
             } else {
@@ -2409,7 +2445,7 @@ namespace WaitPlayNative {
                     if (st == "WORKING" || st == "GAME_ACTIVE") working = true;
                     else if (st == "WAITING_FOR_INPUT") waiting = true;
                 }
-                if (working) SetStatus("Working\u2026", Forest);
+                if (working) SetStatus("Working\u2026", Active);
                 else if (waiting) SetStatus("Input", AmberDot);
                 else SetStatus("WaitPlay", GreenDot);
             } catch {}
