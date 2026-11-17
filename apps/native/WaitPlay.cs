@@ -231,20 +231,29 @@ namespace WaitPlayNative {
         }
 
         private void InitializeWindow() {
-            Title = "WaitPlay • Companion Game";
-            Width = 1120;
-            Height = 760;
-            MinWidth = 900;
-            MinHeight = 640;
-            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            Title = "WaitPlay";
+
+            // Responsive sizing: use 35% of screen width, 50% of screen height
+            double screenW = SystemParameters.WorkArea.Width;
+            double screenH = SystemParameters.WorkArea.Height;
+            Width = Math.Max(420, Math.Min(700, screenW * 0.35));
+            Height = Math.Max(400, Math.Min(800, screenH * 0.55));
+            MinWidth = 360;
+            MinHeight = 320;
+
+            // Position in bottom-right corner with padding
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = screenW - Width - 16;
+            Top = screenH - Height - 16;
+
             Background = new SolidColorBrush(Color.FromRgb(0, 0, 0));
             Foreground = new SolidColorBrush(InkColor);
             Topmost = true;
             WindowStyle = WindowStyle.None;
-            ResizeMode = ResizeMode.NoResize;
+            ResizeMode = ResizeMode.CanResizeWithGrip;
             AllowsTransparency = false;
-            BorderBrush = new SolidColorBrush(CanvasBorderColor);
-            BorderThickness = new Thickness(0);
+            BorderBrush = new SolidColorBrush(Color.FromRgb(60, 60, 68));
+            BorderThickness = new Thickness(1);
             SourceInitialized += (s, e) => {
                 try { myHwnd = new WindowInteropHelper(this).Handle; } catch {}
             };
@@ -899,7 +908,12 @@ namespace WaitPlayNative {
         }
         private void CheckAgentStatus() {
             if (!WaitPlayStateManager.IsEnabled()) {
-                Close();
+                // Don't close - user controls the window; just stop polling
+                if (statusPollTimer != null) { try { statusPollTimer.Stop(); } catch {} }
+                try {
+                    statusPillText.Text = "WaitPlay \u2022 Paused";
+                    statusDot.Fill = new SolidColorBrush(Color.FromRgb(148, 163, 184));
+                } catch {}
                 return;
             }
             if (myHwnd == IntPtr.Zero) {
@@ -985,8 +999,9 @@ namespace WaitPlayNative {
                 if (!ParentWindowTracker.IsWindow(monitoredWindowHandle)) {
                     missingParentTicks++;
                     if (missingParentTicks >= 5) {
-                        Close();
-                        return;
+                        // Parent gone: detach tracking instead of closing
+                        monitoredWindowHandle = IntPtr.Zero;
+                        missingParentTicks = 0;
                     }
                 } else {
                     missingParentTicks = 0;
@@ -1002,7 +1017,7 @@ namespace WaitPlayNative {
                     } else {
                         if (wasMinimizedByParent && this.WindowState == WindowState.Minimized) {
                             if (!WaitPlayStateManager.IsEnabled()) {
-                                Close();
+                                // Don't close, just skip restore
                                 return;
                             }
                             wasMinimizedByParent = false;
@@ -1311,15 +1326,12 @@ namespace WaitPlayNative {
             hasFinished = true;
             if (webReadyTimer != null) { try { webReadyTimer.Stop(); } catch {} }
             DismissalTracker.ClearDismissal(targetSessionId);
-            // Grace: wait for the agent's final output to settle (no new activity)
-            // before closing; cancelled by CancelPendingClose() if the agent resumes.
-            if (exitTimer != null) { try { exitTimer.Stop(); } catch {} }
-            exitTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2500) };
-            exitTimer.Tick += (s, e) => {
-                try { exitTimer.Stop(); } catch {}
-                try { Close(); } catch {}
-            };
-            exitTimer.Start();
+            // Don't auto-close: the user controls when to close the widget.
+            // Just update status to show agent is done.
+            try {
+                statusPillText.Text = activeAgentName + " \u2022 Done";
+                statusDot.Fill = new SolidColorBrush(Color.FromRgb(100, 200, 120));
+            } catch {}
         }
 
         private void CancelPendingClose() {
@@ -2034,14 +2046,14 @@ namespace WaitPlayNative {
 
         private Border CreateSiteIcon(string site, Brush bg, UIElement glyph, string tip) {
             var b = new Border {
-                Width = 26,
-                Height = 26,
-                CornerRadius = new CornerRadius(13),
+                Width = 30,
+                Height = 30,
+                CornerRadius = new CornerRadius(15),
                 Background = bg,
                 BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 72)),
                 BorderThickness = new Thickness(1),
                 Cursor = Cursors.Hand,
-                Margin = new Thickness(0, 7, 0, 0),
+                Margin = new Thickness(0, 4, 0, 0),
                 ToolTip = tip,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
@@ -2056,19 +2068,19 @@ namespace WaitPlayNative {
         }
 
         private UIElement BuildCameraGlyph() {
-            var grid = new Grid { Width = 14, Height = 14 };
+            var grid = new Grid { Width = 16, Height = 16 };
             var body = new Border {
-                Width = 14,
-                Height = 14,
-                CornerRadius = new CornerRadius(4.5),
+                Width = 16,
+                Height = 16,
+                CornerRadius = new CornerRadius(5),
                 BorderBrush = Brushes.White,
-                BorderThickness = new Thickness(1.6)
+                BorderThickness = new Thickness(1.8)
             };
             var lens = new Ellipse {
-                Width = 6,
-                Height = 6,
+                Width = 7,
+                Height = 7,
                 Stroke = Brushes.White,
-                StrokeThickness = 1.5,
+                StrokeThickness = 1.6,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -2569,8 +2581,8 @@ namespace WaitPlayNative {
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
 
-            double expW = 160;
-            double expH = 46;
+            double expW = 170;
+            double expH = 80;
 
             Width = expW;
             Height = expH;
@@ -2608,8 +2620,8 @@ namespace WaitPlayNative {
             double screenW = SystemParameters.WorkArea.Width;
             double screenH = SystemParameters.WorkArea.Height;
 
-            double expW = 160;
-            double expH = 46;
+            double expW = 170;
+            double expH = 80;
 
             if (collapsed) {
                 fullWidget.Visibility = Visibility.Collapsed;
