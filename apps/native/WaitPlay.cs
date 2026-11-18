@@ -132,6 +132,20 @@ namespace WaitPlayNative {
         private bool hiddenAway = false;              // hidden because the user left the owning tab
         private bool launchedFromTerminal = false;    // widget-launched windows have no tab to return to
         private long lastIpcRequest = 0;
+        private long lastIpcStamp = 0;            // parked windows re-read the IPC file only when its timestamp changes
+        private bool hiddenBackground = false;    // parked on purpose (task over, X/Esc, left a widget window): stays hidden until a launch or fresh work, not merely until the user is back on the tab
+        private bool hiddenByFinish = false;      // parked by the turn ending, so fresh work from the same agent may bring it back (a user hide may not)
+        private bool quitRequested = false;       // only Quit() really closes; every other close request parks the window
+        private bool gameTimerPaused = false;
+        private long finishedAtMs = 0;
+        private long startedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();   // a quit request only counts if it is newer than this
+        private int bgTicks = 0;
+        private readonly string ipcKey;           // which IPC file wakes this window: the site it hosts, or "games" for the widget's in-process window
+        private DispatcherTimer deepParkTimer;    // waits for a freshly hidden page to settle before the deep park
+        private DispatcherTimer retrimTimer;      // keeps a parked window small: wakeups and the page itself touch pages again
+        private bool suspended;                   // the page is frozen (WebView2 TrySuspend): no script, no timers, caches dropped
+        private bool tabTimerStopped;
+        private const int ACTIVE_TICK_MS = 100, PARKED_TICK_MS = 250;
         private Microsoft.Web.WebView2.Wpf.WebView2 webView;
         private DispatcherTimer webReadyTimer;
         private const int WEB_PORT = 5200;
@@ -139,13 +153,19 @@ namespace WaitPlayNative {
         private const string YT_URL = "https://www.youtube.com/";
         private const string X_URL = "https://x.com/home";
         internal static string StartUrl = null;
+        internal static string SiteKey = "instagram";   // site this process hosts; keys its single-instance mutex and IPC file so X and Instagram don't swallow each other's launches
+        internal static string IpcPath(string key) {
+            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay");
+            return System.IO.Path.Combine(dir, key == "instagram" ? ".waitplay-active-session.txt" : ".waitplay-active-session." + key + ".txt");
+        }
         private TextBox addressBar;
         private Button btnBack;
         private Button btnForward;
         private bool isFullscreen = false;
         private Rect savedBounds;
 
-        public MainWindow(string sessionId = "", long promptTime = 0, string terminal = "", uint parentPid = 0, IntPtr parentHwnd = default(IntPtr)) {
+        public MainWindow(string sessionId = "", long promptTime = 0, string terminal = "", uint parentPid = 0, IntPtr parentHwnd = default(IntPtr), string ipcKey = null) {
+            this.ipcKey = string.IsNullOrEmpty(ipcKey) ? SiteKey : ipcKey;
             this.targetSessionId = sessionId;
             this.currentPromptTimestamp = promptTime;
             this.terminalLabel = terminal;
@@ -200,7 +220,13 @@ namespace WaitPlayNative {
             // Remember which terminal tab launched us: we hide while the user is elsewhere and come back with them.
             if (launchedFromTerminal) CaptureLaunchTab(monitoredWindowHandle);
             tabTimer = new System.Threading.Timer(_ => PollTerminalTab(), null, 250, 250);
-            Closed += (s, e) => { try { tabTimer.Dispose(); } catch {} };
+            Closed += (s, e) => {
+                try { tabTimer.Dispose(); } catch {}
+                // A clean shutdown of the browser is what flushes cookies to disk: a sign-in made moments ago has to survive
+                try { if (webView != null) webView.Dispose(); } catch {}
+            };
+            // Logoff/shutdown must still end us even though every other close request only parks the window
+            if (Application.Current != null) Application.Current.SessionEnding += (s, e) => { quitRequested = true; };
         }
 
         // UIA lookup takes ~200ms the first time, so it runs off the UI thread.
@@ -218,6 +244,7 @@ namespace WaitPlayNative {
 
         // Timer thread. Two consecutive hits (~500ms) so a quick tab peek-and-back doesn't hide us.
         private void PollTerminalTab() {
+            if (hiddenBackground) return;   // parked: nobody is looking at the tab
             if (Interlocked.Exchange(ref tabPollBusy, 1) == 1) return;   // previous UIA call still running
             try {
                 var t = tabTracker;
@@ -226,21 +253,153 @@ namespace WaitPlayNative {
             } finally { Volatile.Write(ref tabPollBusy, 0); }
         }
 
+        // ── Parking ────────────────────────────────────────────────────
+        // X, Esc, Alt+F4, the task ending and leaving the window never destroy it: they hide it, so the page
+        // (reel, scroll, playback position), the game board and the login stay in RAM. Hiding pauses and mutes
+        // whatever was playing; showing by ANY route resumes it from the same spot. Quit() is the only real exit.
         private void HideWhileAway() {
             hiddenAway = true;
-            SetMuted(true);    // a playing reel shouldn't keep talking from an invisible window
-            Hide();
+            SetMuted(true);      // a playing reel shouldn't keep talking from an invisible window
+            PauseMedia();        // queued before Hide(), so the page can't pause itself first and make us forget what was playing
+            if (gameTimer != null && gameTimer.IsEnabled) { gameTimer.Stop(); gameTimerPaused = true; }
+            if (pulseTimer != null) pulseTimer.Stop();   // nobody sees the status dot, and every tick is a wakeup
+            var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+            t.Tick += (s, e) => { t.Stop(); if (hiddenAway) Hide(); };
+            t.Start();
+            BeginDeepPark();
         }
-        private void ShowAfterAway() {
+        // Park until a launch or fresh work wakes us. A byFinish park also ends if the same agent resumes; a user hide doesn't.
+        private void HideToBackground(bool byFinish) {
+            if (!hiddenBackground) hiddenByFinish = byFinish;
+            else if (!byFinish) hiddenByFinish = false;
+            hiddenBackground = true;
+            if (hiddenAway) { BeginDeepPark(); return; }   // hidden mid-turn already, now parked for good: deepen sooner
+            if (byFinish) FocusTerminal();   // still holding the foreground here, so handing it over is allowed
+            HideWhileAway();
+        }
+        private void ShowAfterAway(bool activate = false) {
             hiddenAway = false;
+            hiddenBackground = false;
+            hiddenByFinish = false;
             awaySince = DateTime.MinValue;
-            ShowActivated = false;   // reappear beside the terminal without stealing its keyboard focus
+            ShowActivated = activate;   // by default reappear beside the terminal without stealing its keyboard focus
             Show();
             Topmost = true;
+            if (activate) Activate();
+            OnBecameVisible();          // the visibility event doesn't fire if Hide() hadn't run yet
+        }
+        private void OnBecameVisible() {
+            hiddenAway = false;
+            hiddenBackground = false;
+            hiddenByFinish = false;
             SetMuted(false);
+            WakePage();
+            ResumeMedia();
+            if (gameTimerPaused) { gameTimerPaused = false; if (gameTimer != null) gameTimer.Start(); }
+        }
+        public void Quit() {
+            quitRequested = true;
+            try { Close(); } catch {}
+        }
+        // The user was in this window when the task ended: give the keyboard back to the terminal that owns it
+        private void FocusTerminal() {
+            try {
+                if (!launchedFromTerminal || monitoredWindowHandle == IntPtr.Zero) return;
+                IntPtr fg = ParentWindowTracker.GetForegroundWindow();
+                if (fg != myHwnd && !IsWaitPlayWindow(fg)) return;     // user is elsewhere: don't steal focus
+                if (!ParentWindowTracker.IsWindow(monitoredWindowHandle)) return;
+                if (ParentWindowTracker.IsIconic(monitoredWindowHandle)) ParentWindowTracker.ShowWindowAsync(monitoredWindowHandle, 9);
+                ParentWindowTracker.SetForegroundWindow(monitoredWindowHandle);
+            } catch {}
+        }
+        // Pause what is playing and remember it (window.__wpResume) so showing the window continues from the same frame
+        private const string PAUSE_MEDIA_JS = "(function(){try{var a=window.__wpResume||[];document.querySelectorAll('video,audio').forEach(function(m){if(!m.paused&&!m.ended){a.push(m);m.pause();}});window.__wpResume=a;return a.length;}catch(e){return -1;}})()";
+        private const string RESUME_MEDIA_JS = "(function(){try{var a=window.__wpResume||[];window.__wpResume=null;a.forEach(function(m){if(m.isConnected){var p=m.play();if(p&&p.catch)p.catch(function(){});}});return a.length;}catch(e){return -1;}})()";
+        private void PauseMedia() { RunPageScript(PAUSE_MEDIA_JS); }
+        private void ResumeMedia() { RunPageScript(RESUME_MEDIA_JS); }
+        private void RunPageScript(string js) {
+            try { if (webView != null && webView.CoreWebView2 != null) webView.CoreWebView2.ExecuteScriptAsync(js); } catch {}
         }
         private void SetMuted(bool muted) {
             try { if (webView != null && webView.CoreWebView2 != null) webView.CoreWebView2.IsMuted = muted; } catch {}
+        }
+
+        // ── Deep park: a hidden page is frozen and its RAM handed back ──────────
+        // After the page has settled (a quick alt-tab peek never gets here), freeze it like an Edge "sleeping tab", let it drop
+        // its caches, then give the physical RAM back to Windows. Nothing is discarded: the pages sit in the standby list or the
+        // pagefile and are read back on demand, so the reel position, scroll and game board come back exactly as they were.
+        private void BeginDeepPark() {
+            if (suspended) return;
+            if (deepParkTimer != null) deepParkTimer.Stop();
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(hiddenBackground ? 1200 : 6000) };   // mid-turn absences are usually short
+            deepParkTimer = timer;
+            timer.Tick += async (s, e) => {
+                timer.Stop();
+                if (!hiddenAway) return;
+                await SuspendPage();
+                if (!hiddenAway) { if (suspended) WakePage(); return; }   // shown while the freeze was in flight: thaw it again
+                TrimNow(true);
+                if (retrimTimer == null) {
+                    // A frozen page keeps doing memory-reduction work for ~30s (each burst re-faults ~70MB), so trim again every 4s
+                    // through that, then only now and then. The managed heap is collected on the first few passes only.
+                    int fast = 8;
+                    retrimTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                    retrimTimer.Tick += (s2, e2) => {
+                        if (!hiddenAway) return;
+                        TrimNow(fast > 6);
+                        if (fast > 0 && --fast == 0) retrimTimer.Interval = TimeSpan.FromSeconds(30);
+                    };
+                    retrimTimer.Start();
+                }
+            };
+            timer.Start();
+        }
+        private async System.Threading.Tasks.Task SuspendPage() {
+            try {
+                var core = webView != null ? webView.CoreWebView2 : null;
+                if (core == null) return;
+                core.MemoryUsageTargetLevel = Microsoft.Web.WebView2.Core.CoreWebView2MemoryUsageTargetLevel.Low;
+                suspended = await core.TrySuspendAsync();
+            } catch {}
+        }
+        private void TrimNow(bool collect) {
+            uint browser = 0;
+            try { if (webView != null && webView.CoreWebView2 != null && !OtherCompanionVisible()) browser = webView.CoreWebView2.BrowserProcessId; } catch {}
+            RamTrim.Park(browser, collect);   // browser 0 = only our own process: a visible sibling shares the browser and must not stutter
+        }
+        private static bool OtherCompanionVisible() {
+            try {
+                int self = System.Diagnostics.Process.GetCurrentProcess().Id;
+                foreach (var p in System.Diagnostics.Process.GetProcessesByName("WaitPlay")) {
+                    if (p.Id != self && p.MainWindowHandle != IntPtr.Zero) return true;
+                }
+            } catch {}
+            return false;
+        }
+        private void CancelDeepPark() {
+            if (deepParkTimer != null) { try { deepParkTimer.Stop(); } catch {} deepParkTimer = null; }
+            if (retrimTimer != null) { try { retrimTimer.Stop(); } catch {} retrimTimer = null; }
+        }
+        // Shown again by any route: normal memory priority first (the page is about to ask for its pages back), then thaw
+        private void WakePage() {
+            CancelDeepPark();
+            try {
+                var core = webView != null ? webView.CoreWebView2 : null;
+                if (core != null) {
+                    RamTrim.Wake(core.BrowserProcessId);
+                    if (suspended) core.Resume();
+                    core.MemoryUsageTargetLevel = Microsoft.Web.WebView2.Core.CoreWebView2MemoryUsageTargetLevel.Normal;
+                } else RamTrim.Wake(0);
+            } catch {}
+            suspended = false;
+            if (pulseTimer != null) pulseTimer.Start();
+        }
+        // A parked window only needs the IPC file when it changed since the last look
+        private bool IpcUnchanged(string file) {
+            long stamp = System.IO.File.GetLastWriteTimeUtc(file).Ticks;
+            if (stamp == lastIpcStamp) return true;
+            lastIpcStamp = stamp;
+            return false;
         }
 
         // Our own process or a sibling WaitPlay (the widget) holding focus doesn't count as leaving.
@@ -348,10 +507,17 @@ namespace WaitPlayNative {
                 }
             };
             Closing += (s, e) => {
+                if (quitRequested) return;
+                // X, Esc, Alt+F4, taskbar close: park instead of destroying, so the page, the playback position
+                // and the game board survive in RAM. Quit() (widget menu, Quit companion) is the only real exit.
+                e.Cancel = true;
                 if (hasBeenActive && !hasFinished) {
                     RecordUserDismiss();
                 }
+                HideToBackground(false);
             };
+            // Any route that shows the window (new prompt, widget button, tab return) resumes what was paused
+            IsVisibleChanged += (s, e) => { if ((bool)e.NewValue) OnBecameVisible(); };
             KeyDown += (s, e) => {
                 if (hasFinished && bannerBorder != null && bannerBorder.Visibility == Visibility.Visible) {
                     if (e.Key == Key.Enter || e.Key == Key.Escape) {
@@ -744,8 +910,7 @@ namespace WaitPlayNative {
             // window and loads the real Instagram site — no toolbar chrome.
             try {
                 webView = new Microsoft.Web.WebView2.Wpf.WebView2();
-                string udf = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", "webview2");
-                try { System.IO.Directory.CreateDirectory(udf); } catch {}
+                string udf = ProfileStore.Resolve();
                 webView.CreationProperties = new Microsoft.Web.WebView2.Wpf.CoreWebView2CreationProperties { UserDataFolder = udf };
                 Grid.SetRow(webView, 1);
                 Grid.SetRowSpan(webView, 3);
@@ -764,6 +929,8 @@ namespace WaitPlayNative {
                                 try { webView.CoreWebView2.Navigate(e2.Uri); } catch {}
                             };
                         } catch {}
+                        // The browser may be shared with a companion that is parked (very-low memory priority): this window is live
+                        try { RamTrim.Wake(webView.CoreWebView2.BrowserProcessId); } catch {}
                     }
                 };
                 try { webView.Source = new Uri(string.IsNullOrEmpty(StartUrl) ? HOME_URL : StartUrl); } catch {}
@@ -992,6 +1159,16 @@ namespace WaitPlayNative {
             return raw;
         }
         private void CheckAgentStatus() {
+            // The widget asks every companion to exit cleanly (Quit companion, WaitPlay turned off). A normal close only hides us, and
+            // a clean exit is what lets the browser flush cookies. Only a request newer than this process counts.
+            try {
+                string qf = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", ".waitplay-quit.txt");
+                if (System.IO.File.Exists(qf)) {
+                    long qts;
+                    long.TryParse(System.IO.File.ReadAllText(qf).Trim(), out qts);
+                    if (qts > startedAtMs && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - qts < 15000) { Quit(); return; }
+                }
+            } catch {}
             if (!WaitPlayStateManager.IsEnabled()) {
                 // Don't close - user controls the window; just stop polling
                 if (statusPollTimer != null) { try { statusPollTimer.Stop(); } catch {} }
@@ -1003,6 +1180,13 @@ namespace WaitPlayNative {
             }
             if (myHwnd == IntPtr.Zero) {
                 try { myHwnd = new WindowInteropHelper(this).Handle; } catch {}
+            }
+            // A parked window ticks slower and stops its tab poll: every wakeup touches pages that were just handed back
+            int wantTick = hiddenBackground ? PARKED_TICK_MS : ACTIVE_TICK_MS;
+            if (statusPollTimer != null && (int)statusPollTimer.Interval.TotalMilliseconds != wantTick) statusPollTimer.Interval = TimeSpan.FromMilliseconds(wantTick);
+            if (tabTimer != null && tabTimerStopped != hiddenBackground) {
+                tabTimerStopped = hiddenBackground;
+                try { tabTimer.Change(hiddenBackground ? System.Threading.Timeout.Infinite : 250, hiddenBackground ? System.Threading.Timeout.Infinite : 250); } catch {}
             }
 
             // Bridge-independent close signal: any watcher can request close by
@@ -1028,8 +1212,8 @@ namespace WaitPlayNative {
             } catch {}
             // 1. Check IPC file for session switch requested by another process
             try {
-                string ipcFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", ".waitplay-active-session.txt");
-                if (System.IO.File.Exists(ipcFile)) {
+                string ipcFile = IpcPath(ipcKey);
+                if (System.IO.File.Exists(ipcFile) && !(hiddenBackground && IpcUnchanged(ipcFile))) {
                     string content = System.IO.File.ReadAllText(ipcFile).Trim();
                     string[] parts = content.Split('|');
                     if (parts.Length >= 2) {
@@ -1072,10 +1256,26 @@ namespace WaitPlayNative {
                             // New prompt came from the tab the user is in now: that tab owns us
                             if (retargeted) CaptureLaunchTab(monitoredWindowHandle);
                         }
-                        // A new launch (prompt in the current tab, or a widget button) wants us visible here
-                        if (freshRequest && hiddenAway) {
-                            CaptureLaunchTab(monitoredWindowHandle);
-                            ShowAfterAway();
+                        // A launch (prompt in the current tab, or a widget button) wants us back. We outlive each turn, so a
+                        // prompt starts over like a fresh process; a widget button only shows what we already have.
+                        if (freshRequest) {
+                            bool fromWidget = reqTerm == "Desktop";
+                            launchedFromTerminal = !fromWidget;
+                            if (fromWidget && parts.Length >= 4) {
+                                // The window the user was in when they pressed the widget button is the one whose focus keeps us
+                                // up; the old owner (a terminal they may have left long ago) would park us again within 500ms.
+                                long wh;
+                                if (long.TryParse(parts[3], out wh) && wh != 0) monitoredWindowHandle = (IntPtr)wh;
+                            }
+                            if (!string.IsNullOrEmpty(reqSession)) BeginNewTurn();
+                            if (hiddenAway) {
+                                if (launchedFromTerminal) CaptureLaunchTab(monitoredWindowHandle);
+                                ShowAfterAway(fromWidget);
+                            } else {
+                                if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+                                Topmost = true;
+                                if (fromWidget) Activate();
+                            }
                         }
                     }
                 }
@@ -1129,11 +1329,11 @@ namespace WaitPlayNative {
             }
 
             // ── Follow the owning terminal tab ────────────────────────
-            // Terminal-launched: leaving the tab (another WT tab, or another app) for 500ms hides us;
-            // coming back to the owning tab shows us again while the agent is still working. Once the
-            // turn has finished, leaving closes us for good. Widget-launched windows have no owning
-            // tab, so leaving simply closes them.
-            if (autoCloseArmed) {
+            // Terminal-launched: leaving the tab (another WT tab, or another app) for 500ms hides us mid-turn;
+            // coming back to the owning tab shows us again while the agent is still working. Windows are never
+            // closed here: once the task is over, or for a widget-launched window (no owning tab), leaving
+            // parks us (hidden, paused, in RAM) until a new launch or fresh work wakes us.
+            if (autoCloseArmed && !hiddenBackground) {   // a parked window has nothing to decide here: it waits for a launch or fresh work
                 IntPtr fg = ParentWindowTracker.GetForegroundWindow();
                 if (fg == IntPtr.Zero) {
                     // No foreground window (screen locked, etc.) — ignore
@@ -1144,18 +1344,21 @@ namespace WaitPlayNative {
                     bool away = !(isSelf || isParent) || (isParent && onOtherTab);
 
                     if (hiddenAway) {
-                        if (hasFinished) { try { Close(); } catch {} return; }
-                        if (isParent && !onOtherTab) ShowAfterAway();
+                        // Parked (task over, X pressed, or a widget window was left): stays hidden until a launch or fresh work.
+                        // Hidden mid-turn only because the user left the tab: comes back with them.
+                        if (!hiddenBackground && isParent && !onOtherTab) ShowAfterAway();
                     } else {
                         if (!away) awaySince = DateTime.MinValue;
                         else if (awaySince == DateTime.MinValue) awaySince = DateTime.UtcNow;
                         if (away && (DateTime.UtcNow - awaySince).TotalMilliseconds >= 500) {
-                            if (!launchedFromTerminal || hasFinished) { try { Close(); } catch {} return; }
-                            HideWhileAway();
+                            if (!launchedFromTerminal || hasFinished) HideToBackground(false);
+                            else HideWhileAway();
                         }
                     }
                 }
             }
+            // A parked window only needs the cheap file checks above on every tick; the bridge is asked about every 3s
+            if (hiddenBackground && (++bgTicks % (3000 / PARKED_TICK_MS)) != 0) return;   // parked: ask the bridge every 3s
             try {
                 string url = string.Format("http://127.0.0.1:{0}/sessions", BRIDGE_PORT);
                 var request = (HttpWebRequest)WebRequest.Create(url);
@@ -1267,7 +1470,10 @@ namespace WaitPlayNative {
         }
 
 
+        // X on an agent-launched popup means "not for this prompt". X on a window the user opened from the widget says
+        // nothing about the agent, and must not silence the agent's popup for the next five minutes.
         private void RecordUserDismiss() {
+            if (!launchedFromTerminal) return;
             string sid = !string.IsNullOrEmpty(targetSessionId) ? targetSessionId : activeAgentName;
             DismissalTracker.RecordDismissal(sid);
         }
@@ -1365,10 +1571,11 @@ namespace WaitPlayNative {
 
                     string agentName = GetAgentDisplayName(!string.IsNullOrEmpty(rawAgent) ? rawAgent : rawSessionId);
                     activeAgentName = agentName;
-                    // Check dismissal for this specific session
+                    // The user pressing X on an agent-launched popup suppresses popups for that session. A window the user
+                    // opened themselves (widget button) is never suppressed, or it would park again the moment it is shown.
                     string checkSid = !string.IsNullOrEmpty(targetSessionId) ? targetSessionId : rawSessionId;
-                    if (DismissalTracker.IsPromptDismissed(checkSid)) {
-                        Close();
+                    if (launchedFromTerminal && DismissalTracker.IsPromptDismissed(checkSid)) {
+                        if (!hiddenBackground) HideToBackground(false);
                         return;
                     }
 
@@ -1382,6 +1589,7 @@ namespace WaitPlayNative {
                             if (exitTimer != null) exitTimer.Stop();
                             bannerBorder.Visibility = Visibility.Collapsed;
                         }
+                        UnparkIfFreshWork(activeSession);   // every tick, not only when hasFinished flips: the first poll after a finish can still show the old turn
 
                         if (workingSessions.Count > 1) {
                             statusPillText.Text = string.Format("{0} \u2022 {1} (+{2} active)", agentName, !string.IsNullOrEmpty(model) ? model : "Working", workingSessions.Count - 1);
@@ -1410,6 +1618,7 @@ namespace WaitPlayNative {
                             if (exitTimer != null) exitTimer.Stop();
                             bannerBorder.Visibility = Visibility.Collapsed;
                         }
+                        UnparkIfFreshWork(activeSession);
 
                         statusPillText.Text = string.Format("\u23F8 {0} waiting for input", agentName);
                         statusPill.Background = new SolidColorBrush(Color.FromArgb(30, 255, 169, 70));
@@ -1452,12 +1661,14 @@ namespace WaitPlayNative {
             hasFinished = true;
             if (webReadyTimer != null) { try { webReadyTimer.Stop(); } catch {} }
             DismissalTracker.ClearDismissal(targetSessionId);
-            // Don't auto-close: the user controls when to close the widget.
-            // Just update status to show agent is done.
+            finishedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            // Task over: park, never close. The reel and game stay in RAM, paused where they were, and the same
+            // window comes back on the next prompt. The pill is updated first so the parked window reads "Done".
             try {
                 statusPillText.Text = activeAgentName + " \u2022 Done";
                 statusDot.Fill = new SolidColorBrush(Color.FromRgb(100, 200, 120));
             } catch {}
+            HideToBackground(true);
         }
 
         private void CancelPendingClose() {
@@ -1465,6 +1676,24 @@ namespace WaitPlayNative {
                 hasFinished = false;
                 if (exitTimer != null) { try { exitTimer.Stop(); } catch {} }
             }
+        }
+
+        // The window outlives each turn, so a new prompt resets turn state the way a fresh process starts out.
+        private void BeginNewTurn() {
+            hasFinished = false;
+            hasBeenActive = false;
+            debounceCompletedTicks = 0;
+            idleTicks = 0;
+            finishedAtMs = 0;
+            try { statusPillText.Text = string.Format("{0} is Working...", activeAgentName); } catch {}
+        }
+
+        // A turn that ended (or only paused for a question) and kept going: let the window come back with the user's
+        // terminal tab. Only work newer than the finish counts; the bridge can report the old turn as WORKING for a while.
+        private void UnparkIfFreshWork(Dictionary<string, object> s) {
+            if (!hiddenByFinish || !launchedFromTerminal) return;
+            long ev = s.ContainsKey("lastEventAt") && s["lastEventAt"] != null ? Convert.ToInt64(s["lastEventAt"]) : 0;
+            if (ev > finishedAtMs) { hiddenBackground = false; hiddenByFinish = false; }
         }
 
         // --- Instagram WebView2 companion plumbing -------------------------------
@@ -1584,7 +1813,7 @@ namespace WaitPlayNative {
             var dock = new DockPanel { LastChildFill = true };
 
             var btnClose = MakeWinButton("\u2715", Color.FromRgb(232, 60, 60));
-            btnClose.ToolTip = "Quit";
+            btnClose.ToolTip = "Hide (keeps your place; right-click the widget to quit)";
             btnClose.Click += (s, e) => Close();
             DockPanel.SetDock(btnClose, Dock.Right);
             dock.Children.Add(btnClose);
@@ -1746,6 +1975,9 @@ namespace WaitPlayNative {
         public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
         [DllImport("user32.dll")]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
         public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
         public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -1797,6 +2029,34 @@ namespace WaitPlayNative {
                 CloseHandle(snapshot);
             }
             return 0;
+        }
+
+        // root plus everything it spawned (for a companion: the WebView2 browser, renderers, GPU and utility processes)
+        public static List<uint> ProcessTree(uint root) {
+            var kids = new Dictionary<uint, List<uint>>();
+            IntPtr snapshot = CreateToolhelp32Snapshot(0x00000002, 0);
+            if (snapshot != IntPtr.Zero && snapshot != (IntPtr)(-1)) {
+                try {
+                    PROCESSENTRY32 pe = new PROCESSENTRY32();
+                    pe.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
+                    if (Process32First(snapshot, ref pe)) {
+                        do {
+                            List<uint> l;
+                            if (!kids.TryGetValue(pe.th32ParentProcessID, out l)) { l = new List<uint>(); kids[pe.th32ParentProcessID] = l; }
+                            l.Add(pe.th32ProcessID);
+                        } while (Process32Next(snapshot, ref pe));
+                    }
+                } catch {}
+                finally { CloseHandle(snapshot); }
+            }
+            var seen = new HashSet<uint> { root };
+            var all = new List<uint> { root };
+            for (int i = 0; i < all.Count; i++) {
+                List<uint> l;
+                if (!kids.TryGetValue(all[i], out l)) continue;
+                foreach (uint k in l) if (seen.Add(k)) all.Add(k);   // seen: a recycled PID must not loop the walk
+            }
+            return all;
         }
 
         public static IntPtr FindTopWindowForPid(uint startPid) {
@@ -1866,6 +2126,103 @@ namespace WaitPlayNative {
                 }
             } catch {}
             return IntPtr.Zero;
+        }
+    }
+
+    // Where the browser profile lives. It holds every login (Instagram, YouTube, X), so it has to survive: not %TEMP%, which
+    // Storage Sense and cleaner tools empty, and an emptied profile means signing in to everything again. An older build kept it
+    // in %TEMP%\waitplay\webview2; that folder is moved here the first time, so the logins carry over.
+    // WAITPLAY_PROFILE_DIR overrides the location (portable installs, tests). An override is used as it is and never receives the
+    // old profile: moving someone's logins into a folder that a test or a script may delete is how logins get lost.
+    internal static class ProfileStore {
+        public static string Resolve() {
+            string over = Environment.GetEnvironmentVariable("WAITPLAY_PROFILE_DIR");
+            if (!string.IsNullOrEmpty(over)) {
+                try { System.IO.Directory.CreateDirectory(over); } catch {}
+                return over;
+            }
+            return Adopt(
+                System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WaitPlay", "webview2"),
+                System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay", "webview2"));
+        }
+
+        // The folder to use: dest, with the old profile moved into it when dest has none yet. When the move is not possible yet (a
+        // browser from the old build is still shutting down) the old folder itself, so the logins keep working this run.
+        internal static string Adopt(string dest, string legacy) {
+            try {
+                // Two companions starting together must not both migrate: the loser would end up with an empty profile
+                using (var gate = new Mutex(false, "WaitPlay_Profile_Migration")) {
+                    bool held = false;
+                    try { held = gate.WaitOne(15000); } catch (AbandonedMutexException) { held = true; }
+                    try {
+                        bool destHasProfile = System.IO.Directory.Exists(System.IO.Path.Combine(dest, "EBWebView"));
+                        bool legacyHasProfile = System.IO.Directory.Exists(System.IO.Path.Combine(legacy, "EBWebView"));
+                        if (!destHasProfile && legacyHasProfile) {
+                            // an empty folder left by an earlier run is in the way of the move; anything else is left alone
+                            try { if (System.IO.Directory.Exists(dest) && System.IO.Directory.GetFileSystemEntries(dest).Length == 0) System.IO.Directory.Delete(dest); } catch {}
+                            if (!System.IO.Directory.Exists(dest)) {
+                                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(dest));
+                                try { System.IO.Directory.Move(legacy, dest); }
+                                catch (Exception) {
+                                    if (System.IO.Directory.Exists(legacy)) return legacy;
+                                }
+                            }
+                        }
+                    } finally { if (held) { try { gate.ReleaseMutex(); } catch {} } }
+                }
+            } catch {}
+            try { System.IO.Directory.CreateDirectory(dest); } catch {}
+            return dest;
+        }
+    }
+
+    // Gives a parked window's physical RAM back to Windows without losing anything. EmptyWorkingSet moves the pages to the
+    // standby list (or the pagefile) and the very-low memory priority makes Windows reclaim them first; they are read back on
+    // demand when the window is shown again. Measured on a loaded youtube.com companion: 666 MB working set -> 20 MB.
+    internal static class RamTrim {
+        [DllImport("psapi.dll", SetLastError = true)] private static extern bool EmptyWorkingSet(IntPtr hProcess);
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+        [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr h);
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern bool SetProcessInformation(IntPtr h, int infoClass, ref uint info, int size);
+
+        private const uint SET_INFORMATION = 0x0200, SET_QUOTA = 0x0100, QUERY_LIMITED_INFORMATION = 0x1000;
+        private const int ProcessMemoryPriority = 0;
+        private const uint PriorityVeryLow = 1, PriorityNormal = 5;
+
+        // This process plus, when browserPid is given, the whole WebView2 tree under it (sandboxed renderers and GPU included)
+        private static void Each(uint browserPid, uint priority, bool trim) {
+            var pids = new HashSet<uint> { (uint)System.Diagnostics.Process.GetCurrentProcess().Id };
+            if (browserPid != 0) foreach (uint p in ParentWindowTracker.ProcessTree(browserPid)) pids.Add(p);
+            foreach (uint pid in pids) {
+                IntPtr h = OpenProcess(SET_INFORMATION | SET_QUOTA | QUERY_LIMITED_INFORMATION, false, pid);
+                if (h == IntPtr.Zero) continue;
+                try {
+                    uint pri = priority;
+                    SetProcessInformation(h, ProcessMemoryPriority, ref pri, 4);
+                    if (trim) EmptyWorkingSet(h);
+                } catch {}
+                finally { CloseHandle(h); }
+            }
+        }
+
+        // Our own heap first (WPF + CLR), then every process; low priority so they stay first in line when Windows needs RAM
+        public static void Park(uint browserPid, bool collect) {
+            try {
+                if (collect) { GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect(); }
+                Each(browserPid, PriorityVeryLow, true);
+            } catch {}
+        }
+        // Normal priority again, before the page asks for its memory back
+        public static void Wake(uint browserPid) {
+            try { Each(browserPid, PriorityNormal, false); } catch {}
+        }
+        // For a process that is only ever idle (the widget): trim the heap and the working set, nothing else changes
+        public static void TrimSelf() {
+            try {
+                GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+                IntPtr h = OpenProcess(SET_QUOTA | QUERY_LIMITED_INFORMATION, false, (uint)System.Diagnostics.Process.GetCurrentProcess().Id);
+                if (h != IntPtr.Zero) { try { EmptyWorkingSet(h); } finally { CloseHandle(h); } }
+            } catch {}
         }
     }
 
@@ -2131,6 +2488,10 @@ namespace WaitPlayNative {
             statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
             statusTimer.Tick += (s, e) => PollStatus();
             statusTimer.Start();
+            // The widget sits idle all day: give its working set back every half minute (it is read back on demand)
+            var widgetTrim = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+            widgetTrim.Tick += (s, e) => RamTrim.TrimSelf();
+            widgetTrim.Start();
         }
 
         // ════════════════════════════════════════════════════════════
@@ -2284,6 +2645,8 @@ namespace WaitPlayNative {
             var d3 = new MenuItem { Header = "▾ Bottom Edge" }; d3.Click += (s,e) => { dock = DockSide.Bottom; ApplyDock(); SaveDock(); };
             ctx.Items.Add(d1); ctx.Items.Add(d2); ctx.Items.Add(d3);
             ctx.Items.Add(new Separator());
+            var qc = new MenuItem { Header = "Quit companion (free RAM)" }; qc.Click += (s,e) => QuitCompanions();
+            ctx.Items.Add(qc);
             var ex = new MenuItem { Header = "Exit" }; ex.Click += (s,e) => Close();
             ctx.Items.Add(ex);
             ContextMenu = ctx;
@@ -2572,7 +2935,7 @@ namespace WaitPlayNative {
             WaitPlayStateManager.SetEnabled(isEnabled);
             UpdateVisuals();
             if (!isEnabled) {
-                if (activeGameWindow != null) { try { activeGameWindow.Close(); } catch {} activeGameWindow = null; }
+                if (activeGameWindow != null) { try { activeGameWindow.Quit(); } catch {} activeGameWindow = null; }
                 CloseOtherGameWindows();
             }
         }
@@ -2638,19 +3001,51 @@ namespace WaitPlayNative {
             try {
                 if (!isEnabled) { isEnabled = true; WaitPlayStateManager.SetEnabled(true); UpdateVisuals(); }
                 if (activeGameWindow == null || !activeGameWindow.IsLoaded) {
-                    activeGameWindow = new MainWindow("", 0, "Desktop", 0, IntPtr.Zero);
+                    activeGameWindow = new MainWindow("", 0, "Desktop", 0, IntPtr.Zero, "games");
                     activeGameWindow.Closed += (s,e) => { activeGameWindow = null; };
                     activeGameWindow.Show(); activeGameWindow.Activate();
                 } else { activeGameWindow.Show(); activeGameWindow.Activate(); }
             } catch {}
         }
+        // Companions park themselves on every close request, so ending them takes an explicit ask: the quit file below, read by each
+        // companion on its next tick. A clean exit lets the browser flush cookies (a sign-in made seconds ago survives) and takes
+        // the browser with it. Whatever is still running after 5s is killed, and so is any browser left behind by a killed
+        // companion (one was still alive minutes after its host died, holding RAM and the profile lock).
         private void CloseOtherGameWindows() {
-            try {
-                int pid = Process.GetCurrentProcess().Id;
-                foreach (var p in Process.GetProcessesByName("WaitPlay")) {
-                    if (p.Id != pid) { try { p.CloseMainWindow(); if (!p.WaitForExit(150)) p.Kill(); } catch {} }
-                }
-            } catch {}
+            int pid = Process.GetCurrentProcess().Id;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ => {
+                try {
+                    var others = new List<Process>();
+                    var trees = new List<uint>();
+                    foreach (var p in Process.GetProcessesByName("WaitPlay")) {
+                        if (p.Id == pid) continue;
+                        others.Add(p);
+                        foreach (uint t in ParentWindowTracker.ProcessTree((uint)p.Id)) if (t != (uint)p.Id) trees.Add(t);
+                    }
+                    if (others.Count == 0) return;
+                    string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay");
+                    System.IO.Directory.CreateDirectory(dir);
+                    string qf = System.IO.Path.Combine(dir, ".waitplay-quit.txt");
+                    System.IO.File.WriteAllText(qf, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
+                    foreach (var p in others) { try { if (!p.WaitForExit(5000)) p.Kill(); } catch {} }
+                    try { System.IO.File.Delete(qf); } catch {}
+                    // a clean exit takes the browser along within a moment; give it up to 10s to finish writing before ending leftovers
+                    for (int i = 0; i < 40; i++) {
+                        bool any = false;
+                        foreach (uint t in trees) { try { if (Process.GetProcessById((int)t).ProcessName == "msedgewebview2") any = true; } catch {} }
+                        if (!any) break;
+                        System.Threading.Thread.Sleep(250);
+                    }
+                    foreach (uint t in trees) {
+                        try { var c = Process.GetProcessById((int)t); if (c.ProcessName == "msedgewebview2") c.Kill(); } catch {}
+                    }
+                } catch {}
+            });
+        }
+        // Context menu "Quit companion": the one real exit for parked windows (frees their RAM)
+        private void QuitCompanions() {
+            if (activeGameWindow != null) { try { activeGameWindow.Quit(); } catch {} activeGameWindow = null; }
+            CloseOtherGameWindows();
         }
 
         private IntPtr HwndHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) {
@@ -2796,33 +3191,6 @@ namespace WaitPlayNative {
     public static class EntryPoint {
         private static Mutex singleInstanceMutex = null;
 
-        [DllImport("user32.dll")]
-        public static extern bool SetForegroundWindow(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
-
-        [DllImport("user32.dll")]
-        public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-
-        private static void BringExistingWindowToFront() {
-            if (!WaitPlayStateManager.IsEnabled()) return;
-            try {
-                var procs = System.Diagnostics.Process.GetProcessesByName("WaitPlay");
-                int currentPid = System.Diagnostics.Process.GetCurrentProcess().Id;
-                foreach (var p in procs) {
-                    if (p.Id != currentPid && p.MainWindowHandle != IntPtr.Zero) {
-                        string title = p.MainWindowTitle;
-                        if (!string.IsNullOrEmpty(title) && title.Contains("Widget")) continue;
-                        ShowWindowAsync(p.MainWindowHandle, 9);
-                        SetForegroundWindow(p.MainWindowHandle);
-                        SetWindowPos(p.MainWindowHandle, (IntPtr)(-1), 0, 0, 0, 0, 0x0003);
-                        break;
-                    }
-                }
-            } catch {}
-        }
-
         [STAThread]
         public static void Main(string[] args) {
             bool launchWidget = false;
@@ -2851,8 +3219,8 @@ namespace WaitPlayNative {
                         if (string.IsNullOrEmpty(terminal)) terminal = "Desktop";
                     } else if (a.StartsWith("--site=")) {
                         string site = a.Substring("--site=".Length).ToLower();
-                        if (site == "youtube" || site == "yt") MainWindow.StartUrl = "https://www.youtube.com/";
-                        else if (site == "x" || site == "twitter") MainWindow.StartUrl = "https://x.com/home";
+                        if (site == "youtube" || site == "yt") { MainWindow.StartUrl = "https://www.youtube.com/"; MainWindow.SiteKey = "youtube"; }
+                        else if (site == "x" || site == "twitter") { MainWindow.StartUrl = "https://x.com/home"; MainWindow.SiteKey = "x"; }
                         else MainWindow.StartUrl = "https://www.instagram.com/";
                         forceGame = true;
                         if (string.IsNullOrEmpty(terminal)) terminal = "Desktop";
@@ -2935,7 +3303,7 @@ namespace WaitPlayNative {
                 return;
             }
 
-            const string mutexName = "WaitPlay_Native_SingleInstance_Mutex";
+            string mutexName = "WaitPlay_Native_SingleInstance_Mutex" + (MainWindow.SiteKey == "instagram" ? "" : "_" + MainWindow.SiteKey);
             bool createdNew;
 
             singleInstanceMutex = new Mutex(true, mutexName, out createdNew);
@@ -2947,11 +3315,10 @@ namespace WaitPlayNative {
                 try {
                     string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "waitplay");
                     if (!System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
-                    string ipcFile = System.IO.Path.Combine(dir, ".waitplay-active-session.txt");
+                    string ipcFile = MainWindow.IpcPath(MainWindow.SiteKey);
                     IntPtr passHwnd = parentHwnd != IntPtr.Zero ? parentHwnd : initialForeground;
                     System.IO.File.WriteAllText(ipcFile, targetSession + "|" + terminal + "|" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + "|" + passHwnd.ToInt64() + "|" + parentPid);
                 } catch {}
-                BringExistingWindowToFront();
                 return;
             }
 

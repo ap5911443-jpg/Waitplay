@@ -14,7 +14,8 @@ WaitPlay detects when your AI coding agent begins working and automatically open
 - **⚡ Instant Agent Trigger:** Hooks directly into prompt submission and tool execution events across 8 major coding agent environments.
 - **🔘 Wispr Flow-Style Desktop Toggle Widget:** A sleek, always-on-top, draggable floating pill widget docked to your screen edge (with `Alt+W` global hotkey, cyan active indicator dot, and direct gamepad launcher) to toggle WaitPlay ON / OFF instantly.
 - **🪟 Parent Window Synchronization:** Automatically detects when you minimize your parent terminal or IDE (Windows Terminal, VS Code, Cursor, Command Prompt) and minimizes WaitPlay off-screen. Restoring the terminal restores WaitPlay without losing your game board or score.
-- **🏆 Interactive Completion Dialog:** Replaces abrupt auto-closing with a sleek summary dialog displaying agent execution duration, moves, and options to **Keep Playing** or **Return to Terminal**.
+- **🧠 Stays in RAM, resumes where you left off, costs almost none:** The task ending, **X**, **Esc** and **Alt+F4** hide the companion instead of closing it. The page, the reel position, the scroll and the game board stay in memory (your login is kept on disk), the video is paused and muted while the window is hidden, and the next prompt, the widget button, or the agent resuming brings the same window back from the same spot. Instagram, X and YouTube each keep their own window. A hidden window is frozen like an Edge "sleeping tab" and its physical RAM is handed back to Windows (nothing is discarded; it pages back in on demand, about 1-2 s): measured on a loaded youtube.com page the whole companion drops from about 345 MB in Task Manager's Memory column to about 10 MB, and its commit charge shrinks by roughly 30%. Right-click the widget and choose **Quit companion** to free everything, or turn WaitPlay off with `Alt+W`.
+- **🔑 Sign in once:** Instagram, YouTube and X run in WaitPlay's own browser profile, `%LOCALAPPDATA%\WaitPlay\webview2` (not `%TEMP%`, which Storage Sense and cleaner tools empty). Logins survive restarts, rebuilds and updates; a profile left in `%TEMP%\waitplay` by an older build is moved there automatically, so existing logins carry over. WaitPlay does not read your default browser's logins: Chromium browsers lock and encrypt them against other apps. Set `WAITPLAY_PROFILE_DIR` to keep the profile somewhere else.
 - **🎯 Multi-Agent & Multi-Terminal Support:** Isolated state tracking across simultaneous terminal sessions, preventing agent conflicts.
 - **🔒 Local Security First:** Bridge operates strictly on loopback (`127.0.0.1:3150`) with auto-generated secure token authentication and payload validation.
 - **💻 Dual Interface Options:**
@@ -76,7 +77,7 @@ npm run build
 npm run build:native
 ```
 
-> **Companion UI:** The native Windows app embeds a **WebView2** (Chromium) control that acts as a browser: on agent start it opens the live **[instagram.com](https://www.instagram.com/)** with a slim toolbar (back / forward / reload / editable address bar / home). Your login persists via a dedicated WebView2 user-data folder. The WebView2 runtime ships with modern Windows; no extra install is required. (A separate React companion with an Instagram clone, micro-games, and YouTube still lives in `apps/web` and runs via `npm run dev:web`.)
+> **Companion UI:** The native Windows app embeds a **WebView2** (Chromium) control that acts as a browser: on agent start it opens the live **[instagram.com](https://www.instagram.com/)** with a slim toolbar (back / forward / reload / editable address bar / home). Your logins persist in `%LOCALAPPDATA%\WaitPlay\webview2` (see "Sign in once" above). The WebView2 runtime ships with modern Windows; no extra install is required. (A separate React companion with an Instagram clone, micro-games, and YouTube still lives in `apps/web` and runs via `npm run dev:web`.)
 
 ### 3. Run the Test Suite
 
@@ -99,6 +100,7 @@ npm run widget
 ```
 - Click the **ON/OFF** pill or press **Alt+W** anywhere to toggle WaitPlay.
 - Click the **🎮 Gamepad** button to open the companion game.
+- Right-click the widget → **Quit companion (free RAM)** to really close the parked windows (X only hides them). They exit cleanly, so the browser saves your logins first, and nothing is left running.
 - Toggle state instantly via CLI: `npm run toggle`
 
 ### Mode B: Native Desktop Companion Window
