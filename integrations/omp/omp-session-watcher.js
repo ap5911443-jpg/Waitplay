@@ -21,6 +21,8 @@ const SESSIONS_ROOT = path.join(os.homedir(), ".omp", "agent", "sessions");
 const BRIDGE_PORT = parseInt(process.env.BRIDGE_PORT || "3150", 10);
 const NATIVE_APP = path.resolve(__dirname, "..", "..", "apps", "native", "WaitPlay.exe");
 const DISMISS_FILE = path.join(os.tmpdir(), "waitplay", ".waitplay-dismissed.json");
+// Turn-end signal for the companion; works without the bridge. The name must match MainWindow.SignalFileId on the native side.
+const CLOSE_FILE = path.join(os.tmpdir(), "waitplay", ".waitplay-close-omp-session.json");
 const HEARTBEAT_MS = 5000;
 // Silent turns stop heartbeating after this much session silence. Keep it above RETRY_SETTLE_MS or the bridge watchdog closes first.
 const MAX_SILENT_TURN_MS = parseInt(process.env.OMP_WATCH_MAX_SILENT_MS || "600000", 10);
@@ -228,6 +230,16 @@ function discoverSessionFile() {
   console.log(`[OMP Watcher] Tailing session: ${path.basename(activeFile)} at byte ${filePosition}`);
 }
 
+// Write-then-rename, so the companion never reads a half-written file
+function writeCloseSignal() {
+  try {
+    fs.mkdirSync(path.dirname(CLOSE_FILE), { recursive: true });
+    const tmp = `${CLOSE_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ sessionId: "omp-session", ts: Date.now() }));
+    fs.renameSync(tmp, CLOSE_FILE);
+  } catch {}
+}
+
 // Ends the open turn after delayMs with no agent activity. Any activity cancels it (see processLine).
 function scheduleTurnEnd(delayMs) {
   clearTimeout(finishDebounceTimer);
@@ -236,6 +248,7 @@ function scheduleTurnEnd(delayMs) {
     finishDebounceTimer = null;
     console.log("[OMP Watcher] OMP turn fully settled and complete!");
     clearDismissal("omp-session");
+    writeCloseSignal();
     sendBridgeEvent("task_completed", { model: currentModel });
   }, delayMs);
 }
