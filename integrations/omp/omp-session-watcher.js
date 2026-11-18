@@ -5,7 +5,8 @@
  * Dedicated trigger architecture designed specifically for how OMP works:
  * - Detects user prompt in active .jsonl session -> Emits task_started -> Spawns native WaitPlay app
  * - Tracks tool execution start/results -> Keeps task_running active across multiple tools
- * - Only completes when assistant outputs final text with 0 pending tools and settles
+ * - Completes when the assistant stops with no pending tools; aborts and errors also end the turn after a quiet period
+ * - While a turn is open, repeats task_running every 5 s so silent tool runs keep the popup
  */
 
 import fs from "node:fs";
@@ -16,10 +17,15 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SESSIONS_DIR = "C:/Users/ASUS/.omp/agent/sessions/-tmp";
+const SESSIONS_ROOT = path.join(os.homedir(), ".omp", "agent", "sessions");
 const BRIDGE_PORT = parseInt(process.env.BRIDGE_PORT || "3150", 10);
-const NATIVE_APP = fs.existsSync("C:\\Users\\ASUS\\waitplay\\apps\\native\\WaitPlay.exe") ? "C:\\Users\\ASUS\\waitplay\\apps\\native\\WaitPlay.exe" : "C:\\Users\\ASUS\\AppData\\Local\\Temp\\waitplay\\apps\\native\\WaitPlay.exe";
+const NATIVE_APP = path.resolve(__dirname, "..", "..", "apps", "native", "WaitPlay.exe");
 const DISMISS_FILE = path.join(os.tmpdir(), "waitplay", ".waitplay-dismissed.json");
+const HEARTBEAT_MS = 5000;
+// Silent turns stop heartbeating after this much session silence. Keep it above RETRY_SETTLE_MS or the bridge watchdog closes first.
+const MAX_SILENT_TURN_MS = parseInt(process.env.OMP_WATCH_MAX_SILENT_MS || "600000", 10);
+const SETTLE_MS = 1500; // stop and aborted: output has settled
+const RETRY_SETTLE_MS = 120000; // error and length: OMP retries or compacts; gaps seen up to ~2 min
 
 function isWaitPlayEnabled() {
   try {
@@ -127,7 +133,7 @@ function formatModelName(raw) {
   return raw.split("/").pop() || raw;
 }
 
-function sendBridgeEvent(event, data) {
+function sendBridgeEvent(event, data, { quiet = false } = {}) {
   const token = getBridgeToken();
   const payload = JSON.stringify({
     agent: "omp",
@@ -158,24 +164,40 @@ function sendBridgeEvent(event, data) {
   req.on("error", () => {});
   req.write(payload);
   req.end();
-  console.log(`[OMP Watcher] Event -> ${event}`);
+  if (!quiet) console.log(`[OMP Watcher] Event -> ${event}`);
 }
 
+// OMP writes sessions/<project-slug>/<timestamp>_<id>.jsonl. The newest file across all projects is the active session.
 function getLatestSessionFile() {
-  if (!fs.existsSync(SESSIONS_DIR)) return null;
-  const files = fs
-    .readdirSync(SESSIONS_DIR)
-    .filter((f) => f.endsWith(".jsonl"))
-    .map((f) => {
-      const p = path.join(SESSIONS_DIR, f);
-      return { path: p, mtime: fs.statSync(p).mtimeMs };
-    })
-    .sort((a, b) => b.mtime - a.mtime);
-
-  return files.length > 0 ? files[0].path : null;
+  if (!fs.existsSync(SESSIONS_ROOT)) return null;
+  let latest = null;
+  for (const slug of fs.readdirSync(SESSIONS_ROOT)) {
+    const dir = path.join(SESSIONS_ROOT, slug);
+    let names;
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      continue; // loose file in the sessions root, not a project dir
+    }
+    for (const name of names) {
+      if (!name.endsWith(".jsonl")) continue;
+      const p = path.join(dir, name);
+      let mtime;
+      try {
+        mtime = fs.statSync(p).mtimeMs;
+      } catch {
+        continue; // deleted mid-scan
+      }
+      if (!latest || mtime > latest.mtime) latest = { path: p, mtime };
+    }
+  }
+  return latest ? latest.path : null;
 }
 
-let activeFile = getLatestSessionFile();
+const startedAt = Date.now();
+const resumeOffsets = new Map(); // session file -> first byte not yet processed
+let lastDiscoveryAt = 0;
+let activeFile = null;
 let filePosition = 0;
 let remainderBuffer = "";
 let isWorking = false;
@@ -183,22 +205,54 @@ let pendingTools = 0;
 let finishDebounceTimer = null;
 let currentPromptTimestamp = 0;
 let currentModel = "Gemini 3.8 Flash";
+let lastOutputAt = 0; // last session line; a turn silent for MAX_SILENT_TURN_MS stops heartbeating
 
-if (activeFile) {
-  const stat = fs.statSync(activeFile);
-  filePosition = stat.size;
+// Sessions created after this watcher started are read from byte 0; older ones start at EOF so old prompts never replay.
+function startOffsetFor(file) {
+  if (resumeOffsets.has(file)) return resumeOffsets.get(file);
+  const stat = fs.statSync(file);
+  return stat.birthtimeMs >= startedAt ? 0 : stat.size;
+}
+
+function discoverSessionFile() {
+  lastDiscoveryAt = Date.now();
+  const latest = getLatestSessionFile();
+  if (!latest || latest === activeFile) return;
+  const offset = startOffsetFor(latest);
+  if (activeFile) {
+    resumeOffsets.set(activeFile, filePosition - Buffer.byteLength(remainderBuffer, "utf-8"));
+  }
+  activeFile = latest;
+  filePosition = offset;
+  remainderBuffer = "";
   console.log(`[OMP Watcher] Tailing session: ${path.basename(activeFile)} at byte ${filePosition}`);
+}
+
+// Ends the open turn after delayMs with no agent activity. Any activity cancels it (see processLine).
+function scheduleTurnEnd(delayMs) {
+  clearTimeout(finishDebounceTimer);
+  finishDebounceTimer = setTimeout(() => {
+    isWorking = false;
+    finishDebounceTimer = null;
+    console.log("[OMP Watcher] OMP turn fully settled and complete!");
+    clearDismissal("omp-session");
+    sendBridgeEvent("task_completed", { model: currentModel });
+  }, delayMs);
 }
 
 function processLine(line) {
   if (!line || !line.trim()) return;
+  lastOutputAt = Date.now();
 
   try {
     const entry = JSON.parse(line.trim());
 
-    // ANY line arriving means the session is still active.
-    // Cancel any pending completion timer immediately — we re-evaluate below.
-    if (finishDebounceTimer) {
+    // Agent activity re-opens the turn: cancel a pending completion, then re-evaluate below.
+    // Session metadata and injected messages (model_change, session_exit, todo_hud_state…) do not.
+    const isActivity =
+      (entry.type === "message" && ["user", "assistant", "toolResult"].includes(entry.message?.role)) ||
+      (entry.type === "custom" && entry.customType === "tool_execution_start");
+    if (isActivity && finishDebounceTimer) {
       clearTimeout(finishDebounceTimer);
       finishDebounceTimer = null;
       console.log("[OMP Watcher] Completion timer cancelled — new activity detected");
@@ -257,43 +311,37 @@ function processLine(line) {
       return;
     }
 
-    // 4. System/custom events (todo_hud_state, launch-completion, image-attachment, etc.)
-    //    These indicate continued activity — keep isWorking true, no completion.
-    if (entry.type === "custom" || entry.type === "custom_message" || entry.type === "internal") {
-      isWorking = true;
+    // 4. Session metadata and injected messages are not agent output: they never open or close a turn.
+    //    A session_exit ends an open turn, so it settles at once.
+    if (entry.type === "custom" && entry.customType === "session_exit") {
+      if (isWorking) scheduleTurnEnd(SETTLE_MS);
       return;
     }
+    if (entry.type === "custom" || entry.type === "custom_message" || entry.type === "internal") return;
 
-    // 5. Assistant message: Check stopReason and pending tools
+    // 5. Assistant message: its stopReason decides whether the turn can end.
     if (entry.type === "message" && entry.message?.role === "assistant") {
       if (entry.message.model) {
         currentModel = formatModelName(entry.message.model);
       }
+      isWorking = true;
 
       const stopReason = entry.message.stopReason;
       const content = entry.message.content || [];
       const hasToolCall = Array.isArray(content) && content.some((c) => c && c.type === "toolCall");
+      // error and aborted cut the turn off: the tools they requested never run, so pendingTools does not gate them.
+      const cutOff = stopReason === "error" || stopReason === "aborted";
 
-      if (stopReason === "toolUse" || hasToolCall) {
+      if (!cutOff && (stopReason === "toolUse" || hasToolCall)) {
         // Model is requesting another tool -> CANNOT BE FINISHED!
-        isWorking = true;
         sendBridgeEvent("task_running", { model: currentModel });
         return;
       }
-      if ((stopReason === "stop" || stopReason === "end_turn") && pendingTools === 0) {
-        // Debounce for 5s to verify OMP turn has truly settled.
-        // Subagent work and system events can cause multi-second gaps
-        // between JSONL writes while the agent is still active.
-        finishDebounceTimer = setTimeout(() => {
-          isWorking = false;
-          finishDebounceTimer = null;
-          console.log("[OMP Watcher] OMP turn fully settled and complete!");
-          clearDismissal("omp-session");
-          sendBridgeEvent("task_completed", { model: currentModel });
-        }, 1500);
+      if (cutOff || ((stopReason === "stop" || stopReason === "end_turn" || stopReason === "length") && pendingTools === 0)) {
+        // OMP retries errors and compacts after length, usually within tens of seconds, so those wait longer.
+        scheduleTurnEnd(stopReason === "error" || stopReason === "length" ? RETRY_SETTLE_MS : SETTLE_MS);
       } else {
         // Intermediate reasoning or thinking
-        isWorking = true;
         sendBridgeEvent("task_running", { model: currentModel });
       }
     }
@@ -303,12 +351,12 @@ function processLine(line) {
 }
 
 function checkFileUpdates() {
-  const latest = getLatestSessionFile();
-  if (latest && latest !== activeFile) {
-    activeFile = latest;
-    filePosition = 0;
-    remainderBuffer = "";
-    console.log(`[OMP Watcher] Switched to new session file: ${path.basename(activeFile)}`);
+  if (Date.now() - lastDiscoveryAt >= 1000) {
+    try {
+      discoverSessionFile();
+    } catch {
+      // sessions root briefly unreadable; retry next tick
+    }
   }
 
   if (!activeFile || !fs.existsSync(activeFile)) return;
@@ -335,6 +383,13 @@ function checkFileUpdates() {
     // File I/O transient errors ignored
   }
 }
+
+// While a turn is open, repeat task_running so the bridge's 20 s watchdog does not close a silent tool run.
+function sendHeartbeat() {
+  if (!isWorking || Date.now() - lastOutputAt > MAX_SILENT_TURN_MS) return;
+  sendBridgeEvent("task_running", { model: currentModel }, { quiet: true });
+}
+setInterval(sendHeartbeat, HEARTBEAT_MS);
 
 // Poll session file every 50ms for low-latency open detection
 setInterval(checkFileUpdates, 50);
