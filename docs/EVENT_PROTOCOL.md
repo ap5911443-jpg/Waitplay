@@ -1,4 +1,5 @@
 # WaitPlay Normalized Event Protocol
+   - Repeat it while a turn is open and silent. The bridge marks a `WORKING` or `GAME_ACTIVE` session `COMPLETED` after 20 seconds without any event.
 
 This document defines the contract for agent lifecycle communication between coding agents and the WaitPlay bridge.
 
