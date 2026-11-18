@@ -12,7 +12,6 @@ export default function (pi: PiEmitter) {
   const NATIVE_APP = fs.existsSync("C:\\Users\\ASUS\\waitplay\\apps\\native\\WaitPlay.exe") ? "C:\\Users\\ASUS\\waitplay\\apps\\native\\WaitPlay.exe" : "C:\\Users\\ASUS\\AppData\\Local\\Temp\\waitplay\\apps\\native\\WaitPlay.exe";
   const DISMISS_FILE = path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay", ".waitplay-dismissed.json");
   const REG_FILE = path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay", ".waitplay-terminals.json");
-  const CLOSE_FILE = path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay", ".waitplay-close.json");
 
   function isPidAlive(pid: number): boolean {
     try {
@@ -68,6 +67,10 @@ export default function (pi: PiEmitter) {
   }
 
   const { label: termLabel, sessionKey } = getTerminalInfo();
+  // One close file per session: a prompt starting in another terminal must never delete ours.
+  // Name must match MainWindow.SignalFileId on the native side.
+  const CLOSE_FILE = path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay",
+    `.waitplay-close-${sessionKey.replace(/[^A-Za-z0-9_-]/g, "_")}.json`);
 
   function isWaitPlayEnabled(): boolean {
     try {
@@ -133,7 +136,10 @@ export default function (pi: PiEmitter) {
   function writeCloseSignal() {
     try {
       fs.mkdirSync(path.dirname(CLOSE_FILE), { recursive: true });
-      fs.writeFileSync(CLOSE_FILE, JSON.stringify({ sessionId: sessionKey, ts: Date.now() }));
+      // Write-then-rename so the companion never reads a half-written file
+      const tmp = `${CLOSE_FILE}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify({ sessionId: sessionKey, ts: Date.now() }));
+      fs.renameSync(tmp, CLOSE_FILE);
     } catch {}
   }
 

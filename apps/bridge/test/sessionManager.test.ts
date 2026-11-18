@@ -69,6 +69,35 @@ describe("Session Manager & Multiple Concurrent Sessions", () => {
     sm.clearAll();
   });
 
+  test("invokes completion callback once when a task completes", () => {
+    const completed: string[] = [];
+    const sm = new SessionManager({
+      onTaskCompleted: (session) => completed.push(session.sessionId),
+    });
+
+    sm.processEvent({
+      agent: "codex",
+      sessionId: "notify-session",
+      event: "task_started",
+      timestamp: Date.now(),
+    });
+    sm.processEvent({
+      agent: "codex",
+      sessionId: "notify-session",
+      event: "task_completed",
+      timestamp: Date.now(),
+    });
+    sm.processEvent({
+      agent: "codex",
+      sessionId: "notify-session",
+      event: "task_completed",
+      timestamp: Date.now(),
+    });
+
+    assert.deepEqual(completed, ["notify-session"]);
+    sm.clearAll();
+  });
+
   test("resetting one session does not delete or interfere with others", () => {
     const sm = new SessionManager();
 

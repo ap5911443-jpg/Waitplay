@@ -15,6 +15,17 @@ const os = require('node:os');
 const BRIDGE_PORT = parseInt(process.env.BRIDGE_PORT || '3150', 10);
 const NATIVE_APP = path.join(__dirname, '..', '..', 'apps', 'native', 'WaitPlay.exe');
 const DISMISS_FILE = path.join(os.tmpdir(), 'waitplay', '.waitplay-dismissed.json');
+// Turn-end signal for the companion; works without the bridge (matches .waitplay-close-<id>.json)
+const CLOSE_FILE = path.join(os.tmpdir(), 'waitplay', '.waitplay-close-claude-code-session.json');
+
+function writeCloseSignal() {
+  try {
+    fs.mkdirSync(path.dirname(CLOSE_FILE), { recursive: true });
+    const tmp = `${CLOSE_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ sessionId: 'claude-code-session', ts: Date.now() }));
+    fs.renameSync(tmp, CLOSE_FILE);
+  } catch {}
+}
 
 function isWaitPlayEnabled() {
   try {
@@ -174,6 +185,7 @@ process.stdin.on('end', () => {
     sendBridgeEvent('task_completed', {
       model: data.model || 'Claude 3.7 Sonnet',
     });
+    writeCloseSignal();
   } else if (hookName === 'Notification' || eventType === 'notify') {
     const msg = data.message || '';
     if (msg.includes('permission') || msg.includes('approve') || msg.includes('allow')) {
