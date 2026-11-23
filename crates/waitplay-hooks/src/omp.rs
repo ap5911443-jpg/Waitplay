@@ -83,6 +83,8 @@ pub struct OmpWatcher {
     file_position: u64,
     remainder: Vec<u8>,
     pub is_working: bool,
+    /// An `ask` tool call is open: the user is answering, so no task_running heartbeats.
+    asking: bool,
     pub pending_tools: u32,
     finish_at: Option<i64>,
     pub current_prompt_ts: i64,
@@ -104,6 +106,7 @@ impl OmpWatcher {
             file_position: 0,
             remainder: Vec::new(),
             is_working: false,
+            asking: false,
             pending_tools: 0,
             finish_at: None,
             current_prompt_ts: 0,
@@ -148,6 +151,7 @@ impl OmpWatcher {
 
     fn complete_turn(&mut self, env: &mut dyn Env) {
         self.is_working = false;
+        self.asking = false;
         self.finish_at = None;
         env.log("[OMP Watcher] OMP turn fully settled and complete!");
         env.clear_dismissal(SESSION);
@@ -180,6 +184,7 @@ impl OmpWatcher {
         if etype == "message" && role == "user" {
             self.is_working = true;
             self.pending_tools = 0;
+            self.asking = false;
             let prompt_ts = env.now_ms();
             self.current_prompt_ts = prompt_ts;
 
@@ -224,7 +229,16 @@ impl OmpWatcher {
         if etype == "custom" && custom_type == "tool_execution_start" {
             self.is_working = true;
             self.pending_tools += 1;
-            let tool = match entry.get("data").and_then(|d| d.get("toolName")) {
+            let data = entry.get("data");
+            if data.and_then(|d| d.get("toolName")).and_then(Value::as_str) == Some("ask") {
+                // The agent is asking the user a question: the window steps aside until the answer is in
+                self.asking = true;
+                let prompt = data.and_then(|d| d.get("intent")).and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or("Waiting for your answer");
+                env.log("[OMP Watcher] Ask started: waiting for the user's answer");
+                self.send(env, "waiting_for_input", obj(vec![("prompt", Value::String(prompt.into())), ("model", self.model())]), false);
+                return;
+            }
+            let tool = match data.and_then(|d| d.get("toolName")) {
                 Some(t) if truthy(t) => t.clone(),
                 _ => Value::String("tool".into()),
             };
@@ -237,6 +251,9 @@ impl OmpWatcher {
         if etype == "message" && role == "toolResult" {
             self.pending_tools = self.pending_tools.saturating_sub(1);
             self.is_working = true;
+            if message.and_then(|m| m.get("toolName")).and_then(Value::as_str) == Some("ask") {
+                self.asking = false; // answered: the next task_running resumes the game
+            }
             env.log(&format!("[OMP Watcher] Tool finished (pending: {})", self.pending_tools));
             self.send(env, "task_running", obj(vec![("model", self.model())]), false);
             return;
@@ -352,7 +369,7 @@ impl OmpWatcher {
 
     /// While a turn is open, repeat task_running so the bridge's 20 s watchdog does not close a silent tool run.
     fn send_heartbeat(&mut self, env: &mut dyn Env) {
-        if !self.is_working || env.now_ms() - self.last_output_at > self.max_silent_ms {
+        if !self.is_working || self.asking || env.now_ms() - self.last_output_at > self.max_silent_ms {
             return;
         }
         self.send(env, "task_running", obj(vec![("model", self.model())]), true);
@@ -425,6 +442,27 @@ mod tests {
     }
     fn tool_result() -> Value {
         json!({"type": "message", "message": {"role": "toolResult", "content": []}})
+    }
+
+    #[test]
+    fn ask_tool_waits_for_the_answer_then_resumes() {
+        let mut env = MockEnv::new();
+        let mut w = watcher(&env);
+        feed(&mut w, &mut env, user("Plan the work"));
+        feed(&mut w, &mut env, json!({"type": "custom", "customType": "tool_execution_start", "data": {"toolName": "ask", "intent": "Picking a database"}}));
+        assert_eq!(env.events(), ["task_started", "waiting_for_input"]);
+        assert_eq!(env.data(1)["prompt"], "Picking a database");
+
+        // no heartbeat may flip the bridge back to WORKING while the user is answering
+        env.advance(6000);
+        w.fire(&mut env);
+        assert_eq!(env.events(), ["task_started", "waiting_for_input"]);
+
+        feed(&mut w, &mut env, json!({"type": "message", "message": {"role": "toolResult", "toolName": "ask", "content": []}}));
+        assert_eq!(env.events().last(), Some(&"task_running"));
+        env.advance(5000);
+        w.fire(&mut env);
+        assert_eq!(env.events().iter().filter(|e| **e == "task_running").count(), 2, "heartbeats resume after the answer");
     }
 
     #[test]

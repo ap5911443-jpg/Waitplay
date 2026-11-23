@@ -26,6 +26,8 @@ pub struct AgentSession {
     pub started_at: i64,
     /// X pressed for this prompt: stays hidden until the next launch.
     pub dismissed: bool,
+    /// The agent asked the user a question and waits for the answer: the window is out of the way until it is answered.
+    pub waiting: bool,
 }
 
 /// A request to show the companion, from a hook launch or from the widget button.
@@ -134,7 +136,7 @@ impl Core {
     pub fn owner_of(&self, fg: WindowId) -> Option<&AgentSession> {
         let mut best: Option<&AgentSession> = None;
         for s in self.sessions.values() {
-            if s.finished || s.dismissed || s.hwnd != fg || s.own_tab == Some(false) {
+            if s.finished || s.dismissed || s.waiting || s.hwnd != fg || s.own_tab == Some(false) {
                 continue;
             }
             best = match best {
@@ -357,6 +359,7 @@ impl Core {
             finished: false,
             started_at: 0,
             dismissed: false,
+            waiting: false,
         });
         if !l.terminal.is_empty() {
             s.terminal = l.terminal.clone();
@@ -365,6 +368,7 @@ impl Core {
         s.started_at = l.ts;
         s.finished = false;
         s.dismissed = false;
+        s.waiting = false;
         s.own_tab = None;
         let id = s.id.clone();
         self.parked_noted = false;
@@ -405,6 +409,11 @@ impl Core {
                     finished.push(sid);
                 }
                 continue;
+            }
+            if let Some(s) = self.sessions.get_mut(&key(&sid)) {
+                // The agent is asking the user something: the window steps aside until the status leaves WAITING_FOR_INPUT
+                // (a status older than this launch is left over from the previous turn)
+                s.waiting = b.status == "WAITING_FOR_INPUT" && b.last_event_at >= started;
             }
             if self.owner_id.as_deref() != Some(sid.as_str()) {
                 continue;
@@ -557,6 +566,36 @@ mod tests {
         assert!(acts.iter().any(|a| matches!(a, Action::ShowSession { id, .. } if id == "omp-session")));
         let acts = c.tick(&mut env(TERM_A, t0), &name);
         assert!(acts.iter().any(|a| matches!(a, Action::ShowSession { id, .. } if id == "claude-code-session")));
+    }
+
+    #[test]
+    fn window_steps_aside_while_the_agent_asks_and_returns_after_the_answer() {
+        let mut c = core_with(&[("omp-session", TERM_A)]);
+        let t0 = Instant::now();
+        c.tick(&mut env(TERM_A, t0), &name);
+        let bridge = |status: &str| vec![BridgeSession { session_id: "omp-session".into(), status: status.into(), last_event_at: 5000, ..Default::default() }];
+
+        c.apply_bridge(&bridge("WAITING_FOR_INPUT"), &name);
+        let acts = c.tick(&mut env(TERM_A, t0 + Duration::from_millis(100)), &name);
+        assert!(!acts.contains(&Action::HideWhileAway), "grace period first");
+        let acts = c.tick(&mut env(TERM_A, t0 + Duration::from_millis(700)), &name);
+        assert!(acts.contains(&Action::HideWhileAway));
+        assert!(c.any_wanted(), "the prompt is still running");
+        assert!(!c.is_parked(), "bridge polling continues so the answer is noticed");
+
+        // answered: the agent is working again
+        c.apply_bridge(&bridge("WORKING"), &name);
+        let acts = c.tick(&mut env(TERM_A, t0 + Duration::from_millis(900)), &name);
+        assert!(acts.contains(&Action::Show { activate: false }));
+        assert!(!c.hidden_away);
+    }
+
+    #[test]
+    fn waiting_status_from_a_previous_turn_is_ignored() {
+        let mut c = core_with(&[("omp-session", TERM_A)]); // launched at ts 1000
+        let stale = vec![BridgeSession { session_id: "omp-session".into(), status: "WAITING_FOR_INPUT".into(), last_event_at: 500, ..Default::default() }];
+        c.apply_bridge(&stale, &name);
+        assert!(c.owner_of(TERM_A).is_some());
     }
 
     #[test]
