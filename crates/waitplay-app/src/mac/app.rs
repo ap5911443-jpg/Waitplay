@@ -197,7 +197,7 @@ impl Supervisor {
                 h.stop();
             }
         }
-        for (id, cmd) in wanted {
+        for &(id, cmd) in wanted {
             let h = self.watchers.entry(id).or_insert_with(Helper::new);
             h.reap(cmd);
             if h.child.is_none() {

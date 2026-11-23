@@ -62,42 +62,61 @@ pub fn classify(event_type: &str, data: &Value) -> Action {
     }
 }
 
-fn post(event: &str, model: Value, data: Option<Map<String, Value>>) {
-    common::post_event_quiet(&common::event_payload(AGENT, SESSION, event, Some(model), None, data));
+fn post(session: &str, event: &str, model: Value, data: Option<Map<String, Value>>) {
+    common::post_event_quiet(&common::event_payload(AGENT, session, event, Some(model), None, data));
 }
 
-pub fn execute(action: Action) {
+/// One session per Claude Code conversation (the hook JSON carries its `session_id`), so two terminals running Claude Code are
+/// tracked independently: one finishing never closes the other's window. Without an id the old shared session is used.
+pub fn session_for(data: &Value) -> String {
+    let id: String = data
+        .get("session_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(12)
+        .collect();
+    if id.is_empty() {
+        SESSION.to_string()
+    } else {
+        format!("claude-code-{}", id)
+    }
+}
+
+pub fn execute(action: Action, session: &str) {
     match action {
         Action::Start { model, prompt } => {
             let prompt_time = now_ms();
-            signals::clear_dismissal(SESSION);
+            signals::clear_dismissal(session);
             // The companion window takes a moment to appear; start it before the (possibly slow) bridge call.
-            if state::is_enabled() && !signals::is_prompt_dismissed(SESSION) {
+            if state::is_enabled() && !signals::is_prompt_dismissed(session) {
                 common::spawn_app(&PopRequest {
-                    session: SESSION.into(),
+                    session: session.into(),
                     terminal: None,
                     prompt_time: Some(prompt_time),
                     parent_pid: common::parent_pid_or_self(),
                 });
             }
             post(
+                session,
                 "task_started",
                 model.clone(),
                 Some(obj(vec![("model", model), ("prompt", Value::String(prompt)), ("promptTime", Value::from(prompt_time))])),
             );
         }
-        Action::Tool { tool, model } => post("task_running", model.clone(), Some(obj(vec![("tool", tool), ("model", model)]))),
+        Action::Tool { tool, model } => post(session, "task_running", model.clone(), Some(obj(vec![("tool", tool), ("model", model)]))),
         Action::Stop { model } => {
-            signals::clear_dismissal(SESSION);
-            post("task_completed", model.clone(), Some(obj(vec![("model", model)])));
-            signals::write_close_signal(SESSION);
+            signals::clear_dismissal(session);
+            post(session, "task_completed", model.clone(), Some(obj(vec![("model", model)])));
+            signals::write_close_signal(session);
         }
         Action::WaitingForInput { prompt } => {
-            post("waiting_for_input", Value::String(DEFAULT_MODEL.into()), Some(obj(vec![("prompt", Value::String(prompt))])))
+            post(session, "waiting_for_input", Value::String(DEFAULT_MODEL.into()), Some(obj(vec![("prompt", Value::String(prompt))])))
         }
         Action::End => {
-            signals::clear_dismissal(SESSION);
-            post("session_ended", Value::String(DEFAULT_MODEL.into()), None);
+            signals::clear_dismissal(session);
+            post(session, "session_ended", Value::String(DEFAULT_MODEL.into()), None);
         }
         Action::Ignore => {}
     }
@@ -128,7 +147,8 @@ pub fn read_stdin_with_timeout(limit: Duration) -> Option<String> {
 pub fn run(args: &[String]) {
     let event_type = args.first().map(String::as_str).unwrap_or("unknown");
     let Some(input) = read_stdin_with_timeout(Duration::from_millis(1000)) else { return };
-    execute(classify(event_type, &parse_stdin(&input)));
+    let data = parse_stdin(&input);
+    execute(classify(event_type, &data), &session_for(&data));
 }
 
 #[cfg(test)]
@@ -190,5 +210,21 @@ mod tests {
         assert_eq!(parse_stdin("{not json"), json!({}));
         assert_eq!(parse_stdin("null"), json!({}));
         assert_eq!(parse_stdin(r#"{"prompt":"hi"}"#), json!({"prompt": "hi"}));
+    }
+
+    #[test]
+    fn each_conversation_gets_its_own_session() {
+        let a = session_for(&json!({"session_id": "9f1c2e7a-4b3d-4a55-8f00-123456789abc"}));
+        let b = session_for(&json!({"session_id": "0a0b0c0d-1111-2222-3333-444455556666"}));
+        assert_eq!(a, "claude-code-9f1c2e7a4b3d");
+        assert_ne!(a, b);
+        // the agent name is still recognisable from the id, and the id stays a safe file name
+        assert!(a.contains("claude"));
+        assert_eq!(waitplay_core::signals::signal_file_id(&a), a);
+        // no id, or one with nothing usable: the shared session of old
+        assert_eq!(session_for(&json!({})), SESSION);
+        assert_eq!(session_for(&json!({"session_id": "../../etc"})), "claude-code-etc");
+        assert_eq!(session_for(&json!({"session_id": "---"})), SESSION);
+        assert_eq!(session_for(&json!({"session_id": 7})), SESSION);
     }
 }

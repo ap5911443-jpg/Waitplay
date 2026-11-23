@@ -320,4 +320,16 @@ mod tests {
         assert_eq!(v["platforms"]["x"], true);
         assert_eq!(v["onFinish"], "hide");
     }
+
+    #[test]
+    fn watcher_list_is_validated_sorted_and_deduplicated() {
+        let mut s = Settings::default();
+        assert!(s.apply_patch(&json!({"watchers": ["opencode", "codex", "opencode"]})).is_empty());
+        assert_eq!(s.watchers, ["codex", "opencode"]);
+        assert_eq!(s.apply_patch(&json!({"watchers": ["ok", "Bad Name"]})), ["watchers"]);
+        assert_eq!(s.apply_patch(&json!({"watchers": "codex"})), ["watchers"]);
+        assert_eq!(s.watchers, ["codex", "opencode"], "rejected values change nothing");
+        assert!(s.apply_patch(&json!({"watchers": []})).is_empty());
+        assert!(s.watchers.is_empty());
+    }
 }

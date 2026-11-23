@@ -74,6 +74,8 @@ Run `waitplay-bridge.exe` first; the hooks and the app talk to it on `127.0.0.1:
 
 > **Companion UI:** The native Windows app embeds a **WebView2** (Chromium) control that acts as a browser: on agent start it opens the live **[instagram.com](https://www.instagram.com/)**. The header carries the real logos of Instagram, YouTube and X (the site on screen is underlined); click one to switch. Launch a site directly with `waitplay.exe --game --site=instagram|youtube|x`. To add a site, add an entry to `crates/waitplay-app/src/sites.rs`. The WebView2 runtime ships with modern Windows; no extra install is required.
 
+> **macOS:** WaitPlay also ships as a native menu-bar app (`WaitPlay.app` / `.dmg`, Apple Silicon and Intel) with a settings window, a floating status widget and a WKWebView entertainment window. See [docs/MACOS.md](docs/MACOS.md) for the architecture, permissions, build and signing steps.
+
 ### 2. Test
 
 ```bash
