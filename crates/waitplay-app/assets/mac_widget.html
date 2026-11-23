@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<title>WaitPlay Widget</title>
+<style>
+:root{
+  --surface:rgba(255,255,255,.92); --border:rgba(0,0,0,.12); --shadow:rgba(0,0,0,.18);
+  --label:#1d1d1f; --secondary:#6e6e73; --accent:#007aff; --on-accent:#fff;
+  --grey:#8e8e93; --green:#34c759; --orange:#ff9500; --red:#ff3b30;
+  --btn-off:rgba(0,0,0,.08); --btn-off-fg:#6e6e73; --focus:rgba(0,122,255,.55);
+  --demo-bg:#e5e5ea;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --surface:rgba(40,40,42,.92); --border:rgba(255,255,255,.14); --shadow:rgba(0,0,0,.18);
+    --label:#f5f5f7; --secondary:#98989d; --accent:#0a84ff; --on-accent:#fff;
+    --grey:#8e8e93; --green:#30d158; --orange:#ff9f0a; --red:#ff453a;
+    --btn-off:rgba(255,255,255,.12); --btn-off-fg:#98989d; --focus:rgba(10,132,255,.6);
+    --demo-bg:#3a3a3c;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:transparent;overflow:hidden;
+  font:13px -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;user-select:none;-webkit-user-select:none;cursor:default}
+body.demo{background:var(--demo-bg);overflow:auto;min-height:100vh}
+#wrap{display:inline-block;padding:12px;vertical-align:top}
+#pill{display:flex;align-items:center;gap:10px;height:44px;padding:0 8px 0 16px;border-radius:22px;
+  background:var(--surface);border:.5px solid var(--border);box-shadow:0 6px 20px var(--shadow);
+  color:var(--label);white-space:nowrap;opacity:0;transform:translateY(4px)}
+#pill.in{opacity:1;transform:none;transition:opacity .12s ease,transform .12s ease}
+#pill.compact{height:32px;border-radius:16px;padding:0 5px 0 12px;gap:8px}
+#hit{display:flex;align-items:center;gap:10px;height:100%;padding:0;margin:0;border:0;background:none;
+  font:inherit;color:inherit;cursor:default;text-align:left;border-radius:14px}
+#hit:focus-visible,#pwr:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+#dot{width:10px;height:10px;border-radius:50%;background:var(--grey);flex:none}
+#pill[data-status=working] #dot{background:var(--accent);animation:pulse 1.8s ease-in-out infinite}
+#pill[data-status=entertainment] #dot{background:var(--green)}
+#pill[data-status=paused] #dot{background:var(--orange)}
+#pill[data-status=error] #dot{background:var(--red)}
+@keyframes pulse{50%{opacity:.35}}
+#text{display:flex;flex-direction:column;justify-content:center;min-width:0}
+#text.hide{display:none}
+#title{font-size:12.5px;font-weight:600;line-height:15px}
+#sub{font-size:11px;line-height:14px;color:var(--secondary)}
+#sub:empty,#pill.compact #sub{display:none}
+#text.fade{animation:fadein .12s ease}
+@keyframes fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+#glyph{width:16px;height:16px;flex:none;color:var(--secondary)}
+#glyph *{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+#glyph .f{fill:currentColor;stroke:none}
+#pwr{width:28px;height:28px;border-radius:50%;border:0;padding:0;flex:none;display:flex;align-items:center;justify-content:center;
+  background:var(--btn-off);color:var(--btn-off-fg);cursor:default}
+#pill.compact #pwr{width:22px;height:22px}
+#pwr.on{background:var(--accent);color:var(--on-accent)}
+#pwr svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+#pill.compact #pwr svg{width:12px;height:12px}
+#demo{position:fixed;left:12px;bottom:12px;display:flex;flex-wrap:wrap;gap:6px;max-width:460px}
+#demo button{font:11px inherit;font-family:inherit;padding:3px 8px;border-radius:6px;border:.5px solid var(--border);
+  background:var(--surface);color:var(--label);cursor:default}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="pill" data-status="idle">
+    <button id="hit" type="button" aria-label="Open WaitPlay settings">
+      <span id="dot"></span>
+      <span id="text"><span id="title"></span><span id="sub"></span></span>
+    </button>
+    <svg id="glyph" viewBox="0 0 16 16" aria-hidden="true"></svg>
+    <button id="pwr" type="button" aria-label="Enable/Disable automation">
+      <svg viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.5v5M3.6 3.6a4.8 4.8 0 1 0 6.8 0"/></svg>
+    </button>
+  </div>
+</div>
+<script>
+(function(){
+  const send = m => window.ipc && window.ipc.postMessage(JSON.stringify(m));
+  const $ = id => document.getElementById(id);
+  const NS = 'http://www.w3.org/2000/svg';
+  const pill = $('pill'), text = $('text'), glyph = $('glyph'), pwr = $('pwr');
+  const GLYPHS = {
+    instagram: [['rect',{x:2,y:2,width:12,height:12,rx:3.5}],['circle',{cx:8,cy:8,r:2.8}],['circle',{cx:11.6,cy:4.4,r:.5}]],
+    x: [['path',{d:'M3 3l10 10M13 3L3 13'}]],
+    youtube: [['rect',{x:1.5,y:3.5,width:13,height:9,rx:3}],['path',{d:'M6.7 6v4l3.5-2z',class:'f'}]]
+  };
+  let lastLabel = null, lastPlatform = null, lastSize = '';
+
+  function setGlyph(p){
+    if (p === lastPlatform) return;
+    lastPlatform = p;
+    glyph.textContent = '';
+    (GLYPHS[p] || GLYPHS.instagram).forEach(([tag, attrs]) => {
+      const e = document.createElementNS(NS, tag);
+      for (const k in attrs) e.setAttribute(k, attrs[k]);
+      glyph.appendChild(e);
+    });
+  }
+  function fade(el){ el.classList.remove('fade'); void el.offsetWidth; el.classList.add('fade'); }
+
+  function apply(s){
+    s = s || {};
+    pill.dataset.status = s.status || 'idle';
+    pill.classList.toggle('compact', !!s.compact);
+    const label = s.label || '';
+    $('title').textContent = label;
+    $('sub').textContent = s.compact ? '' : (s.detail || '');
+    text.classList.toggle('hide', s.showStatus === false);
+    setGlyph(s.platform);
+    const pl = s.platformLabel || s.platform || '';
+    glyph.setAttribute('aria-label', pl); glyph.setAttribute('role', 'img'); glyph.removeAttribute('aria-hidden');
+    pwr.classList.toggle('on', !!s.enabled);
+    pwr.setAttribute('aria-pressed', s.enabled ? 'true' : 'false');
+    pwr.title = s.enabled ? 'Disable automation' : 'Enable automation';
+    if (label !== lastLabel){
+      lastLabel = label;
+      fade(text);
+    }
+    if (!pill.classList.contains('in')) pill.classList.add('in');
+    report();
+  }
+
+  function report(){
+    const r = $('wrap').getBoundingClientRect();
+    const w = Math.ceil(r.width), h = Math.ceil(r.height), k = w + 'x' + h;
+    if (k === lastSize) return;
+    lastSize = k;
+    send({t:'size', w, h});
+  }
+  new ResizeObserver(report).observe($('wrap'));
+
+  $('hit').addEventListener('click', () => send({t:'openSettings'}));
+  pwr.addEventListener('click', () => send({t:'toggle'}));
+  document.addEventListener('contextmenu', e => { e.preventDefault(); send({t:'menu'}); });
+
+  window.wpWidget = { apply };
+  send({t:'ready'});
+
+  if (!window.ipc){
+    document.body.classList.add('demo');
+    const base = {status:'idle', label:'Waiting for an agent', detail:'Claude Code · Instagram', platform:'instagram',
+                  platformLabel:'Instagram', enabled:true, compact:false, showStatus:true, corner:'top-right'};
+    const presets = {
+      idle: {},
+      working: {status:'working', label:'Claude is working', detail:'Claude Code · Instagram'},
+      entertainment: {status:'entertainment', label:'Enjoy your break', detail:'Claude Code · YouTube', platform:'youtube', platformLabel:'YouTube'},
+      paused: {status:'paused', label:'Automation paused', detail:'', enabled:false, platform:'x', platformLabel:'X'},
+      error: {status:'error', label:'Setup needed', detail:'Check permissions'}
+    };
+    let cur = Object.assign({}, base, presets.idle);
+    const bar = document.createElement('div'); bar.id = 'demo';
+    const add = (name, fn) => {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = name;
+      b.addEventListener('click', fn); bar.appendChild(b);
+    };
+    Object.keys(presets).forEach(k => add(k, () => { cur = Object.assign({}, base, presets[k], {compact:cur.compact, showStatus:cur.showStatus}); apply(cur); }));
+    add('compact', () => { cur.compact = !cur.compact; apply(cur); });
+    add('showStatus', () => { cur.showStatus = !cur.showStatus; apply(cur); });
+    document.body.appendChild(bar);
+    const q = new URLSearchParams(location.search);
+    if (q.get('s') && presets[q.get('s')]) cur = Object.assign({}, base, presets[q.get('s')]);
+    if (q.get('compact')) cur.compact = true;
+    apply(cur);
+  }
+})();
+</script>
+</body>
+</html>

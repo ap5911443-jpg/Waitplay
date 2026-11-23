@@ -224,8 +224,6 @@ impl Widget {
                 if self.dragging || dock != self.dock.css() || !(w > 0.0 && h > 0.0 && dpr > 0.0) {
                     return false;
                 }
-                use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("C:/wp-test/RustWidget/size.log") { let _ = writeln!(f, "size {} {} {} {} {} dock={} -> {:?}", w, h, cx, cy, dpr, dock, self.dock); }
                 let c = Content { w, h, cx, cy, dpr };
                 self.content = Some(c);
                 self.place_content();

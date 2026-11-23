@@ -2,8 +2,10 @@
 //! and a loopback client for the bridge.
 
 pub mod client;
+pub mod companion_state;
 pub mod paths;
 pub mod process;
+pub mod settings;
 pub mod protocol;
 pub mod signals;
 pub mod state;

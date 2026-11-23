@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="{{PLATFORM}}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
@@ -63,6 +63,17 @@
 
   @media (max-width: 820px) { .tab:not(.active) .label { display: none; } .tab:not(.active) { padding: 0 10px; } .status .where { display: none; } }
   @media (max-width: 560px) { .status { display: none !important; } .nav { display: none; } .sep { display: none; } }
+
+  /* macOS: system colours and font, light by default, dark with the system; the native title bar already has the window buttons */
+  html.mac { --bg: #f5f5f7; --fg: #1d1d1f; --muted: #6e6e73; --hover: rgba(0,0,0,.06); --active: rgba(0,0,0,.1); --line: rgba(0,0,0,.1); --green: #34c759; --amber: #ff9f0a; }
+  @media (prefers-color-scheme: dark) {
+    html.mac { --bg: #2c2c2e; --fg: #f5f5f7; --muted: #98989d; --hover: rgba(255,255,255,.08); --active: rgba(255,255,255,.14); --line: rgba(255,255,255,.1); }
+  }
+  html.mac, html.mac body { font: 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  html.mac .win { display: none; }
+  html.mac .tab { border-radius: 7px; }
+  html.mac button:focus-visible { outline-color: #0a84ff; }
+  @media (prefers-reduced-motion: reduce) { html.mac * { transition: none !important; animation: none !important; } }
 </style>
 </head>
 <body>

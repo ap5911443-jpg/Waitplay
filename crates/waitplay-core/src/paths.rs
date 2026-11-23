@@ -87,3 +87,34 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
         }
     }
 }
+
+/// Per-user data folder: `%LOCALAPPDATA%\WaitPlay`, `~/Library/Application Support/WaitPlay`, else `$XDG_DATA_HOME/WaitPlay`.
+/// `WAITPLAY_CONFIG_DIR` overrides it (tests, portable installs).
+pub fn app_support_dir() -> PathBuf {
+    if let Some(over) = std::env::var_os("WAITPLAY_CONFIG_DIR").filter(|v| !v.is_empty()) {
+        return PathBuf::from(over);
+    }
+    #[cfg(windows)]
+    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    #[cfg(target_os = "macos")]
+    let base = std::env::var_os("HOME").filter(|h| !h.is_empty()).map(|h| PathBuf::from(h).join("Library").join("Application Support"));
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").filter(|h| !h.is_empty()).map(|h| PathBuf::from(h).join(".local").join("share")));
+    base.unwrap_or_else(std::env::temp_dir).join("WaitPlay")
+}
+
+/// Where log files go: `~/Library/Logs/WaitPlay` on macOS, `<app support>/logs` elsewhere.
+pub fn log_dir() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(h) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
+            if std::env::var_os("WAITPLAY_CONFIG_DIR").map_or(true, |v| v.is_empty()) {
+                return PathBuf::from(h).join("Library").join("Logs").join("WaitPlay");
+            }
+        }
+    }
+    app_support_dir().join("logs")
+}

@@ -25,14 +25,22 @@ use waitplay_core::now_ms;
 use wry::{NewWindowResponse, WebContext, WebView, WebViewBuilder};
 
 pub struct Options {
+    /// Identity of this window: its single-instance lock and the signal files it owns.
     pub site: &'static Site,
+    /// The page it opens on (the user's preferred platform for agent launches).
+    pub start: &'static Site,
     pub session: String,
     pub terminal: String,
     pub parent_hwnd: u64,
 }
 
 const HEADER_HEIGHT_DIP: f64 = 44.0;
-const BORDER_DIP: f64 = 5.0;
+/// Windows draws no frame, so the site sits inside a thin border that keeps the resize edges; the macOS title bar needs none.
+const BORDER_DIP: f64 = if cfg!(target_os = "macos") { 0.0 } else { 5.0 };
+#[cfg(target_os = "macos")]
+const HEADER_BG: (u8, u8, u8, u8) = (0, 0, 0, 0);
+#[cfg(not(target_os = "macos"))]
+const HEADER_BG: (u8, u8, u8, u8) = (13, 13, 15, 255);
 const MIN_WIDTH_DIP: f64 = 360.0;
 const MIN_HEIGHT_DIP: f64 = 320.0;
 const ACTIVE_TICK: Duration = Duration::from_millis(100);
@@ -170,6 +178,8 @@ struct App {
     exit: bool,
 
     arm_at: Option<Instant>,
+    site_key: &'static str,
+    close_on_finish: bool,
     hide_at: Option<Instant>,
     deep_park_at: Option<Instant>,
     retrim_at: Option<Instant>,
@@ -249,6 +259,8 @@ impl App {
             self.window.set_focus();
         } else {
             // reappear beside the terminal without stealing its keyboard focus
+            #[cfg(not(windows))]
+            self.window.set_visible(true);
             platform::show_window(self.hwnd(), false);
             self.window.set_always_on_top(true);
         }
@@ -257,6 +269,7 @@ impl App {
 
     fn on_became_visible(&mut self) {
         self.visible = true;
+        waitplay_core::companion_state::write(self.site_key, true);
         self.core.became_visible();
         let _ = self.content.set_visible(true);
         let _ = self.header.set_visible(true);
@@ -307,12 +320,13 @@ impl App {
             }
             return;
         }
-        if ok && self.core.is_parked() {
+        // WKWebView cannot be frozen like WebView2, so on macOS an idle parked window simply quits after the same grace period
+        if (ok || cfg!(target_os = "macos")) && self.core.is_parked() {
             self.idle_quit_at = Some(Instant::now() + IDLE_QUIT);
         }
         self.suspended = ok;
         self.trim_now();
-        if self.retrim_at.is_none() {
+        if self.retrim_at.is_none() && !cfg!(target_os = "macos") {
             // A frozen page keeps doing memory-reduction work for ~30s (each burst re-faults ~70MB), so trim again every 4s
             // through that, then only now and then.
             self.retrim_fast = 8;
@@ -394,6 +408,11 @@ impl App {
     fn on_tick(&mut self) {
         let acts = self.core.tick(&mut self.env, &logic::agent_name_of_session);
         self.run_actions(acts);
+        // "Close when the agent finishes": nothing left to wait for after at least one session ran, so leave for real (cookies are
+        // flushed by the clean exit, and the next prompt starts a fresh window)
+        if self.close_on_finish && !self.core.sessions.is_empty() && self.core.is_parked() && !self.quit_requested {
+            self.quit();
+        }
 
         // the address changes without a page load on single-page sites: look at it now and then, only while someone can see it
         self.url_check_ticks += 1;
@@ -527,6 +546,7 @@ impl App {
         if self.hide_at.map_or(false, |t| now >= t) {
             self.hide_at = None;
             if self.core.hidden_away {
+                waitplay_core::companion_state::write(self.site_key, false);
                 self.window.set_visible(false);
                 platform::hide_window(self.hwnd());
                 self.visible = false;
@@ -562,9 +582,28 @@ impl App {
 
 // ── start-up ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+/// Compact portrait window (a phone-sized reel column) in the widget's corner of the display under the pointer.
+#[cfg(target_os = "macos")]
+fn place_on_macos(window: &Window, settings: &waitplay_core::settings::Settings) {
+    use crate::placement;
+    use tao::dpi::{LogicalPosition, LogicalSize};
+    const TITLE_BAR: f64 = 28.0;
+    const WIDGET_BLOCK: f64 = 68.0;
+    let screens = platform::screens();
+    let idx = platform::cursor_logical().and_then(|(x, y)| placement::screen_at(&screens, x, y)).unwrap_or(0);
+    let Some(screen) = screens.get(idx) else { return };
+    let widget = if settings.show_widget { WIDGET_BLOCK } else { 0.0 };
+    let r = placement::companion_rect(screen.work, (440.0, 800.0), settings.widget_position, widget);
+    window.set_inner_size(LogicalSize::new(r.w, (r.h - TITLE_BAR).max(MIN_HEIGHT_DIP)));
+    window.set_outer_position(LogicalPosition::new(r.x, r.y));
+}
+
 fn header_html() -> String {
+    // Only the platforms the user switched on (always the one this window opens on)
+    let settings = waitplay_core::settings::Settings::load();
     let tabs: String = sites::SITES
         .iter()
+        .filter(|s| settings.platforms.get(s.key) != Some(false) || s.key == sites::preferred_site().key)
         .map(|s| {
             format!(
                 "<button class='tab' data-site='{key}' title='{label}' aria-label='{label}'>{logo}<span class='label'>{label}</span></button>",
@@ -574,7 +613,8 @@ fn header_html() -> String {
             )
         })
         .collect();
-    include_str!("../../assets/header.html").replace("{{SITES}}", &tabs)
+    let platform = if cfg!(target_os = "macos") { "mac" } else { "" };
+    include_str!("../../assets/header.html").replace("{{SITES}}", &tabs).replace("{{PLATFORM}}", platform)
 }
 
 pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
@@ -585,32 +625,48 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
     }
 
     let mut event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+    #[cfg(target_os = "macos")]
+    {
+        use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
+        // a utility without a Dock icon; the standard Edit menu makes paste work in the sites' sign-in forms
+        event_loop.set_activation_policy(ActivationPolicy::Accessory);
+        platform::install_main_menu("WaitPlay");
+    }
     let proxy = event_loop.create_proxy();
+    let user_settings = waitplay_core::settings::Settings::load();
 
-    // Centred, large enough that the site's desktop layout fits without scrolling sideways
-    let wa = platform::work_area();
     let window = {
-        let mut b = WindowBuilder::new()
-            .with_title("WaitPlay")
-            .with_decorations(false)
-            .with_resizable(true)
-            .with_always_on_top(true)
-            .with_visible(false)
-            .with_background_color((13, 13, 15, 255));
+        let b = WindowBuilder::new().with_title("WaitPlay").with_resizable(true).with_always_on_top(true).with_visible(false);
+        // Windows draws its own caption in the header page; macOS keeps the native title bar and traffic lights
+        #[cfg(not(target_os = "macos"))]
+        let b = b.with_decorations(false).with_background_color((13, 13, 15, 255));
         #[cfg(windows)]
-        {
+        let b = {
             use tao::platform::windows::WindowBuilderExtWindows;
-            b = b.with_undecorated_shadow(true);
-        }
+            b.with_undecorated_shadow(true)
+        };
+        #[cfg(target_os = "macos")]
+        let b = b.with_visible_on_all_workspaces(true).with_theme(match user_settings.appearance {
+            waitplay_core::settings::Appearance::System => None,
+            waitplay_core::settings::Appearance::Light => Some(tao::window::Theme::Light),
+            waitplay_core::settings::Appearance::Dark => Some(tao::window::Theme::Dark),
+        });
         b.build(&event_loop).map_err(|e| e.to_string())?
     };
     let scale = window.scale_factor();
     window.set_min_inner_size(Some(PhysicalSize::new((MIN_WIDTH_DIP * scale) as u32, (MIN_HEIGHT_DIP * scale) as u32)));
-    let (wa_w, wa_h) = (wa.width() as f64, wa.height() as f64);
-    let w = (wa_w * 0.70).clamp(480.0 * scale, 1400.0 * scale);
-    let h = (wa_h * 0.82).clamp(420.0 * scale, 950.0 * scale);
-    window.set_inner_size(PhysicalSize::new(w as u32, h as u32));
-    window.set_outer_position(PhysicalPosition::new(wa.left + ((wa_w - w) / 2.0) as i32, wa.top + ((wa_h - h) / 2.0) as i32));
+    #[cfg(target_os = "macos")]
+    place_on_macos(&window, &user_settings);
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Centred, large enough that the site's desktop layout fits without scrolling sideways
+        let wa = platform::work_area();
+        let (wa_w, wa_h) = (wa.width() as f64, wa.height() as f64);
+        let w = (wa_w * 0.70).clamp(480.0 * scale, 1400.0 * scale);
+        let h = (wa_h * 0.82).clamp(420.0 * scale, 950.0 * scale);
+        window.set_inner_size(PhysicalSize::new(w as u32, h as u32));
+        window.set_outer_position(PhysicalPosition::new(wa.left + ((wa_w - w) / 2.0) as i32, wa.top + ((wa_h - h) / 2.0) as i32));
+    }
 
     let size = window.inner_size();
     let l = layout(size.width, size.height, scale);
@@ -623,7 +679,7 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
     let header = webview2::tune(WebViewBuilder::new_with_web_context(&mut context))
         .with_html(header_html())
         .with_bounds(rect(l.header))
-        .with_background_color((13, 13, 15, 255))
+        .with_background_color(HEADER_BG)
         .with_navigation_handler(|url| !url.starts_with("http"))
         .with_ipc_handler(move |req| {
             let _ = ipc_proxy.send_event(UserEvent::Ipc(req.body().to_string()));
@@ -633,7 +689,7 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
 
     let nav_proxy = proxy.clone();
     let content = webview2::tune(WebViewBuilder::new_with_web_context(&mut context))
-        .with_url(site.url)
+        .with_url(opts.start.url)
         .with_bounds(rect(l.content))
         .with_background_color((0, 0, 0, 255))
         // Popups (Facebook login, 2FA / security checkpoint) open in place instead of being dropped, so login completes
@@ -687,6 +743,8 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
         quit_requested: false,
         exit: false,
         arm_at: Some(Instant::now() + Duration::from_secs(1)), // give the window a moment to appear before visibility rules apply
+        site_key: site.key,
+        close_on_finish: user_settings.on_finish == waitplay_core::settings::OnFinish::Close,
         hide_at: None,
         deep_park_at: None,
         retrim_at: None,
@@ -694,8 +752,8 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
         idle_quit_at: None,
     };
     app.core.my_hwnd = app.hwnd();
-    let _ = app.header.evaluate_script(&format!("wp.setActive({});", serde_json::to_string(site.key).unwrap_or_default()));
-    app.last_site = Some(site.key);
+    let _ = app.header.evaluate_script(&format!("wp.setActive({});", serde_json::to_string(opts.start.key).unwrap_or_default()));
+    app.last_site = Some(opts.start.key);
 
     // A hook launch registers its session; a widget/CLI launch ("Desktop") has no owning terminal
     if !opts.session.is_empty() && opts.terminal != "Desktop" {
@@ -728,6 +786,7 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
             *flow = ControlFlow::WaitUntil(d);
         }
     });
+    waitplay_core::companion_state::remove(site.key);
     // `app` (and with it both webviews) is dropped here: a clean browser shutdown is what flushes cookies to disk, so a sign-in
     // made moments ago survives.
     Ok(())

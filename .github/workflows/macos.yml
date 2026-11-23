@@ -1,0 +1,100 @@
+name: macOS
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: never
+  APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        shell: bash
+        run: |
+          set -o pipefail
+          export WAITPLAY_BUILD="$(git rev-parse --short HEAD)"
+          cargo build --release --workspace --target ${{ matrix.target }} 2>&1 | tee build.log || { .github/scripts/annotate.sh build.log "cargo build (${{ matrix.target }})"; exit 1; }
+
+      - name: Test (native architecture only)
+        if: matrix.target == 'aarch64-apple-darwin'
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace -- --test-threads=4 2>&1 | tee test.log || { .github/scripts/annotate.sh test.log "cargo test"; exit 1; }
+
+      - name: Import Developer ID certificate
+        if: env.APPLE_CERTIFICATE != ''
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          PASS="$(uuidgen)"
+          security create-keychain -p "$PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$PASS" "$KEYCHAIN"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$PASS" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+
+      - name: Package WaitPlay.app and DMG
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -o pipefail
+          export WAITPLAY_BUILD="$(git rev-parse --short HEAD)"
+          packaging/macos/build_app.sh ${{ matrix.target }} 2>&1 | tee package.log || { .github/scripts/annotate.sh package.log "package (${{ matrix.target }})"; exit 1; }
+
+      - name: Smoke test the bundle
+        if: matrix.target == 'aarch64-apple-darwin'
+        shell: bash
+        run: |
+          set -o pipefail
+          APP="dist/${{ matrix.target }}/WaitPlay.app"
+          {
+            plutil -lint "$APP/Contents/Info.plist"
+            file "$APP/Contents/MacOS/waitplay"
+            codesign -dv "$APP" 2>&1 | head -5
+            # the hook binary runs and the bridge answers after the app bundle is relocated
+            "$APP/Contents/MacOS/waitplay-hook" --help | head -3
+          } 2>&1 | tee smoke.log || { .github/scripts/annotate.sh smoke.log "bundle smoke test"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WaitPlay-${{ matrix.target }}
+          path: |
+            dist/${{ matrix.target }}/*.dmg
+          if-no-files-found: error
+
+      - name: Publish release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.target }}/*.dmg

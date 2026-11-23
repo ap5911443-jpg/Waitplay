@@ -5,7 +5,12 @@
 
 mod cli;
 mod companion;
+mod logging;
+#[cfg(any(target_os = "macos", test))]
+mod mac;
 mod platform;
+#[cfg(any(target_os = "macos", test))]
+mod placement;
 mod profile;
 mod single_instance;
 mod sites;
@@ -33,6 +38,16 @@ fn main() {
         let enabled = state::toggle();
         BridgeClient::new().post_state(enabled);
         println!("WaitPlay enabled: {}", if enabled { "True" } else { "False" });
+        return;
+    }
+
+    // macOS: no arguments (or --widget) starts the menu-bar app, whatever the automation switch says
+    #[cfg(target_os = "macos")]
+    if args.widget || (args.session.is_empty() && !args.force_open) {
+        if let Err(e) = mac::app::run() {
+            eprintln!("waitplay: {}", e);
+            std::process::exit(1);
+        }
         return;
     }
 
@@ -68,7 +83,9 @@ fn main() {
         return;
     }
 
+    // The identity of the companion (single-instance lock, signal files) is fixed; the page it opens on is the user's choice
     let site = args.site.unwrap_or_else(sites::default_site);
+    let start = args.site.unwrap_or_else(sites::preferred_site);
     let Some(guard) = single_instance::acquire(&single_instance::name_for_site(site.key)) else {
         // A companion for this site is already running: hand it the launch and leave
         if !state::is_enabled() {
@@ -80,6 +97,7 @@ fn main() {
 
     let opts = companion::Options {
         site,
+        start,
         session: args.session,
         terminal: args.terminal,
         parent_hwnd,

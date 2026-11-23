@@ -1,9 +1,8 @@
 //! Operating-system services the companion window and the widget rely on.
 //!
-//! This file is the CONTRACT: both implementations (`windows.rs`, `other.rs`) must provide every item below with exactly
-//! these signatures, and callers use only `crate::platform::*`. Windows is the verified platform. `other.rs` keeps the
-//! app compiling elsewhere with neutral answers (no window tracking), so the companion degrades to "stay where the user
-//! put it" rather than failing; real macOS support means filling in `other.rs` (or a `macos.rs`) behind this same surface.
+//! This file is the CONTRACT: every implementation (`windows.rs`, `macos.rs`, `other.rs`) must provide every item below with exactly
+//! these signatures, and callers use only `crate::platform::*`. `macos.rs` maps a WindowId to an application PID
+//! (see its header). `other.rs` keeps the app compiling on other systems with neutral answers.
 
 /// A top-level window of any application: the HWND as an integer on Windows. `NO_WINDOW` (0) means none.
 pub type WindowId = u64;
@@ -32,9 +31,14 @@ mod windows;
 #[cfg(windows)]
 pub use self::windows::*;
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use self::macos::*;
+
+#[cfg(not(any(windows, target_os = "macos")))]
 mod other;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub use self::other::*;
 
 // ---------------------------------------------------------------------------------------------------------------------

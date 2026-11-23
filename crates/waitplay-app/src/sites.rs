@@ -30,6 +30,11 @@ pub fn default_site() -> &'static Site {
     &SITES[0]
 }
 
+/// The platform the user prefers (Settings > Entertainment); Instagram until they choose.
+pub fn preferred_site() -> &'static Site {
+    by_name(&waitplay_core::settings::Settings::load().preferred_platform).unwrap_or_else(default_site)
+}
+
 /// By `--site=` value (key or alias, any case).
 pub fn by_name(name: &str) -> Option<&'static Site> {
     let n = name.trim().to_lowercase();
