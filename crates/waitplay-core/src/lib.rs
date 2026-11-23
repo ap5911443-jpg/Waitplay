@@ -1,0 +1,15 @@
+//! Shared building blocks for every WaitPlay binary: the event protocol, the small files processes hand to each other,
+//! and a loopback client for the bridge.
+
+pub mod client;
+pub mod paths;
+pub mod process;
+pub mod protocol;
+pub mod signals;
+pub mod state;
+pub mod token;
+
+pub use client::BridgeClient;
+pub use protocol::{
+    now_ms, AgentEvent, AgentEventPayload, AgentSessionInfo, AgentStatus, AgentType, BridgeClientMessage, BridgeHealth, HealthStatus,
+};

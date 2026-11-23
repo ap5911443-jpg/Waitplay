@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/waitplay-core",
+    "crates/waitplay-bridge",
+    "crates/waitplay-hooks",
+    "crates/waitplay-app",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Loopback HTTP only (the bridge never speaks TLS to its own clients), so no TLS stack here
+ureq = { version = "2", default-features = false, features = ["json"] }
+waitplay-core = { path = "crates/waitplay-core" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -4,15 +4,16 @@ WaitPlay is a local gaming companion for users of AI coding agents like Claude C
 
 ## Prerequisites
 
-- Node.js 18+ (tested on Node.js v24)
-- npm 9+
+- Rust (stable) with Cargo
+- Node.js 18+ and npm 9+ (only for the React web HUD)
 
 ## Installation
 
 ```bash
-# Clone or navigate into the waitplay folder
 cd waitplay
-# Install dependencies across all packages and apps
+# Build the bridge, hooks and native app
+cargo build --release --workspace
+# Optional: install and build the web HUD
 npm install
 ```
 
@@ -20,12 +21,12 @@ npm install
 
 ### 1. Start the Local Companion Bridge
 
-The bridge runs on `http://127.0.0.1:3100` and generates a local auth token:
+The bridge runs on `http://127.0.0.1:3150` (override with `BRIDGE_PORT`) and generates a local auth token:
 
 ```bash
 npm run start:bridge
-# or in development mode with auto-reload:
-npm run dev:bridge
+# or
+target/release/waitplay-bridge.exe
 ```
 
 ### 2. Start the Browser Web Application
@@ -44,7 +45,7 @@ The Vite dev server will start at `http://127.0.0.1:5200`. Open this URL in your
 npm run build
 ```
 
-This compiles `@waitplay/shared`, `@waitplay/bridge`, and creates production assets for `@waitplay/web` in `apps/web/dist`.
+This builds all Rust crates into `target/release/` and creates production assets for `@waitplay/web` in `apps/web/dist` (served by `npm run start:web`).
 
 ## Testing All Simulated Agent Events
 WaitPlay includes a complete interactive simulator directly in the web dashboard so you can test all agent lifecycle behaviors without Claude Code installed:
@@ -57,7 +58,7 @@ WaitPlay includes a complete interactive simulator directly in the web dashboard
    - **Permission:** Task works, pauses when input/confirmation is required, and resumes when confirmed.
    - **Failure:** Simulates an agent error, stopping the game with an error notification.
 4. Or use the **Manual Event Controls** to step through `Session Start`, `Task Start`, `Waiting for Input`, and `Task Completed` individually.
-5. Toggle **Route via Bridge** to verify end-to-end WebSocket loopback round-trip delivery through the Node.js companion service.
+5. Toggle **Route via Bridge** to verify end-to-end WebSocket loopback round-trip delivery through the Rust bridge.
 
 ## Running Automated Unit & Integration Tests
 
@@ -65,4 +66,4 @@ WaitPlay includes a complete interactive simulator directly in the web dashboard
 npm test
 ```
 
-Runs all 27 tests covering event validation, security authentication, multi-session management, state machine transitions, start delays, and WebSocket reconnection.
+Runs the Rust workspace tests (event validation, security authentication, multi-session management, state machine transitions, WebSocket reconnection, the hooks and the native app logic) plus the shared TypeScript package tests.

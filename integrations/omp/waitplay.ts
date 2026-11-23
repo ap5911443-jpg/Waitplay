@@ -9,7 +9,7 @@ interface PiEmitter {
 
 export default function (pi: PiEmitter) {
   const BRIDGE_PORT = 3150;
-  const NATIVE_APP = fs.existsSync("C:\\Users\\ASUS\\waitplay\\apps\\native\\WaitPlay.exe") ? "C:\\Users\\ASUS\\waitplay\\apps\\native\\WaitPlay.exe" : "C:\\Users\\ASUS\\AppData\\Local\\Temp\\waitplay\\apps\\native\\WaitPlay.exe";
+  const NATIVE_APP = ["C:\\Users\\ASUS\\waitplay\\target\\release\\waitplay.exe", "C:\\Users\\ASUS\\AppData\\Local\\Temp\\waitplay\\target\\release\\waitplay.exe"].find((p) => fs.existsSync(p)) ?? "";
   const DISMISS_FILE = path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay", ".waitplay-dismissed.json");
   const REG_FILE = path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay", ".waitplay-terminals.json");
 
@@ -68,7 +68,7 @@ export default function (pi: PiEmitter) {
 
   const { label: termLabel, sessionKey } = getTerminalInfo();
   // One close file per session: a prompt starting in another terminal must never delete ours.
-  // Name must match MainWindow.SignalFileId on the native side.
+  // Name must match the signal file id of the native waitplay app (crates/waitplay-core signals).
   const CLOSE_FILE = path.join(process.env.TEMP || "C:\\Users\\ASUS\\AppData\\Local\\Temp", "waitplay",
     `.waitplay-close-${sessionKey.replace(/[^A-Za-z0-9_-]/g, "_")}.json`);
 

@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<style>
+  :root {
+    --bg: #0d0d0f;
+    --fg: #ececf0;
+    --muted: #8b8b95;
+    --hover: #1b1b20;
+    --active: #25252c;
+    --line: #1f1f24;
+    --green: #3ecf8e;
+    --amber: #f5a524;
+    --red: #e81123;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--fg);
+    font: 13px/1 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    user-select: none; -webkit-user-select: none; cursor: default;
+  }
+  .bar { display: flex; align-items: center; height: 100%; padding-left: 8px; border-bottom: 1px solid var(--line); }
+  button {
+    all: unset; box-sizing: border-box; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--fg); transition: background .12s;
+  }
+  button:focus-visible { outline: 2px solid #5b9dff; outline-offset: -2px; }
+
+  .nav { display: flex; gap: 2px; margin-right: 6px; }
+  .icon-btn { width: 30px; height: 30px; border-radius: 8px; color: var(--muted); }
+  .icon-btn:hover { background: var(--hover); color: var(--fg); }
+  .icon-btn:disabled, .icon-btn.off { opacity: .35; pointer-events: none; }
+  .icon-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  .sep { width: 1px; height: 20px; background: var(--line); margin: 0 8px 0 4px; }
+
+  .tabs { display: flex; gap: 4px; }
+  .tab { height: 32px; padding: 0 12px 0 10px; border-radius: 9px; gap: 8px; color: var(--muted); font-weight: 500; }
+  .tab:hover { background: var(--hover); color: var(--fg); }
+  .tab.active { background: var(--active); color: var(--fg); }
+  .tab svg { width: 18px; height: 18px; flex: none; opacity: .85; }
+  .tab.active svg, .tab:hover svg { opacity: 1; }
+
+  .status { display: none; align-items: center; gap: 8px; margin-left: 14px; height: 28px; padding: 0 12px 0 10px; border-radius: 14px; background: var(--hover); color: var(--fg); white-space: nowrap; overflow: hidden; }
+  .status.show { display: inline-flex; }
+  .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: none; }
+  .status.working .dot { animation: pulse 1.4s ease-in-out infinite; }
+  .status.waiting .dot { background: var(--amber); }
+  .status .where { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.8); } }
+
+  .drag { flex: 1; height: 100%; min-width: 24px; }
+
+  .win { display: flex; height: 100%; }
+  .win button { width: 46px; height: 100%; color: var(--muted); }
+  .win button:hover { background: var(--hover); color: var(--fg); }
+  .win button.close:hover { background: var(--red); color: #fff; }
+  .win svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.2; }
+
+  @media (max-width: 820px) { .tab:not(.active) .label { display: none; } .tab:not(.active) { padding: 0 10px; } .status .where { display: none; } }
+  @media (max-width: 560px) { .status { display: none !important; } .nav { display: none; } .sep { display: none; } }
+</style>
+</head>
+<body>
+<div class="bar" id="bar">
+  <div class="nav">
+    <button class="icon-btn" id="back" title="Back" aria-label="Back"><svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg></button>
+    <button class="icon-btn" id="reload" title="Reload" aria-label="Reload"><svg viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3h-3"/></svg></button>
+  </div>
+  <div class="sep"></div>
+  <div class="tabs" id="tabs">{{SITES}}</div>
+  <div class="status" id="status"><span class="dot"></span><span class="what" id="what"></span><span class="where" id="where"></span></div>
+  <div class="drag" id="drag"></div>
+  <div class="win">
+    <button id="min" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 11 11"><path d="M1 5.5h9"/></svg></button>
+    <button id="max" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 11 11"><rect x="1.5" y="1.5" width="8" height="8" rx="1"/></svg></button>
+    <button class="close" id="close" title="Hide (keeps your place)" aria-label="Hide"><svg viewBox="0 0 11 11"><path d="m1.5 1.5 8 8m0-8-8 8"/></svg></button>
+  </div>
+</div>
+<script>
+(function () {
+  var send = function (m) { try { window.ipc.postMessage(JSON.stringify(m)); } catch (e) {} };
+  var $ = function (id) { return document.getElementById(id); };
+
+  document.querySelectorAll('.tab').forEach(function (b) {
+    b.addEventListener('click', function () { send({ t: 'site', key: b.getAttribute('data-site') }); });
+  });
+  $('back').addEventListener('click', function () { send({ t: 'back' }); });
+  $('reload').addEventListener('click', function () { send({ t: 'reload' }); });
+  $('min').addEventListener('click', function () { send({ t: 'min' }); });
+  $('max').addEventListener('click', function () { send({ t: 'max' }); });
+  $('close').addEventListener('click', function () { send({ t: 'close' }); });
+
+  var bar = $('bar');
+  bar.addEventListener('mousedown', function (e) {
+    if (e.button === 0 && !e.target.closest('button')) send({ t: 'drag' });
+  });
+  bar.addEventListener('dblclick', function (e) {
+    if (!e.target.closest('button')) send({ t: 'max' });
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') send({ t: 'close' }); });
+  document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  window.wp = {
+    // The site on screen
+    setActive: function (key) {
+      document.querySelectorAll('.tab').forEach(function (b) {
+        var on = b.getAttribute('data-site') === key;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-current', on ? 'page' : 'false');
+      });
+    },
+    // What the agent is doing: kind = "none" | "working" | "waiting"
+    setStatus: function (s) {
+      var el = $('status');
+      if (!s || s.kind === 'none') { el.className = 'status'; return; }
+      el.className = 'status show ' + s.kind;
+      $('what').textContent = s.text || '';
+      $('where').textContent = s.where ? '\u00b7 ' + s.where : '';
+      el.title = s.title || '';
+    },
+    setNav: function (canGoBack) { $('back').classList.toggle('off', !canGoBack); },
+    setMaximized: function (on) { $('max').title = on ? 'Restore' : 'Maximize'; }
+  };
+})();
+</script>
+</body>
+</html>

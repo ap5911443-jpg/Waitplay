@@ -20,3 +20,6 @@ Thumbs.db
 
 # Local tunnel executable
 cloudflared.exe
+
+# Rust build output
+/target/

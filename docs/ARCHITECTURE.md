@@ -22,7 +22,7 @@ WaitPlay is a browser-based interactive gaming companion for users of AI coding 
               |
               v
 +------------------------------------------------------------------+
-| Local Node.js Companion Bridge (Express + WS Server)             |
+| Local Rust Companion Bridge (hyper HTTP + WS server)              |
 |                                                                  |
 |  - Token Authentication & Loopback Protection (127.0.0.1 only)    |
 |  - Event Protocol Validation (32 KB limit, strict schema)        |

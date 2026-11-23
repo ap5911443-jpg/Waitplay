@@ -1,39 +1,25 @@
 # OpenAI Codex Integration for WaitPlay
 
-This directory provides real-time integration between **OpenAI Codex** and the **WaitPlay** gaming companion.
+Real-time integration between **OpenAI Codex** and **WaitPlay**, implemented by the Rust `waitplay-hook` binary (`crates/waitplay-hooks`).
 
 ## How It Works
 
-1. **Prompt Submission & Reasoning Detection:**
-   `codex-watcher.cjs` monitors Codex's local operational database (`~/.codex/logs_2.sqlite`) using read-only WAL polling. When the user submits a prompt and Codex begins reasoning or loading tools:
-   - Emits `task_started` to WaitPlay Local Companion Bridge (`http://127.0.0.1:3100/events`).
-   - Automatically pops a dedicated app window of WaitPlay (`--app=http://127.0.0.1:5200/?popup=1`) in Microsoft Edge or Google Chrome.
-   - The game launches instantly with zero delay.
-
-2. **Work Execution & Tool Activity:**
-   As Codex executes commands, tools, and reasoning steps, `task_running` events update telemetry in real time.
-
-3. **Turn Completion & Game Exit:**
-   When Codex finishes its turn:
-   - `notify` in `~/.codex/config.toml` runs `codex-notify.cjs`.
-   - Emits `task_completed` to WaitPlay Bridge.
-   - Forwards to original computer-use notification targets.
-   - Immediately quits the game, displays a brief results summary, and closes the popup window.
+1. **Prompt submission & reasoning detection:** `waitplay-hook codex-watch` monitors Codex's local operational database (`~/.codex/logs_2.sqlite`) with read-only polling. When the user submits a prompt and Codex starts reasoning or loading tools it emits `task_started` to the bridge (`http://127.0.0.1:3150/events`) and opens the WaitPlay companion window.
+2. **Work execution:** `task_running` events keep the telemetry current while Codex runs commands and tools.
+3. **Turn completion:** `notify` in `~/.codex/config.toml` runs `waitplay-hook codex-notify`, which emits `task_completed` and closes the companion.
 
 ## Configuration
 
 In `~/.codex/config.toml`:
 
 ```toml
-notify = [ "node", "C:\\Users\\ASUS\\AppData\\Local\\Temp\\waitplay\\integrations\\codex\\codex-notify.cjs" ]
+notify = [ "C:\\Users\\ASUS\\waitplay\\target\\release\\waitplay-hook.exe", "codex-notify" ]
 ```
 
 ## Running the Watcher
 
-Run from the `waitplay` root directory:
-
 ```bash
 npm run codex:watch
+# or
+target/release/waitplay-hook.exe codex-watch
 ```
-
-Or double-click `start-watcher.bat`.

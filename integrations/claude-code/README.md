@@ -6,7 +6,7 @@ This directory contains the hook definitions and adapters for integrating Claude
 
 ## Overview
 
-Claude Code supports shell-based and IPC hooks for agent lifecycle events. The WaitPlay bridge listens on loopback (`http://127.0.0.1:3001/events`) and requires the local token found in `.bridge-token`.
+Claude Code supports shell-based and IPC hooks for agent lifecycle events. The WaitPlay bridge listens on loopback (`http://127.0.0.1:3150/events`) and requires the local token found in `.bridge-token`.
 
 ## Event Mapping
 
@@ -22,4 +22,4 @@ Claude Code supports shell-based and IPC hooks for agent lifecycle events. The W
 
 ## Reference Hook Script
 
-See `waitplay-hook.js` for the zero-dependency Node.js script that forwards Claude Code events to the WaitPlay bridge.
+Run `waitplay-hook claude-code <start|tool|notify|stop|end>` (the Rust `waitplay-hook` binary) as the hook command; it reads the Claude Code JSON on stdin and forwards events to the WaitPlay bridge.

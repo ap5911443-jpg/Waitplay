@@ -1,0 +1,16 @@
+[package]
+name = "waitplay-hooks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "waitplay-hook: agent hooks, session watchers, MCP server and simulators for WaitPlay"
+
+[[bin]]
+name = "waitplay-hook"
+path = "src/main.rs"
+
+[dependencies]
+waitplay-core.workspace = true
+serde_json.workspace = true
+# Codex and OpenCode keep their state in SQLite; the watchers read it. Bundled so no system library is needed.
+rusqlite = { version = "0.32", features = ["bundled"] }

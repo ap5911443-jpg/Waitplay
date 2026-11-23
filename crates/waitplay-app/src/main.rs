@@ -1,0 +1,91 @@
+//! WaitPlay desktop app: the floating widget (`--widget`, the default) and the companion window that shows Instagram,
+//! YouTube or X while a coding agent works. One executable, same command line as the C# build (see `cli`).
+
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
+mod cli;
+mod companion;
+mod platform;
+mod profile;
+mod single_instance;
+mod sites;
+mod widget;
+
+use waitplay_core::signals::{self, LaunchSignal};
+use waitplay_core::{now_ms, state, BridgeClient};
+
+fn main() {
+    let args = cli::parse(std::env::args().skip(1));
+
+    // The window that was in front when we started: for a hook launch, that is the terminal the prompt was typed in
+    let mut initial_fg = platform::foreground_window();
+    if platform::window_pid(initial_fg) == platform::current_pid() {
+        initial_fg = platform::NO_WINDOW;
+    }
+
+    if let Some(side) = &args.dock {
+        widget::save_dock(side);
+        return;
+    }
+
+    if args.toggle {
+        platform::attach_parent_console();
+        let enabled = state::toggle();
+        BridgeClient::new().post_state(enabled);
+        println!("WaitPlay enabled: {}", if enabled { "True" } else { "False" });
+        return;
+    }
+
+    let enabled = state::is_enabled();
+    if args.force_open && !enabled {
+        state::set_enabled(true);
+        BridgeClient::new().post_state(true);
+    }
+    // WaitPlay is OFF and nobody asked for a window explicitly: stay silent
+    if !args.force_open && !args.widget && !enabled {
+        return;
+    }
+
+    let mut parent_hwnd = args.parent_hwnd;
+    if parent_hwnd == platform::NO_WINDOW && args.parent_pid > 0 {
+        parent_hwnd = platform::find_top_window_for_pid(args.parent_pid);
+    }
+    if parent_hwnd == platform::NO_WINDOW && initial_fg != platform::NO_WINDOW {
+        parent_hwnd = initial_fg;
+    }
+
+    // No arguments at all: the widget
+    let widget = args.widget || (args.session.is_empty() && !args.force_open);
+    if widget {
+        if let Err(e) = widget::run() {
+            eprintln!("waitplay: widget failed: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if signals::is_prompt_dismissed(&args.session) {
+        return;
+    }
+
+    let site = args.site.unwrap_or_else(sites::default_site);
+    let Some(guard) = single_instance::acquire(&single_instance::name_for_site(site.key)) else {
+        // A companion for this site is already running: hand it the launch and leave
+        if !state::is_enabled() {
+            return;
+        }
+        LaunchSignal { session_id: args.session, terminal: args.terminal, ts: now_ms(), hwnd: parent_hwnd as i64 }.write(site.key);
+        return;
+    };
+
+    let opts = companion::Options {
+        site,
+        session: args.session,
+        terminal: args.terminal,
+        parent_hwnd,
+    };
+    if let Err(e) = companion::run(opts, guard) {
+        eprintln!("waitplay: companion failed: {}", e);
+        std::process::exit(1);
+    }
+}

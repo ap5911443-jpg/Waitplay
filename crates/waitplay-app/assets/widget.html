@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WaitPlay Widget</title>
+<style>
+/* Design tokens (the light palette of the C# widget) */
+:root {
+  --bg: #ffffff;       /* capsule, pill, popups */
+  --bg-sec: #f5f5f3;   /* secondary circle, idle handle */
+  --hover: #ebebe7;
+  --selected: #f0d7ff; /* pressed / selected */
+  --brd: #dadad6;
+  --txt: #1a1a1a;
+  --txt-sec: #777777;
+  --ease-out: cubic-bezier(.215, .61, .355, 1);
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent;
+  user-select: none; -webkit-user-select: none; cursor: default;
+  font-family: Figtree, "Segoe UI", system-ui, sans-serif;
+}
+button { font: inherit; }
+
+/* The stage is exactly the visible UI: the native window is resized to its box, so nothing transparent eats clicks.
+   max-content keeps it from being squeezed by a window that has not grown yet. */
+.stage { position: fixed; display: flex; width: max-content; gap: 6px; padding: 4px; }
+.stage > * { flex-shrink: 0; }
+[data-dock=right]  .stage { right: 0; top: 0; padding: 4px 6px 4px 4px; }
+[data-dock=left]   .stage { left: 0; top: 0; padding: 4px 4px 4px 6px; flex-direction: row-reverse; }
+[data-dock=bottom] .stage { left: 0; bottom: 0; padding: 4px 4px 6px 4px; align-items: flex-end; }
+[data-dock=right][data-state=idle]  .stage { padding: 0 2px 0 0; }
+[data-dock=left][data-state=idle]   .stage { padding: 0 0 0 2px; }
+[data-dock=bottom][data-state=idle] .stage { padding: 0 0 2px 0; }
+
+/* Edge handle, shown while idle */
+.handle { display: none; width: 12px; height: 44px; border-radius: 6px; background: var(--bg-sec); border: 1.2px solid var(--brd); cursor: pointer; }
+[data-dock=bottom] .handle { width: 44px; height: 12px; }
+[data-state=idle] .handle { display: block; }
+
+/* Pill: slides out beside the capsule */
+.pillbox { display: none; height: 52px; align-items: center; }
+[data-dock=bottom] .pillbox { align-self: flex-start; }
+[data-state=pill] .pillbox { display: flex; }
+.pill {
+  background: var(--bg); border: 1px solid var(--brd); border-radius: 17px; padding: 7px 13px 8px;
+  font-size: 13px; line-height: 17px; color: var(--txt); white-space: nowrap;
+  opacity: 0; transform: translateX(8px);
+  transition: opacity .12s var(--ease-out), transform .12s var(--ease-out);
+}
+[data-dock=left] .pill { transform: translateX(-8px); }
+.pill.show { opacity: 1; transform: none; }
+.pill .act { color: var(--txt-sec); font-weight: 400; }
+.pill .key { color: var(--txt); font-weight: 700; }
+
+/* Capsule + secondary circle */
+.col { display: none; flex-direction: column; align-items: center; width: 32px; }
+[data-dock=bottom] .col { align-self: flex-end; }
+[data-state=idle] .col { display: none; }
+[data-state=expanded] .col, [data-state=pill] .col, [data-state=picker] .col, [data-state=menu] .col, [data-state=drag] .col { display: flex; }
+.capsule {
+  width: 32px; height: 52px; border-radius: 16px; background: var(--bg); border: 1px solid var(--brd);
+  display: flex; align-items: center; justify-content: center; color: var(--txt); cursor: pointer;
+}
+.capsule:hover { background: var(--hover); }
+.capsule.pressed, .capsule.pressed:hover { background: var(--selected); }
+.off .capsule { color: var(--txt-sec); }
+.power { width: 14px; height: 14px; overflow: visible; display: block; }
+.power path { fill: none; stroke: currentColor; stroke-width: 2; vector-effect: non-scaling-stroke; }
+
+.sec {
+  position: relative; width: 30px; height: 30px; margin-top: 5px; border-radius: 15px;
+  background: var(--bg-sec); border: 1px solid var(--brd); cursor: pointer;
+}
+.sec:hover { background: var(--hover); }
+.sec.sel, .sec.sel:hover { background: var(--selected); }
+.sec .ring { position: absolute; left: 50%; top: 50%; width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; border-radius: 50%; border: 1.5px solid var(--txt); }
+.sec .core { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: var(--txt); }
+/* status dot on the top-right rim, ringed in white */
+.sec .dot-bg { position: absolute; right: -4px; top: -4px; width: 11px; height: 11px; border-radius: 50%; background: var(--bg); }
+.sec .dot { position: absolute; right: -2.5px; top: -2.5px; width: 8px; height: 8px; border-radius: 50%; background: #639085; }
+
+/* Popups: app picker and context menu */
+.popup { display: none; align-self: flex-start; background: var(--bg); border: 1px solid var(--brd); border-radius: 12px; padding: 5px 6px; }
+[data-dock=bottom] .popup { align-self: flex-end; order: 3; }
+[data-state=picker] .popup, [data-state=menu] .popup { display: block; }
+.popup .picker, .popup .menu { display: none; }
+[data-state=picker] .picker, [data-state=menu] .menu { display: block; }
+.item {
+  display: flex; align-items: center; padding: 6px 10px; border-radius: 8px; cursor: pointer;
+  font: 500 12px "Segoe UI", system-ui, sans-serif; color: var(--txt); white-space: nowrap; line-height: 16px;
+}
+.item:hover { background: var(--hover); }
+.item .ico { width: 20px; height: 18px; margin-right: 8px; display: flex; align-items: center; justify-content: center; }
+.item .ico svg { display: block; }
+.menu .item { padding: 7px 12px; }
+.sep { height: 1px; margin: 4px 6px; background: var(--brd); }
+
+/* Drag-to-dock overlay: the window grows to the whole work area while dragging */
+.ov { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, .275); opacity: 0; transition: opacity .12s linear; }
+[data-state=drag] .ov { display: block; }
+[data-state=drag] .ov.in { opacity: 1; }
+[data-state=drag] .stage { visibility: hidden; }
+.zone { position: absolute; border-radius: 50%; background: #e1e1e1; opacity: .55; transform: scale(1); transition: opacity .12s linear, transform .12s linear; }
+.zone.on { opacity: .9; transform: scale(1.08); }
+.ball {
+  position: absolute; left: -100px; top: -100px; width: 34px; height: 34px; border-radius: 17px;
+  background: var(--bg); border: 1px solid var(--brd); display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, .35); color: var(--txt);
+}
+.off .ball { color: var(--txt-sec); }
+.ball.glide { transition: left .16s var(--ease-out), top .16s var(--ease-out); }
+
+</style>
+</head>
+<body>
+<div id="app" data-dock="right" data-state="idle">
+  <div class="stage" id="stage">
+    <div class="handle" id="handle"></div>
+    <div class="pillbox"><div class="pill" id="pill"><span class="act" id="pillAct">Pause</span> <span class="key">Alt W</span></div></div>
+    <div class="popup" id="popup">
+      <div class="picker" id="picker"><!--ITEMS--></div>
+      <div class="menu" id="menu">
+        <div class="item" data-act="dock" data-side="right">&#9656; Right Edge</div>
+        <div class="item" data-act="dock" data-side="left">&#9666; Left Edge</div>
+        <div class="item" data-act="dock" data-side="bottom">&#9662; Bottom Edge</div>
+        <div class="sep"></div>
+        <div class="item" data-act="quitCompanions">Quit companion (free RAM)</div>
+        <div class="item" data-act="exit">Exit</div>
+      </div>
+    </div>
+    <div class="col" id="col">
+      <div class="capsule" id="capsule">
+        <svg class="power" viewBox="5 3 14 14.36" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><path d="M12,3 L12,11 M6.3,6.3 A7,7 0 1,0 17.7,6.3"/></svg>
+      </div>
+      <div class="sec" id="sec"><div class="ring"></div><div class="core"></div><div class="dot-bg"></div><div class="dot" id="dot"></div></div>
+    </div>
+  </div>
+  <div class="ov" id="ov"></div>
+</div>
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const app = $('app'), stage = $('stage'), handle = $('handle'), capsule = $('capsule'), sec = $('sec');
+  const pill = $('pill'), pillAct = $('pillAct'), dotEl = $('dot'), ov = $('ov');
+  const send = (m) => window.ipc.postMessage(JSON.stringify(m));
+  const POWER = capsule.querySelector('svg').outerHTML;
+
+  const S = { dock: 'right', enabled: true, state: 'idle' };
+  let collapseTimer = 0;
+  let pressed = false, dragging = false, dragReady = false, pressX = 0, pressY = 0, lastX = 0, lastY = 0;
+  let centres = [], ball = null, zones = {}, activeZone = '';
+
+  // ---- state -----------------------------------------------------------------------------------------------------
+  function setState(s) {
+    S.state = s;
+    app.dataset.state = s;
+    sec.classList.toggle('sel', s === 'picker');
+    if (s !== 'pill') pill.classList.remove('show');
+    if (s === 'idle') capsule.classList.remove('pressed');
+    queueReport();
+  }
+  function showPill() {
+    if (S.state === 'picker' || S.state === 'menu' || S.state === 'drag') return;
+    if (S.state !== 'pill') {
+      setState('pill');
+      void pill.offsetWidth;                       // start the slide from its resting-off position
+    }
+    pill.classList.add('show');
+  }
+  const cancelCollapse = () => { clearTimeout(collapseTimer); collapseTimer = 0; };
+  function scheduleCollapse() {
+    if (S.state === 'drag') return;
+    cancelCollapse();
+    collapseTimer = setTimeout(() => { collapseTimer = 0; setState('idle'); }, 600);
+  }
+  function expand() { cancelCollapse(); if (S.state === 'idle') setState('expanded'); }
+  function togglePicker() {
+    if (S.state === 'picker') setState('expanded'); else { cancelCollapse(); setState('picker'); }
+  }
+
+  handle.addEventListener('mouseenter', expand);
+  capsule.addEventListener('mouseenter', () => { if (pressed) return; cancelCollapse(); showPill(); });
+  capsule.addEventListener('mouseleave', () => { if (pressed) return; scheduleCollapse(); });
+  sec.addEventListener('mouseenter', cancelCollapse);
+  sec.addEventListener('mouseleave', scheduleCollapse);
+  sec.addEventListener('mouseup', (e) => { if (e.button === 0) togglePicker(); });
+  $('popup').addEventListener('mouseenter', cancelCollapse);
+  $('popup').addEventListener('mouseleave', scheduleCollapse);
+
+  $('picker').addEventListener('mouseup', (e) => {
+    const it = e.target.closest('.item');
+    if (!it || e.button !== 0) return;
+    setState('expanded');
+    send({ t: 'launch', site: it.dataset.site });
+    scheduleCollapse();
+  });
+  $('menu').addEventListener('mouseup', (e) => {
+    const it = e.target.closest('.item');
+    if (!it || e.button !== 0) return;
+    setState('expanded');
+    scheduleCollapse();
+    send({ t: it.dataset.act, side: it.dataset.side });
+  });
+  document.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (dragging || S.state === 'idle' || S.state === 'drag') return;
+    cancelCollapse();
+    setState('menu');
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { setState('idle'); } });
+  document.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+
+  // ---- capsule: click toggles, press + drag re-docks -------------------------------------------------------------
+  capsule.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    pressed = true; dragging = false; dragReady = false;
+    pressX = lastX = e.clientX; pressY = lastY = e.clientY;
+    capsule.classList.add('pressed');
+    try { capsule.setPointerCapture(e.pointerId); } catch (_) {}
+    e.preventDefault();
+  });
+  document.addEventListener('pointermove', (e) => {
+    if (!pressed) return;
+    if (!dragging) {
+      if (Math.abs(e.clientX - pressX) < 6 && Math.abs(e.clientY - pressY) < 6) return;
+      beginDrag();
+    }
+    if (dragReady) moveBall(e.clientX, e.clientY);
+  });
+  capsule.addEventListener('pointerup', (e) => {
+    if (!pressed || e.button !== 0) return;
+    pressed = false;
+    try { capsule.releasePointerCapture(e.pointerId); } catch (_) {}
+    if (dragging) finishDrag(e.clientX, e.clientY);
+    else { capsule.classList.remove('pressed'); send({ t: 'toggle' }); }
+  });
+  capsule.addEventListener('lostpointercapture', () => {
+    // capture stolen mid-drag (Alt-Tab, Win key): still land on the nearest zone
+    if (!pressed) return;
+    pressed = false;
+    if (dragging) finishDrag(lastX, lastY); else capsule.classList.remove('pressed');
+  });
+
+  function beginDrag() {
+    dragging = true; dragReady = false;
+    cancelCollapse();
+    setState('drag');
+    send({ t: 'dragStart' });
+  }
+  // Rust has grown the window to the whole work area: draw the overlay
+  function buildOverlay(cs) {
+    ov.className = 'ov';
+    ov.innerHTML = '';
+    centres = cs;
+    zones = {};
+    for (const c of cs) {
+      const z = document.createElement('div');
+      const bottom = c.side === 'bottom';
+      const w = bottom ? 128 : 80, h = bottom ? 92 : 116;
+      z.className = 'zone';
+      z.style.cssText = `width:${w}px;height:${h}px;left:${c.x - w / 2}px;top:${c.y - h / 2}px`;
+      ov.appendChild(z);
+      zones[c.side] = z;
+    }
+    ball = document.createElement('div');
+    ball.className = 'ball';
+    ball.innerHTML = POWER;
+    ov.appendChild(ball);
+    void ov.offsetWidth;
+    ov.classList.add('in');
+  }
+  function nearest(x, y) {
+    let best = centres[0].side, bd = Infinity;
+    for (const c of centres) {
+      const d = (x - c.x) * (x - c.x) + (y - c.y) * (y - c.y);
+      if (d < bd) { bd = d; best = c.side; }
+    }
+    return best;
+  }
+  function highlight(side) {
+    if (activeZone === side) return;
+    activeZone = side;
+    for (const k in zones) zones[k].classList.toggle('on', k === side);
+  }
+  function moveBall(x, y) {
+    lastX = x; lastY = y;
+    if (!ball) return;
+    ball.style.left = (x - 17) + 'px';
+    ball.style.top = (y - 17) + 'px';
+    highlight(nearest(x, y));
+  }
+  function finishDrag(x, y) {
+    if (!dragReady) { dragging = 'ending'; return; }   // overlay not up yet: finish as soon as it is
+    dragging = false;
+    send({ t: 'dragEnd', x, y, w: innerWidth, h: innerHeight });
+  }
+  // Glide the ball into the chosen zone, fade out, then hand control back
+  function snap(side) {
+    const c = centres.find((z) => z.side === side) || centres[0];
+    highlight(side);
+    ball.classList.add('glide');
+    ball.style.left = (c.x - 17) + 'px';
+    ball.style.top = (c.y - 17) + 'px';
+    setTimeout(() => {
+      ov.classList.remove('in');
+      setTimeout(() => send({ t: 'dragDone', side }), 130);
+    }, 170);
+  }
+
+  // ---- size reporting: the native window hugs the stage ----------------------------------------------------------
+  let lastKey = '', rafId = 0;
+  function report(force) {
+    if (S.state === 'drag') return;
+    const r = stage.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return;
+    const c = (S.state === 'idle' ? handle : capsule).getBoundingClientRect();
+    const m = { t: 'size', dock: S.dock, w: r.width, h: r.height, cx: c.left + c.width / 2 - r.left, cy: c.top + c.height / 2 - r.top, dpr: window.devicePixelRatio };
+    const key = [m.w, m.h, m.cx, m.cy, m.dpr, S.dock].join('|');
+    if (!force && key === lastKey) return;
+    lastKey = key;
+    send(m);
+  }
+  function queueReport(force) {
+    if (force) lastKey = '';
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => { rafId = 0; report(false); });
+  }
+  new ResizeObserver(() => queueReport()).observe(stage);
+
+  // ---- Rust -> page ----------------------------------------------------------------------------------------------
+  window.wp = {
+    apply(st) {
+      if (st.dock) { S.dock = st.dock; app.dataset.dock = st.dock; }
+      if (typeof st.enabled === 'boolean') {
+        S.enabled = st.enabled;
+        app.classList.toggle('off', !st.enabled);
+        pillAct.textContent = st.enabled ? 'Pause' : 'Resume';
+      }
+      if (st.dot) dotEl.style.background = st.dot;
+      if (st.reset) {                                  // back from a drag (or a dock change): idle at the new place
+        pressed = false; dragging = false; dragReady = false; activeZone = '';
+        capsule.classList.remove('pressed');
+        ov.className = 'ov'; ov.innerHTML = ''; ball = null;
+        cancelCollapse();
+        setState('idle');
+      }
+      queueReport(true);
+    },
+    dragReady(info) {
+      buildOverlay(info.centres);
+      dragReady = true;
+      moveBall(info.x, info.y);
+      if (dragging === 'ending') { dragging = false; send({ t: 'dragEnd', x: lastX, y: lastY, w: innerWidth, h: innerHeight }); }
+    },
+    snap,
+  };
+  send({ t: 'ready' });
+})();
+</script>
+</body>
+</html>
