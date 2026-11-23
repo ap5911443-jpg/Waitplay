@@ -1,32 +1,26 @@
 {
-  "name": "waitplay-workspace",
-  "version": "0.1.0",
+  "name": "waitplay-website",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "packages/*",
-    "apps/*"
-  ],
   "scripts": {
-    "build": "npm run build --workspace=@waitplay/shared && npm run build --workspace=@waitplay/bridge && npm run build --workspace=@waitplay/web",
-    "test": "npm run test --workspaces --if-present",
-    "dev:bridge": "npm run dev --workspace=@waitplay/bridge",
-    "dev:web": "npm run dev --workspace=@waitplay/web",
-    "start:bridge": "npm run start --workspace=@waitplay/bridge",
-    "codex:watch": "node integrations/codex/codex-watcher.cjs",
-    "omp:watch": "node integrations/omp/omp-session-watcher.js",
-    "opencode:watch": "node integrations/opencode/opencode-watcher.cjs",
-    "test:mode": "node test-mode-25s.cjs",
-    "test:native": "powershell -NoProfile -ExecutionPolicy Bypass -File apps/native/tests/profile-adopt.ps1",
-    "build:native": "powershell -ExecutionPolicy Bypass -Command \"& 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe' /target:winexe /platform:x64 /r:System.dll /r:System.Core.dll /r:System.Xaml.dll /r:System.Web.Extensions.dll /r:'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\WPF\\WindowsBase.dll' /r:'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\WPF\\PresentationCore.dll' /r:'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\WPF\\PresentationFramework.dll' /r:'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\WPF\\UIAutomationClient.dll' /r:'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\WPF\\UIAutomationTypes.dll' /r:apps\\native\\Microsoft.Web.WebView2.Core.dll /r:apps\\native\\Microsoft.Web.WebView2.Wpf.dll /out:apps\\native\\WaitPlay.exe apps\\native\\WaitPlay.cs apps\\native\\SiteCatalog.cs\"",
-    "widget": "powershell -Command \"Start-Process apps\\native\\WaitPlay.exe -ArgumentList '--widget'\"",
-    "toggle": "apps\\native\\WaitPlay.exe --toggle",
-    "dock:left": "powershell -Command \"Stop-Process -Name WaitPlay -Force -ErrorAction SilentlyContinue; cmd.exe /c 'apps\\native\\WaitPlay.exe --dock=left'; Start-Process apps\\native\\WaitPlay.exe -ArgumentList '--widget'\"",
-    "dock:right": "powershell -Command \"Stop-Process -Name WaitPlay -Force -ErrorAction SilentlyContinue; cmd.exe /c 'apps\\native\\WaitPlay.exe --dock=right'; Start-Process apps\\native\\WaitPlay.exe -ArgumentList '--widget'\"",
-    "dock:bottom": "powershell -Command \"Stop-Process -Name WaitPlay -Force -ErrorAction SilentlyContinue; cmd.exe /c 'apps\\native\\WaitPlay.exe --dock=bottom'; Start-Process apps\\native\\WaitPlay.exe -ArgumentList '--widget'\"",
-    "dock:free": "powershell -Command \"Stop-Process -Name WaitPlay -Force -ErrorAction SilentlyContinue; cmd.exe /c 'apps\\native\\WaitPlay.exe --dock=free'; Start-Process apps\\native\\WaitPlay.exe -ArgumentList '--widget'\""
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lucide-react": "^0.474.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "typescript": "^5.7.3"
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.1",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
   }
 }
