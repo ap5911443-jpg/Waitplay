@@ -203,7 +203,9 @@ mod tests {
     use super::*;
 
     fn scratch(tag: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("wp-integ-{}-{}", tag, std::process::id()));
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let p = std::env::temp_dir().join(format!("wp-integ-{}-{}-{}", tag, std::process::id(), n));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -277,7 +279,8 @@ mod tests {
         let f = dir.join("settings.json");
         std::fs::write(&f, "{ broken").unwrap();
         let exe = Path::new(EXE);
-        assert!(matches!(claude_state(&f, exe), ClaudeState::Error(_)));
+        let state = claude_state(&f, exe);
+        assert!(matches!(state, ClaudeState::Error(_)), "state was {:?}, file is {:?}", state, std::fs::read_to_string(&f));
         assert!(claude_install(&f, exe).is_err());
         assert!(claude_remove(&f).is_err());
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "{ broken");

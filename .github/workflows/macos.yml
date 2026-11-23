@@ -89,6 +89,40 @@ jobs:
             "$APP/Contents/MacOS/waitplay-hook" --help | head -3
           } 2>&1 | tee smoke.log || { bash .github/scripts/annotate.sh smoke.log "bundle smoke test"; exit 1; }
 
+      # Runs the real app on this macOS session: menu bar, bridge, widget, settings window, hook -> entertainment window,
+      # concurrent sessions, idle CPU. Informational for the DMG (continue-on-error) but its result is annotated and its logs and
+      # screenshots are uploaded.
+      - name: Runtime smoke test (real app, real hooks)
+        id: runtime
+        if: matrix.target == 'x86_64-apple-darwin'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          bash packaging/macos/smoke.sh "dist/${{ matrix.target }}/WaitPlay.app" smoke-out 2>&1 | tee smoke-run.log
+
+      - name: Annotate runtime smoke result
+        if: always() && matrix.target == 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          if [ -f smoke-run.log ]; then
+            msg="$(sed -e 's/%/%25/g' -e 's/\r//g' smoke-run.log | awk '{printf "%s%%0A", $0}')"
+            if grep -q "SMOKE TEST PASSED" smoke-run.log; then echo "::notice title=runtime smoke test::${msg}"; else echo "::error title=runtime smoke test::${msg}"; fi
+            if [ -f smoke-out/waitplay.log ]; then
+              msg="$(tail -60 smoke-out/waitplay.log | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{printf "%s%%0A", $0}')"
+              echo "::notice title=app log (tail)::${msg}"
+            fi
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.target == 'x86_64-apple-darwin'
+        with:
+          name: smoke-output
+          path: |
+            smoke-out
+            smoke-run.log
+          if-no-files-found: ignore
+
       - uses: actions/upload-artifact@v4
         with:
           name: WaitPlay-${{ matrix.target }}

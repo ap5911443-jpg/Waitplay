@@ -8,6 +8,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,10 +34,12 @@ impl Level {
 
 static COMPONENT: OnceLock<String> = OnceLock::new();
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
+static ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// Names this process in every line (`app`, `companion`, ...). Call once at start.
+/// Names this process in every line (`app`, `companion`, ...) and turns logging on. Call once at start.
 pub fn init(component: &str) {
     let _ = COMPONENT.set(component.to_string());
+    ENABLED.store(true, Ordering::Relaxed);
 }
 
 pub fn log_path() -> PathBuf {
@@ -69,9 +72,12 @@ pub fn format_line(unix_ms: i64, level: Level, component: &str, msg: &str) -> St
 }
 
 pub fn log(level: Level, msg: &str) {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return; // processes that never called `init` (the Windows build) stay silent
+    }
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
     let line = format_line(now, level, COMPONENT.get().map(String::as_str).unwrap_or("waitplay"), msg);
-    eprint!("{}", line);
+    let _ = std::io::stderr().write_all(line.as_bytes());
     let _guard = WRITE_LOCK.lock();
     let path = log_path();
     if let Some(dir) = path.parent() {

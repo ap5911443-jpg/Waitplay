@@ -324,7 +324,10 @@ impl App {
         };
         let built = TrayIconBuilder::new().with_icon(icon).with_icon_as_template(true).with_tooltip("WaitPlay").build();
         match built {
-            Ok(t) => self.tray = Some(t),
+            Ok(t) => {
+                wp_info!("menu bar item created");
+                self.tray = Some(t);
+            }
             Err(e) => {
                 wp_error!("menu bar item: {}", e);
                 self.problem("tray", "error", "The menu bar item could not be created.", &e.to_string());
@@ -736,6 +739,7 @@ impl App {
         if !w.shown {
             w.window.set_visible(true);
             w.shown = true;
+            wp_info!("widget shown {} at ({:.0}, {:.0}), {:.0}x{:.0}", pos.as_str(), x, y, cw, ch);
         }
     }
 
@@ -751,6 +755,7 @@ impl App {
         match self.create_settings(target) {
             Ok(w) => {
                 w.window.set_focus();
+                wp_info!("settings window opened");
                 self.settings_win = Some(w);
                 self.last_settings_state = None;
                 self.clear_problem("settings-window");

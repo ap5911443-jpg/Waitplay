@@ -270,6 +270,7 @@ impl App {
     fn on_became_visible(&mut self) {
         self.visible = true;
         waitplay_core::companion_state::write(self.site_key, true);
+        crate::wp_info!("companion visible");
         self.core.became_visible();
         let _ = self.content.set_visible(true);
         let _ = self.header.set_visible(true);
@@ -401,6 +402,7 @@ impl App {
     }
 
     fn quit(&mut self) {
+        crate::wp_info!("companion quitting");
         self.quit_requested = true;
         self.exit = true;
     }
@@ -547,6 +549,7 @@ impl App {
             self.hide_at = None;
             if self.core.hidden_away {
                 waitplay_core::companion_state::write(self.site_key, false);
+                crate::wp_info!("companion hidden");
                 self.window.set_visible(false);
                 platform::hide_window(self.hwnd());
                 self.visible = false;
@@ -635,6 +638,8 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
     let proxy = event_loop.create_proxy();
     let user_settings = waitplay_core::settings::Settings::load();
 
+    #[cfg(target_os = "macos")]
+    crate::logging::init("companion");
     let window = {
         let b = WindowBuilder::new().with_title("WaitPlay").with_resizable(true).with_always_on_top(true).with_visible(false);
         // Windows draws its own caption in the header page; macOS keeps the native title bar and traffic lights
@@ -754,6 +759,7 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
     app.core.my_hwnd = app.hwnd();
     let _ = app.header.evaluate_script(&format!("wp.setActive({});", serde_json::to_string(opts.start.key).unwrap_or_default()));
     app.last_site = Some(opts.start.key);
+    crate::wp_info!("companion started: owner={} opens={} session={:?} terminal={:?} parent={}", site.key, opts.start.key, opts.session, opts.terminal, opts.parent_hwnd);
 
     // A hook launch registers its session; a widget/CLI launch ("Desktop") has no owning terminal
     if !opts.session.is_empty() && opts.terminal != "Desktop" {
@@ -798,12 +804,14 @@ mod tests {
 
     #[test]
     fn layout_leaves_resize_borders_and_a_header() {
+        // the border is 5 dip around the site on Windows (resize edges) and 0 on macOS (native frame)
+        let b = BORDER_DIP.round() as i32;
         let l = layout(1400, 900, 1.0);
-        assert_eq!(l.header, (5, 5, 1390, 44));
-        assert_eq!(l.content, (5, 49, 1390, 846));
+        assert_eq!(l.header, (b, b, (1400 - 2 * b) as u32, 44));
+        assert_eq!(l.content, (b, b + 44, (1400 - 2 * b) as u32, (900 - 2 * b - 44) as u32));
         let l = layout(2100, 1350, 1.5);
         assert_eq!(l.header.3, 66);
-        assert_eq!(l.content.1, 8 + 66);
+        assert_eq!(l.content.1, (BORDER_DIP * 1.5).round() as i32 + 66);
         // tiny windows never produce zero or negative sizes
         let l = layout(10, 10, 2.0);
         assert!(l.header.2 >= 1 && l.content.3 >= 1);
