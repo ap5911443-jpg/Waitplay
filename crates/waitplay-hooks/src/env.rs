@@ -28,6 +28,10 @@ pub trait Watcher {
     fn deadline(&self) -> Option<i64>;
     /// Runs every timer that is due at `env.now_ms()`.
     fn fire(&mut self, env: &mut dyn Env);
+    /// No turn is open, so polling can slow down until one starts.
+    fn is_idle(&self) -> bool {
+        false
+    }
 }
 
 /// Production environment. Events go through one worker thread so a slow bridge never stalls polling and events keep their
@@ -91,14 +95,19 @@ impl Env for RealEnv {
     }
 }
 
-/// Drives a watcher forever: `poll` every `poll_ms`, timers as soon as they are due.
+/// While no turn is open a watcher only needs to notice that one starts: a slower poll keeps an idle Mac idle.
+pub const IDLE_POLL_MS: u64 = 300;
+
+/// Drives a watcher forever: `poll` every `poll_ms` (every `IDLE_POLL_MS` while it reports idle), timers as soon as they are due.
 pub fn run_loop(poll_ms: u64, watcher: &mut dyn Watcher, env: &mut dyn Env) -> ! {
-    let interval = Duration::from_millis(poll_ms);
+    let busy_interval = Duration::from_millis(poll_ms);
+    let idle_interval = Duration::from_millis(poll_ms.max(IDLE_POLL_MS));
     let mut next_poll = Instant::now();
     loop {
         let now = Instant::now();
         if now >= next_poll {
             watcher.poll(env);
+            let interval = if watcher.is_idle() { idle_interval } else { busy_interval };
             next_poll += interval;
             if next_poll < now {
                 next_poll = now + interval;

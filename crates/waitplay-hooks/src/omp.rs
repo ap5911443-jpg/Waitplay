@@ -385,6 +385,10 @@ impl Watcher for OmpWatcher {
         Some(self.finish_at.map_or(self.next_heartbeat, |f| f.min(self.next_heartbeat)))
     }
 
+    fn is_idle(&self) -> bool {
+        !self.is_working && self.finish_at.is_none()
+    }
+
     fn fire(&mut self, env: &mut dyn Env) {
         let now = env.now_ms();
         if let Some(due) = self.finish_at {

@@ -19,7 +19,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: aarch64-apple-darwin, runner: macos-latest }
+          # Apple Silicon runners are capacity-limited; the Intel runner cross-builds arm64 and runs the tests natively
+          - { target: aarch64-apple-darwin, runner: macos-15-intel }
           - { target: x86_64-apple-darwin, runner: macos-15-intel }
     steps:
       - uses: actions/checkout@v4
@@ -37,13 +38,14 @@ jobs:
         run: |
           set -o pipefail
           export WAITPLAY_BUILD="$(git rev-parse --short HEAD)"
-          cargo build --release --workspace --target ${{ matrix.target }} 2>&1 | tee build.log || { .github/scripts/annotate.sh build.log "cargo build (${{ matrix.target }})"; exit 1; }
+          cargo build --release --workspace --target ${{ matrix.target }} 2>&1 | tee build.log || { bash .github/scripts/annotate.sh build.log "cargo build (${{ matrix.target }})"; exit 1; }
 
-      - name: Test
+      - name: Test (native architecture)
+        if: matrix.target == 'x86_64-apple-darwin'
         shell: bash
         run: |
           set -o pipefail
-          cargo test --workspace --target ${{ matrix.target }} -- --test-threads=4 2>&1 | tee test.log || { .github/scripts/annotate.sh test.log "cargo test"; exit 1; }
+          cargo test --workspace --target ${{ matrix.target }} -- --test-threads=4 2>&1 | tee test.log || { bash .github/scripts/annotate.sh test.log "cargo test"; exit 1; }
 
       - name: Import Developer ID certificate
         if: env.APPLE_CERTIFICATE != ''
@@ -71,9 +73,10 @@ jobs:
         run: |
           set -o pipefail
           export WAITPLAY_BUILD="$(git rev-parse --short HEAD)"
-          packaging/macos/build_app.sh ${{ matrix.target }} 2>&1 | tee package.log || { .github/scripts/annotate.sh package.log "package (${{ matrix.target }})"; exit 1; }
+          bash packaging/macos/build_app.sh ${{ matrix.target }} 2>&1 | tee package.log || { bash .github/scripts/annotate.sh package.log "package (${{ matrix.target }})"; exit 1; }
 
       - name: Smoke test the bundle
+        if: matrix.target == 'x86_64-apple-darwin'
         shell: bash
         run: |
           set -o pipefail
@@ -84,7 +87,7 @@ jobs:
             codesign -dv "$APP" 2>&1 | head -5
             # the hook binary runs and the bridge answers after the app bundle is relocated
             "$APP/Contents/MacOS/waitplay-hook" --help | head -3
-          } 2>&1 | tee smoke.log || { .github/scripts/annotate.sh smoke.log "bundle smoke test"; exit 1; }
+          } 2>&1 | tee smoke.log || { bash .github/scripts/annotate.sh smoke.log "bundle smoke test"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:

@@ -58,7 +58,7 @@ Windows-only "typing or scrolling in the terminal steps the window aside" and pe
 ```sh
 rustup target add aarch64-apple-darwin
 cargo build --release --workspace
-WAITPLAY_BUILD=$(git rev-parse --short HEAD) packaging/macos/build_app.sh aarch64-apple-darwin
+WAITPLAY_BUILD=$(git rev-parse --short HEAD) bash packaging/macos/build_app.sh aarch64-apple-darwin
 # -> dist/aarch64-apple-darwin/WaitPlay.app and WaitPlay-<version>-arm64.dmg
 ```
 
@@ -73,3 +73,23 @@ and `x86_64-apple-darwin`, signs when the `APPLE_*` secrets exist, and attaches 
 * The entertainment window cannot be frozen like WebView2: when parked it is hidden and, after ten idle minutes, the process quits
   (logins are kept in the system WebKit store).
 * Sites may limit embedded browsers. WaitPlay uses the standard WKWebView and does not alter the user agent or bypass any check.
+
+## Verification status
+
+Verified automatically (unit tests, run on Windows and by the macOS CI job): settings validation, status derivation, tray menu model,
+widget/entertainment placement geometry (three corners, offset and secondary displays), Claude Code hook install/remove/outdated/
+corrupt-file handling, launch-at-login plist sync, logging format, per-conversation Claude sessions, watcher idle polling,
+companion visibility rules (including "step aside while the agent asks a question").
+
+**Not verified on hardware yet. Run this checklist on a real Mac before calling a build good:**
+
+- [ ] App launches, menu-bar icon appears, no Dock icon; Settings opens from the menu and from relaunching the app; Quit exits cleanly
+- [ ] Light and dark appearance (System / Light / Dark switch), Reduce Motion
+- [ ] Widget: always on top, three corners, survives restart, correct on a second display, display plug/unplug, sleep/wake
+- [ ] Claude Code: Install Hooks, start and finish a prompt; two terminals at once; closing one does not hide the other's window
+- [ ] OpenCode watcher: start/finish
+- [ ] Instagram, X, YouTube: load, sign in (paste works), stay signed in after quitting and reopening WaitPlay, YouTube playback
+- [ ] Entertainment window is reused, hides when the agent finishes (Hide) or quits (Close), stays while another session works
+- [ ] Launch at login on/off, no duplicate entry after moving the app
+- [ ] Global shortcuts register, conflicts are reported in Shortcuts
+- [ ] Idle CPU, memory, event-to-window latency

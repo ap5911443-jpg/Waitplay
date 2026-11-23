@@ -196,6 +196,10 @@ impl Watcher for CodexWatcher {
         self.state.deadline()
     }
 
+    fn is_idle(&self) -> bool {
+        !self.state.active && self.state.completion.is_none()
+    }
+
     fn fire(&mut self, env: &mut dyn Env) {
         self.state.fire(env);
     }

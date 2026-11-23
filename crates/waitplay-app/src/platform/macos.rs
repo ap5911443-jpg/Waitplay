@@ -10,8 +10,8 @@
 use super::{Rect, WindowId, NO_WINDOW};
 use crate::placement::{LRect, Screen};
 use objc2::rc::Retained;
+use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplicationActivationOptions, NSApplicationActivationPolicy, NSRunningApplication, NSScreen, NSWorkspace};
-use objc2_foundation::MainThreadMarker;
 use std::process::Command;
 
 pub fn current_pid() -> u32 {
@@ -183,13 +183,11 @@ fn lrect(r: objc2_foundation::NSRect) -> LRect {
 /// Every display in logical points with a top-left origin (primary display first). Main thread only; empty elsewhere.
 pub fn screens() -> Vec<Screen> {
     let Some(mtm) = MainThreadMarker::new() else { return Vec::new() };
-    let list = NSScreen::screens(mtm);
-    let primary_height = list.iter().next().map(|s| s.frame().size.height).unwrap_or(0.0);
+    let list = NSScreen::screens(mtm).to_vec();
+    let primary_height = list.first().map(|s| s.frame().size.height).unwrap_or(0.0);
     // Cocoa measures y upwards from the bottom of the primary display; everything else here measures downwards from its top
     let flip = |r: LRect| LRect::new(r.x, primary_height - (r.y + r.h), r.w, r.h);
-    list.iter()
-        .map(|s| Screen { frame: flip(lrect(s.frame())), work: flip(lrect(s.visibleFrame())), scale: s.backingScaleFactor() })
-        .collect()
+    list.iter().map(|s| Screen { frame: flip(lrect(s.frame())), work: flip(lrect(s.visibleFrame())), scale: s.backingScaleFactor() }).collect()
 }
 
 /// Primary display's usable area in physical pixels (the contract's unit).

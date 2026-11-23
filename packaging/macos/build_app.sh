@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds dist/<target>/WaitPlay.app and WaitPlay-<version>-<arch>.dmg from an already built `cargo build --release --target <t>`.
 #
-#   packaging/macos/build_app.sh [target-triple]        (default aarch64-apple-darwin)
+#   bash packaging/macos/build_app.sh [target-triple]        (default aarch64-apple-darwin)
 #
 # Signing is optional so local builds never need an Apple account:
 #   APPLE_SIGNING_IDENTITY   "Developer ID Application: Name (TEAMID)"  -> Hardened Runtime + timestamp; unset = ad-hoc signature

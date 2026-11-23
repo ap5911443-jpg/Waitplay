@@ -281,6 +281,10 @@ impl Watcher for OpencodeWatcher {
         self.state.deadline()
     }
 
+    fn is_idle(&self) -> bool {
+        !self.state.is_working && self.state.finish_at.is_none()
+    }
+
     fn fire(&mut self, env: &mut dyn Env) {
         self.state.fire(env);
     }
