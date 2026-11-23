@@ -80,6 +80,16 @@ pub fn logo_svg(key: &str, size: u32, on_dark: bool) -> String {
     }
 }
 
+/// Like [`logo_svg`], but X follows the surrounding text colour, so it reads on a light header and on a dark one.
+pub fn logo_svg_adaptive(key: &str, size: u32) -> String {
+    let svg = logo_svg(key, size, true);
+    if key == "x" {
+        svg.replace("fill='#FFFFFF'", "fill='currentColor'")
+    } else {
+        svg
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +112,13 @@ mod tests {
         for s in SITES.iter() {
             assert!(logo_svg(s.key, 18, true).contains("<path"), "{}", s.key);
         }
+    }
+
+    #[test]
+    fn adaptive_logo_follows_the_text_colour_only_for_x() {
+        assert!(logo_svg_adaptive("x", 18).contains("fill='currentColor'"));
+        assert!(!logo_svg_adaptive("x", 18).contains("#FFFFFF"));
+        // YouTube's play triangle must stay white on its red badge
+        assert_eq!(logo_svg_adaptive("youtube", 18), logo_svg("youtube", 18, true));
     }
 }

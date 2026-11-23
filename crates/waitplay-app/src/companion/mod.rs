@@ -612,7 +612,7 @@ fn header_html() -> String {
                 "<button class='tab' data-site='{key}' title='{label}' aria-label='{label}'>{logo}<span class='label'>{label}</span></button>",
                 key = s.key,
                 label = s.label,
-                logo = sites::logo_svg(s.key, 18, true)
+                logo = if cfg!(target_os = "macos") { sites::logo_svg_adaptive(s.key, 18) } else { sites::logo_svg(s.key, 18, true) }
             )
         })
         .collect();
