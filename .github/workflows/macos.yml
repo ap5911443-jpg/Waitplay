@@ -135,3 +135,54 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/${{ matrix.target }}/*.dmg
+
+  # Runs the arm64 build on a real Apple Silicon runner. Those runners are capacity-limited, so this job must never block the
+  # release: it is allowed to fail or be cancelled; when it does run it is the only proof that the arm64 binary works.
+  arm64-runtime:
+    name: arm64 runtime smoke test
+    needs: build
+    runs-on: macos-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: WaitPlay-aarch64-apple-darwin
+          path: dmg
+
+      - name: Install the app from the DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/wp-dmg" dmg/*.dmg
+          cp -R "$RUNNER_TEMP/wp-dmg/WaitPlay.app" ./WaitPlay.app
+          hdiutil detach "$RUNNER_TEMP/wp-dmg"
+          file WaitPlay.app/Contents/MacOS/waitplay
+
+      - name: Runtime smoke test on Apple Silicon
+        id: runtime
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          bash packaging/macos/smoke.sh WaitPlay.app smoke-out 2>&1 | tee smoke-run.log
+
+      - name: Annotate result
+        if: always()
+        shell: bash
+        run: |
+          if [ -f smoke-run.log ]; then
+            msg="$(sed -e 's/%/%25/g' -e 's/\r//g' smoke-run.log | awk '{printf "%s%%0A", $0}')"
+            if grep -q "SMOKE TEST PASSED" smoke-run.log; then echo "::notice title=arm64 runtime smoke test::${msg}"; else echo "::error title=arm64 runtime smoke test::${msg}"; fi
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-output-arm64
+          path: |
+            smoke-out
+            smoke-run.log
+          if-no-files-found: ignore

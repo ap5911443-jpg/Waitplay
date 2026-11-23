@@ -76,20 +76,33 @@ and `x86_64-apple-darwin`, signs when the `APPLE_*` secrets exist, and attaches 
 
 ## Verification status
 
-Verified automatically (unit tests, run on Windows and by the macOS CI job): settings validation, status derivation, tray menu model,
-widget/entertainment placement geometry (three corners, offset and secondary displays), Claude Code hook install/remove/outdated/
-corrupt-file handling, launch-at-login plist sync, logging format, per-conversation Claude sessions, watcher idle polling,
-companion visibility rules (including "step aside while the agent asks a question").
+**Unit tests** (Windows dev machine and the macOS CI job): settings validation, status derivation, tray menu model, placement geometry
+(three corners, offset and secondary displays), Claude Code hook install/remove/outdated/corrupt-file handling, launch-at-login plist
+sync, logging format, per-conversation Claude sessions, watcher idle polling, companion visibility rules (including "step aside
+while the agent asks a question"), macOS process-tree and PID helpers.
 
-**Not verified on hardware yet. Run this checklist on a real Mac before calling a build good:**
+**Runtime smoke test on a real macOS session** (`packaging/macos/smoke.sh`, run by CI on macOS 15 / x86_64 against the packaged
+`WaitPlay.app`; screenshots and logs are uploaded as the `smoke-output` artifact of every run). It passed for:
 
-- [ ] App launches, menu-bar icon appears, no Dock icon; Settings opens from the menu and from relaunching the app; Quit exits cleanly
-- [ ] Light and dark appearance (System / Light / Dark switch), Reduce Motion
-- [ ] Widget: always on top, three corners, survives restart, correct on a second display, display plug/unplug, sleep/wake
-- [ ] Claude Code: Install Hooks, start and finish a prompt; two terminals at once; closing one does not hide the other's window
-- [ ] OpenCode watcher: start/finish
-- [ ] Instagram, X, YouTube: load, sign in (paste works), stay signed in after quitting and reopening WaitPlay, YouTube playback
-- [ ] Entertainment window is reused, hides when the agent finishes (Hide) or quits (Close), stays while another session works
-- [ ] Launch at login on/off, no duplicate entry after moving the app
-- [ ] Global shortcuts register, conflicts are reported in Shortcuts
-- [ ] Idle CPU, memory, event-to-window latency
+- app starts, menu-bar item created, bridge started by the app, widget shown bottom-right, settings window opened by a second launch
+- idle app: ~0.02 s CPU per 10 s, ~44 MB resident
+- a Claude Code prompt through the real hook opens the Instagram window (native title bar, header tabs, page loads and shows the
+  login form); a second conversation becomes its own session served by the same window (no second window process)
+- finishing one of two sessions keeps the window; finishing the last hides it
+- second configuration (dark appearance, widget top-right, YouTube preferred, X off, close on finish): dark windows, the window opens
+  on YouTube below the widget, and the window process exits when the agent finishes; the WebKit cookie store is written to disk
+- no `ERROR` lines in the app log
+
+The arm64 build is cross-compiled and packaged by CI. An extra job runs the same smoke test on an Apple Silicon runner when GitHub
+has capacity (it is allowed to be cancelled); check the latest run for its result.
+
+**Not verified (needs a real Mac and a person):**
+
+- [ ] Sign in to Instagram / X / YouTube, then quit and reopen WaitPlay and confirm you are still signed in
+- [ ] Retina display scaling, a second display, display plug/unplug, sleep/wake
+- [ ] Launch at login actually starting WaitPlay after a real login; no duplicate entry after moving the app
+- [ ] Global shortcuts firing, and conflict messages in Settings > Shortcuts
+- [ ] OpenCode / Codex / OMP / Cline watchers with real sessions; Install Hooks button against a real Claude Code
+- [ ] Terminal.app / iTerm2 / VS Code: the window follows the terminal that ran the prompt
+- [ ] Reduce Motion, VoiceOver, keyboard navigation of the settings window
+- [ ] Gatekeeper behaviour of a Developer ID signed and notarized DMG (the CI build is ad-hoc signed)
