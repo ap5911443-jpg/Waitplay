@@ -194,9 +194,11 @@ fn map_status(status: u16, body: String) -> AuthError {
     let code = ["error_code", "code", "error"].iter().find_map(|k| v.get(*k).and_then(Value::as_str)).unwrap_or("").to_string();
     let message = ["msg", "message", "error_description"].iter().find_map(|k| v.get(*k).and_then(Value::as_str)).unwrap_or("").to_string();
     match status {
+        // the email limit is a Rejected answer (its own message), not the generic "too many requests"
+        _ if code == "over_email_send_rate_limit" => AuthError::Rejected { code, message },
         429 => AuthError::RateLimited,
         500..=599 => AuthError::Unavailable,
-        _ if code == "over_email_send_rate_limit" || code == "over_request_rate_limit" => AuthError::RateLimited,
+        _ if code == "over_request_rate_limit" => AuthError::RateLimited,
         _ => AuthError::Rejected { code, message },
     }
 }

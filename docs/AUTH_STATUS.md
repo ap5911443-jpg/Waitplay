@@ -21,18 +21,22 @@ Written from what was actually executed. Nothing here claims authentication is p
 | The same migration and the 34 pgTAP assertions on a **real local Supabase stack** (`supabase start`, `supabase test db`), and the Edge Function's Deno tests | GitHub Actions workflow `Supabase`, green on the commit that added them |
 | macOS (Intel runner): the whole workspace test suite including the **real Keychain round trip**, the account window code compiling, and the runtime smoke test of the app | GitHub Actions `macOS` x86_64 job, green |
 | No privileged Supabase key or JWT anywhere in the repository; config refuses `sb_secret_`/`service_role` keys; privacy claims match the optional account | repo hygiene tests |
+| **Google OAuth on Windows against the real project** (Google provider enabled in your dashboard): PKCE authorize in the system browser, return through `http://127.0.0.1:<port>/auth/callback/<nonce>` (so the allow-list pattern works), code exchange, profile (name, email, "Signed in with Google", verified), free plan, **this device registered** in Supabase | run by you and me together on this PC |
+| Session storage: **Windows Credential Manager** item `com.waitplay.app/session` (87 bytes, DPAPI, local-machine persistence) holding only `v`, `user_id` and the refresh token; the refresh token is in **no file** under the app's data folder and **not in the log**; `account.json` has no tokens | inspected after the live login |
+| Relaunch: signed in at once from the stored token, background refresh **rotated** the refresh token | live |
+| Sign out: credential and `account.json` removed. Expired session: an old, already-rotated token restored into Credential Manager is refused by Supabase, the app shows "Your session expired. Please sign in again.", and the dead token is deleted | live |
+| In-app **Cancel** of a Google sign-in: the loopback listener port (opened for the flow) is closed again and the window shows "Sign-in cancelled." | live |
+| The anonymous key can read **nothing** from `profiles`, `entitlements`, `devices`, `user_preferences` on your project (`42501 permission denied`): the migration is applied and row level security is active | live REST check |
 
 ## Not verified yet
 
 | Item | Why |
 |---|---|
-| **Google login with a real Google account** | needs the Google provider enabled in your dashboard (it is currently disabled: `/auth/v1/settings` shows `google:false`) and you signing in interactively. Not tested on Windows, macOS Intel or Apple Silicon. |
-| Whether Supabase accepts the redirect pattern `http://127.0.0.1:*/auth/callback/*` | not configured yet |
-| Email codes (sign-up, sign-in, reset) with real emails | needs the email templates changed to `{{ .Token }}`; sending real emails also needs a mailbox of yours and, before launch, custom SMTP |
-| The migration and RLS suite **on your hosted project** | the migration is not applied there yet (REST answers `PGRST205: table not found`). The same suite does pass in CI against a real local Supabase stack (see above). |
-| `delete-account` Edge Function deployed and called | not deployed (needs you); its logic is covered by `deno test` in CI |
-| macOS Apple Silicon: Keychain storage and the account window | the arm64 runtime job was still queued (no runner capacity) when this was written; no human has used the macOS UI. |
-| Token refresh against the real server over time (rotation reuse window, expiry after an hour) | needs a real account |
+| **Google login on macOS Intel and macOS Apple Silicon** | not run: needs a real Mac and you signing in. The macOS Keychain round trip and the app compile in CI; nothing has been used by a human on a Mac. |
+| Email flows with real emails (sign-up confirmation code, sign-in code, password reset) | not run. Built-in Supabase mail only reaches the project team's addresses at about 2 emails/hour (see `docs/AUTH_SETUP.md`, "Testing email flows"); the templates must show `{{ .Token }}`. |
+| `delete-account` Edge Function on your project | **not deployed**: `POST /functions/v1/delete-account` answers 404. Account deletion fails with an error until `supabase functions deploy delete-account` is run. |
+| **Offline behaviour on a real disconnected machine** | not run (needs the network adapter switched off, which needs administrator rights I do not have). Covered by tests: signed-in start makes no network call, a dead server keeps the session, local features never touch the auth crate. |
+| Provider-side cancellation (pressing *Cancel* on Google's consent screen) | the in-app Cancel was tested live; the "access_denied" redirect is covered by unit tests only. |
 | Apple sign-in | button disabled; needs the paid Apple Developer membership |
 | Accessibility audit, localisation, a screen-reader pass | not done |
 | Keychain prompts for **ad-hoc signed** macOS builds: the app's identity changes with each build, so macOS may ask to allow keychain access after an update | expected; disappears with Developer ID signing |

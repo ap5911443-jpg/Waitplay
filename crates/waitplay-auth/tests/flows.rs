@@ -472,12 +472,27 @@ fn password_reset_verifies_the_code_then_sets_the_new_password() {
 }
 
 #[test]
-fn rate_limits_are_reported_in_plain_words() {
+fn email_restrictions_of_the_built_in_mail_service_are_explained() {
+    // 2 emails per hour
     let mock = Mock::start(|_| (429, json!({"error_code": "over_email_send_rate_limit", "msg": "email rate limit exceeded"})));
     let (store, dir) = (SharedStore::default(), scratch("rate"));
     let err = service(&mock, &store, &dir).send_code("ada@example.com", false).unwrap_err();
+    assert!(matches!(&err, AuthError::Rejected { code, .. } if code == "over_email_send_rate_limit"), "{err:?}");
+    assert!(err.user_message().contains("2 per hour"), "{}", err.user_message());
+
+    // recipients outside the project team (documented message: "Email address not authorized.")
+    for body in [json!({"error_code": "email_address_not_authorized", "msg": "Email address not authorized"}), json!({"msg": "Email address not authorized."})] {
+        let mock = Mock::start(move |_| (400, body.clone()));
+        let err = service(&mock, &SharedStore::default(), &scratch("unauth")).send_code("someone@gmail.com", true).unwrap_err();
+        assert!(err.user_message().contains("project team"), "{}", err.user_message());
+    }
+    // sign-in code for an address that has no account, and a malformed address
+    let mock = Mock::start(|_| (422, json!({"error_code": "otp_disabled", "msg": "Signups not allowed for otp"})));
+    assert!(service(&mock, &SharedStore::default(), &scratch("nouser")).send_code("new@gmail.com", false).unwrap_err().user_message().contains("Create account"));
+    // the generic request limit is still the generic message
+    let mock = Mock::start(|_| (429, json!({"error_code": "over_request_rate_limit"})));
+    let err = service(&mock, &SharedStore::default(), &scratch("req")).send_code("ada@gmail.com", false).unwrap_err();
     assert_eq!(err, AuthError::RateLimited);
-    assert!(err.user_message().contains("Too many attempts"));
 }
 
 // ── account actions ────────────────────────────────────────────────────────────────────────────────────────────────────────
