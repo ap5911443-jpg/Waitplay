@@ -83,7 +83,10 @@ jobs:
         shell: bash
         run: |
           cargo build --release -p waitplay-app --features test-hooks --target ${{ matrix.target }}
-          mkdir -p testhooks && cp target/${{ matrix.target }}/release/waitplay testhooks/waitplay
+          # the app starts the bridge and the hooks from the folder it runs from, so they sit next to it
+          mkdir -p testhooks
+          cp target/${{ matrix.target }}/release/waitplay target/${{ matrix.target }}/release/waitplay-bridge target/${{ matrix.target }}/release/waitplay-hook testhooks/
+
       - name: Smoke test the bundle
         if: matrix.target == 'x86_64-apple-darwin'
         shell: bash
