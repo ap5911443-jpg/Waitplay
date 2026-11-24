@@ -2,6 +2,7 @@
 //! order Express ran them (loopback -> CORS -> JSON body -> router). WebSocket upgrades on `/ws` are handled here too.
 
 use crate::event_validator::validate_event_input;
+use crate::limits::{self, Limits};
 use crate::security::{self, LoopbackVerdict};
 use crate::session_manager::SessionManager;
 use crate::ws::{self, WsHub};
@@ -32,6 +33,13 @@ pub struct BridgeState {
     pub ws: Option<Arc<WsHub>>,
     pub get_health: HealthFn,
     pub token: String,
+    pub limits: Limits,
+}
+
+impl BridgeState {
+    pub fn new(sessions: Arc<SessionManager>, ws: Option<Arc<WsHub>>, get_health: HealthFn, token: String) -> BridgeState {
+        BridgeState { sessions, ws, get_health, token, limits: Limits::default() }
+    }
 }
 
 type Resp = Response<Full<Bytes>>;
@@ -208,8 +216,8 @@ async fn read_json_body(headers: &hyper::HeaderMap, body: Incoming) -> Result<Va
     }
 }
 
-/// What `requireBridgeAuth` answers when the token is missing or wrong.
-fn authorized(state: &BridgeState, headers: &hyper::HeaderMap) -> bool {
+/// The token a request presents: `x-bridge-token` wins when present at all, else `Authorization: Bearer`.
+fn presented_token(headers: &hyper::HeaderMap) -> Option<String> {
     let joined = |name: &str| -> Option<String> {
         let values: Vec<&str> = headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect();
         if values.is_empty() {
@@ -218,8 +226,31 @@ fn authorized(state: &BridgeState, headers: &hyper::HeaderMap) -> bool {
             Some(values.join(", "))
         }
     };
-    let presented = security::presented_token(joined("x-bridge-token").as_deref(), joined("authorization").as_deref());
-    presented.is_some_and(|t| security::tokens_equal(&t, &state.token))
+    security::presented_token(joined("x-bridge-token").as_deref(), joined("authorization").as_deref())
+}
+
+/// `Ok` for the right token. Otherwise the answer to send: 401, or 429 once too many wrong attempts arrive (the rejection is
+/// logged, at most one line every ten seconds, so a flood leaves a trace without filling the log).
+fn check_auth(state: &BridgeState, headers: &hyper::HeaderMap, what: &str) -> Result<(), Resp> {
+    if presented_token(headers).is_some_and(|t| security::tokens_equal(&t, &state.token)) {
+        Ok(())
+    } else {
+        Err(reject(state, what))
+    }
+}
+
+fn reject(state: &BridgeState, what: &str) -> Resp {
+    if !state.limits.failed_auth.allow() {
+        return too_many("Too many failed authentication attempts. Try again in a minute.");
+    }
+    if state.limits.auth_log.allow() {
+        eprintln!("[WaitPlay Bridge] rejected unauthenticated request: {}", what);
+    }
+    unauthorized()
+}
+
+fn too_many(message: &str) -> Resp {
+    with_headers(error_json(429, "Too Many Requests", message), &[(header::RETRY_AFTER, HeaderValue::from_static("1"))])
 }
 
 fn unauthorized() -> Resp {
@@ -229,6 +260,7 @@ fn unauthorized() -> Resp {
         "Missing or invalid bridge authentication token. Provide x-bridge-token or Authorization: Bearer <token>",
     )
 }
+
 
 /// Express matches routes case-insensitively and ignores one trailing slash.
 fn path_segments(path: &str) -> Vec<&str> {
@@ -266,11 +298,23 @@ fn route(state: &BridgeState, parts: &hyper::http::request::Parts, body: Value) 
     let lower: Vec<String> = segs.iter().map(|s| s.to_ascii_lowercase()).collect();
     let lower: Vec<&str> = lower.iter().map(String::as_str).collect();
 
+    // Everything except /health needs the bridge token: session data and the automation switch are not public.
+    macro_rules! auth {
+        ($what:expr) => {
+            if let Err(resp) = check_auth(state, &parts.headers, $what) {
+                return resp;
+            }
+        };
+    }
+
     match (lower.as_slice(), is_get, is_post) {
         (["health"], true, _) => json_response(200, &serde_json::to_value((state.get_health)()).unwrap_or(Value::Null)),
-        (["auth", "token"], true, _) => json_response(200, &json!({ "token": state.token })),
-        (["state"], true, _) => json_response(200, &json!({ "enabled": state::is_enabled() })),
+        (["state"], true, _) => {
+            auth!("GET /state");
+            json_response(200, &json!({ "enabled": state::is_enabled() }))
+        }
         (["state"], _, true) => {
+            auth!("POST /state");
             let requested = body.get("enabled").and_then(Value::as_bool).unwrap_or_else(|| !state::is_enabled());
             state::set_enabled(requested);
             if let Some(ws) = &state.ws {
@@ -278,8 +322,12 @@ fn route(state: &BridgeState, parts: &hyper::http::request::Parts, body: Value) 
             }
             json_response(200, &json!({ "status": "ok", "enabled": requested }))
         }
-        (["sessions"], true, _) => json_response(200, &json!({ "sessions": state.sessions.get_all_sessions() })),
+        (["sessions"], true, _) => {
+            auth!("GET /sessions");
+            json_response(200, &json!({ "sessions": state.sessions.get_all_sessions() }))
+        }
         (["sessions", _], true, _) => {
+            auth!("GET /sessions/:id");
             let Some(id) = percent_decode(segs[1]) else { return error_json(400, "Bad Request", "Failed to decode param") };
             match state.sessions.get_session(&id) {
                 Some(session) => json_response(200, &json!({ "session": session })),
@@ -287,9 +335,7 @@ fn route(state: &BridgeState, parts: &hyper::http::request::Parts, body: Value) 
             }
         }
         (["sessions", _, "reset"], _, true) => {
-            if !authorized(state, &parts.headers) {
-                return unauthorized();
-            }
+            auth!("POST /sessions/:id/reset");
             let Some(id) = percent_decode(segs[1]) else { return error_json(400, "Bad Request", "Failed to decode param") };
             if !state.sessions.reset_session(&id) {
                 return session_not_found(&id);
@@ -300,8 +346,9 @@ fn route(state: &BridgeState, parts: &hyper::http::request::Parts, body: Value) 
             json_response(200, &json!({ "status": "reset", "sessionId": id }))
         }
         (["events"], _, true) => {
-            if !authorized(state, &parts.headers) {
-                return unauthorized();
+            auth!("POST /events");
+            if !state.limits.events.allow() {
+                return too_many("Too many events per second. Slow down.");
             }
             let content_length = header_str(&parts.headers, header::CONTENT_LENGTH).and_then(|v| v.trim().parse::<usize>().ok());
             let payload = match validate_event_input(&body, content_length) {
@@ -340,7 +387,10 @@ fn bad_request() -> Resp {
         .expect("static response parts are valid")
 }
 
-/// `ws`-compatible handshake on exactly `/ws`; anything malformed is a bare 400.
+/// `ws`-compatible handshake on exactly `/ws`; a malformed handshake is a bare 400. Before the socket is upgraded the request must
+/// pass the same checks as HTTP (loopback peer, local Host header) plus two that only matter for WebSockets: a browser `Origin`
+/// must be a local one (pages on other sites can open sockets to 127.0.0.1) and the bridge token must be presented, either as
+/// `x-bridge-token` / `Authorization: Bearer` or, for browsers, in `Sec-WebSocket-Protocol: waitplay.v1, waitplay.token.<token>`.
 fn handle_ws_upgrade(state: Arc<BridgeState>, remote: SocketAddr, req: &mut Request<Incoming>) -> Resp {
     let Some(hub) = state.ws.clone() else { return bad_request() };
     let headers = req.headers();
@@ -352,6 +402,26 @@ fn handle_ws_upgrade(state: Arc<BridgeState>, remote: SocketAddr, req: &mut Requ
     }
     let Some(key) = key else { return bad_request() };
 
+    match security::loopback_only(&remote, header_str(headers, header::HOST)) {
+        LoopbackVerdict::Allowed => {}
+        LoopbackVerdict::NonLoopback => return error_json(403, "Forbidden", "WaitPlay bridge only accepts connections from localhost/loopback."),
+        LoopbackVerdict::BadHost(host) => return error_json(400, "Bad Request", &format!("Invalid host \"{}\". Requests must target localhost or 127.0.0.1.", host)),
+    }
+    if let Some(origin) = headers.get(header::ORIGIN) {
+        if !origin.to_str().is_ok_and(security::origin_allowed) {
+            return error_json(403, "Forbidden", "Origin not allowed by the WaitPlay bridge.");
+        }
+    }
+    let offered = header_str(headers, header::SEC_WEBSOCKET_PROTOCOL).unwrap_or("");
+    let presented = presented_token(headers).or_else(|| security::ws_subprotocol_token(offered));
+    if !presented.is_some_and(|t| security::tokens_equal(&t, &state.token)) {
+        return reject(&state, "WebSocket /ws");
+    }
+    if hub.connected_count() >= limits::MAX_WS_CLIENTS {
+        return error_json(503, "Service Unavailable", "Too many WebSocket clients are connected to the WaitPlay bridge.");
+    }
+    let select_v1 = offered.split(',').any(|p| p.trim() == "waitplay.v1");
+
     let on_upgrade = hyper::upgrade::on(req);
     tokio::spawn(async move {
         if let Ok(upgraded) = on_upgrade.await {
@@ -360,13 +430,16 @@ fn handle_ws_upgrade(state: Arc<BridgeState>, remote: SocketAddr, req: &mut Requ
         }
     });
 
-    Response::builder()
+    let mut resp = Response::builder()
         .status(StatusCode::SWITCHING_PROTOCOLS)
         .header(header::CONNECTION, "Upgrade")
         .header(header::UPGRADE, "websocket")
-        .header(header::SEC_WEBSOCKET_ACCEPT, derive_accept_key(key.as_bytes()))
-        .body(Full::new(Bytes::new()))
-        .expect("static response parts are valid")
+        .header(header::SEC_WEBSOCKET_ACCEPT, derive_accept_key(key.as_bytes()));
+    if select_v1 {
+        // a browser that offered sub-protocols insists on one being selected; never echo the one that carries the token
+        resp = resp.header(header::SEC_WEBSOCKET_PROTOCOL, "waitplay.v1");
+    }
+    resp.body(Full::new(Bytes::new())).expect("static response parts are valid")
 }
 
 /// `Sec-WebSocket-Key`: 16 random bytes in base64 (22 chars + "==").

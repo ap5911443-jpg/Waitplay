@@ -96,6 +96,19 @@ pub async fn post_json(addr: SocketAddr, path: &str, headers: &[(&str, &str)], b
     request(addr, "POST", path, &all, Some(body.to_string().as_bytes())).await
 }
 
+/// The token `start_bridge("tok")` runs with.
+pub const TOKEN: (&str, &str) = ("x-bridge-token", "tok");
+
+/// GET with the bridge token (every route except /health needs it).
+pub async fn get_auth(addr: SocketAddr, path: &str) -> HttpResponse {
+    request(addr, "GET", path, &[TOKEN], None).await
+}
+
+/// POST JSON with the bridge token.
+pub async fn post_auth(addr: SocketAddr, path: &str, body: &Value) -> HttpResponse {
+    post_json(addr, path, &[TOKEN], body).await
+}
+
 pub fn event(session: &str, event: &str) -> Value {
     serde_json::json!({
         "agent": "claude-code",

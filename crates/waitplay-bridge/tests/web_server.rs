@@ -34,10 +34,10 @@ async fn start_web(bridge_port: u16) -> (SocketAddr, tokio::task::JoinHandle<()>
 
 #[test]
 fn proxied_prefixes() {
-    for p in ["/ws", "/events", "/health", "/auth", "/auth/token", "/sessions", "/sessions/x/reset", "/health?x=1", "/ws?a=b"] {
+    for p in ["/ws", "/events", "/health", "/sessions", "/sessions/x/reset", "/health?x=1", "/ws?a=b"] {
         assert!(web::is_proxied(p), "{p}");
     }
-    for p in ["/", "/state", "/wsx", "/healthz", "/assets/index.js", "/events2", "/sessionsfoo"] {
+    for p in ["/", "/state", "/wsx", "/healthz", "/assets/index.js", "/events2", "/sessionsfoo", "/auth", "/auth/token"] {
         assert!(!web::is_proxied(p), "{p}");
     }
 }
@@ -92,16 +92,19 @@ async fn proxies_http_to_the_bridge() {
     assert_eq!(health.status, 200);
     assert_eq!(health.json()["port"], bridge.addr.port());
 
-    assert_eq!(get(addr, "/auth/token").await.json(), json!({"token": "tok"}));
+    // the bridge hands out no token any more; the web server must not invent one either
+    let gone = get(addr, "/auth/token").await;
+    assert!(!gone.text().contains("\"token\""), "{}", gone.text());
 
     let res = post_json(addr, "/events", &[("x-bridge-token", "tok")], &event("via-web", "task_started")).await;
     assert_eq!(res.status, 200);
     assert_eq!(res.json()["agentStatus"], "WORKING");
 
-    let sessions = get(addr, "/sessions").await.json();
+    let sessions = get_auth(addr, "/sessions").await.json();
     assert_eq!(sessions["sessions"][0]["sessionId"], "via-web");
-    assert_eq!(get(addr, "/sessions/via-web").await.status, 200);
-    assert_eq!(get(addr, "/sessions/ghost").await.status, 404);
+    assert_eq!(get_auth(addr, "/sessions/via-web").await.status, 200);
+    assert_eq!(get_auth(addr, "/sessions/ghost").await.status, 404);
+    assert_eq!(get(addr, "/sessions").await.status, 401, "the proxy adds no credentials of its own");
 
     // validation errors and 401s pass through untouched
     assert_eq!(post_json(addr, "/events", &[], &event("x", "task_started")).await.status, 401);
@@ -114,7 +117,10 @@ async fn proxies_websocket_upgrades() {
     let bridge = start_bridge("tok").await;
     let (addr, task) = start_web(bridge.addr.port()).await;
 
-    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws")).await.expect("handshake through the proxy");
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut req = format!("ws://{addr}/ws").into_client_request().unwrap();
+    req.headers_mut().insert("x-bridge-token", "tok".parse().unwrap());
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.expect("handshake through the proxy");
     let mut types = Vec::new();
     for _ in 0..2 {
         let Some(Ok(Message::Text(t))) = tokio::time::timeout(Duration::from_secs(10), ws.next()).await.unwrap() else { panic!("frame") };

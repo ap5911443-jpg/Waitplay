@@ -113,7 +113,25 @@ impl SessionManager {
             },
         );
         machine.subscribe(Arc::new(ManagerListener { shared: Arc::downgrade(&self.shared) }));
+        // Bounded memory: past MAX_SESSIONS the least recently active session goes (idle ones before working ones)
+        let evicted = if sessions.len() >= crate::limits::MAX_SESSIONS {
+            let idx = sessions
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, (_, m))| {
+                    let s = m.get_session();
+                    (matches!(s.status, AgentStatus::Working | AgentStatus::GameActive), s.last_event_at)
+                })
+                .map(|(i, _)| i);
+            idx.map(|i| sessions.remove(i).1)
+        } else {
+            None
+        };
         sessions.push((session_id.to_string(), machine.clone()));
+        drop(sessions);
+        if let Some(old) = evicted {
+            old.destroy();
+        }
         machine
     }
 
@@ -283,6 +301,22 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].status, AgentStatus::Completed);
         assert_eq!(sessions[0].total_tasks_completed, 1);
+        sm.clear_all();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn session_count_is_capped_and_idle_sessions_are_evicted_before_working_ones() {
+        use crate::limits::MAX_SESSIONS;
+        let sm = SessionManager::default();
+        // one long-running working session, then idle ones past the cap
+        sm.process_event(&ev(AgentType::ClaudeCode, "worker", AgentEvent::TaskStarted));
+        for i in 0..(MAX_SESSIONS + 20) {
+            sm.process_event(&ev(AgentType::ClaudeCode, &format!("idle-{i}"), AgentEvent::SessionStarted));
+        }
+        assert_eq!(sm.get_active_count(), MAX_SESSIONS);
+        assert!(sm.get_session("worker").is_some(), "the working session is kept");
+        assert!(sm.get_session(&format!("idle-{}", MAX_SESSIONS + 19)).is_some(), "the newest session is kept");
+        assert!(sm.get_session("idle-0").is_none(), "the oldest idle session was evicted");
         sm.clear_all();
     }
 }

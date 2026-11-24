@@ -156,6 +156,19 @@ pub fn tokens_equal(a: &str, b: &str) -> bool {
     diff == 0
 }
 
+/// The token a browser puts in `Sec-WebSocket-Protocol: waitplay.v1, waitplay.token.<token>` (browsers cannot set headers on a
+/// WebSocket). Only plain token characters are accepted.
+pub fn ws_subprotocol_token(header_value: &str) -> Option<String> {
+    header_value.split(',').map(str::trim).find_map(|p| {
+        let t = p.strip_prefix("waitplay.token.")?;
+        if !t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) {
+            Some(t.to_string())
+        } else {
+            None
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,6 +195,16 @@ mod tests {
         assert!(matches!(loopback_only(&ok, Some("evil.com:80")), LoopbackVerdict::BadHost(h) if h == "evil.com:80"));
         assert!(matches!(loopback_only(&ok, None), LoopbackVerdict::BadHost(h) if h.is_empty()));
         assert!(matches!(loopback_only(&sock("10.0.0.1:9"), Some("localhost")), LoopbackVerdict::NonLoopback));
+    }
+
+    #[test]
+    fn websocket_subprotocol_carries_the_token() {
+        assert_eq!(ws_subprotocol_token("waitplay.v1, waitplay.token.abc123").as_deref(), Some("abc123"));
+        assert_eq!(ws_subprotocol_token("waitplay.token.abc123").as_deref(), Some("abc123"));
+        assert_eq!(ws_subprotocol_token("waitplay.v1").as_deref(), None);
+        assert_eq!(ws_subprotocol_token("waitplay.token.").as_deref(), None);
+        assert_eq!(ws_subprotocol_token("chat, waitplay.token.a b").as_deref(), None, "a space is not a token character");
+        assert_eq!(ws_subprotocol_token("").as_deref(), None);
     }
 
     #[test]

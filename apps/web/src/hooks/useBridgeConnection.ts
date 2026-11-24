@@ -8,6 +8,22 @@ import {
 
 export type BridgeStatus = "connected" | "connecting" | "disconnected";
 
+const TOKEN_KEY = "waitplay.bridgeToken";
+
+/** Token from the URL fragment (`#token=...`) or, after the first visit, from this tab's sessionStorage. */
+function readBridgeToken(): string {
+  try {
+    const m = /[#&]token=([A-Za-z0-9._-]+)/.exec(window.location.hash);
+    if (m) {
+      sessionStorage.setItem(TOKEN_KEY, m[1]);
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+    return sessionStorage.getItem(TOKEN_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export interface UseBridgeConnectionResult {
   status: BridgeStatus;
   sessions: AgentSessionInfo[];
@@ -63,19 +79,16 @@ export function useBridgeConnection(options?: UseBridgeConnectionOptions): UseBr
   const pingStartRef = useRef<number | null>(null);
   const pingIntervalRef = useRef<NodeJS.Timeout | number | null>(null);
 
-  // Auto-fetch local bridge token if available
+  // The bridge no longer hands its token to pages. Open the dashboard once as  http://127.0.0.1:5200/#token=<token>  (the token is
+  // in the bridge's token file); it is kept for this tab only and removed from the address bar.
   useEffect(() => {
+    const token = readBridgeToken();
+    if (token) setBridgeToken(token);
     let cancelled = false;
-    async function fetchToken() {
+    async function fetchState() {
       try {
-        const res = await fetch(`${httpUrl}/auth/token`);
-        if (res.ok) {
-          const data = (await res.json()) as { token?: string };
-          if (!cancelled && data.token) {
-            setBridgeToken(data.token);
-          }
-        }
-        const stateRes = await fetch(`${httpUrl}/state`);
+        if (!token) return;
+        const stateRes = await fetch(`${httpUrl}/state`, { headers: { "x-bridge-token": token } });
         if (stateRes.ok) {
           const stateData = (await stateRes.json()) as { enabled?: boolean };
           if (!cancelled && typeof stateData.enabled === "boolean" && onStateChangeRef.current) {
@@ -86,7 +99,7 @@ export function useBridgeConnection(options?: UseBridgeConnectionOptions): UseBr
         // Bridge may not be started yet; ignore
       }
     }
-    void fetchToken();
+    void fetchState();
     return () => {
       cancelled = true;
     };
@@ -101,7 +114,13 @@ export function useBridgeConnection(options?: UseBridgeConnectionOptions): UseBr
     setStatus("connecting");
 
     try {
-      const ws = new WebSocket(wsUrl);
+      // The bridge needs its token for the socket. Browsers cannot set headers on a WebSocket, so it travels as a sub-protocol.
+      const token = readBridgeToken();
+      if (!token) {
+        setStatus("disconnected");
+        return;
+      }
+      const ws = new WebSocket(wsUrl, ["waitplay.v1", `waitplay.token.${token}`]);
       wsRef.current = ws;
 
       ws.onopen = () => {

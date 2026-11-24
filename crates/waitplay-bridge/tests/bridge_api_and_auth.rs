@@ -23,14 +23,7 @@ async fn get_health_succeeds_without_authentication() {
     bridge.shutdown();
 }
 
-#[tokio::test]
-async fn get_auth_token_provides_valid_token_on_loopback() {
-    let bridge = start_bridge("secret-token-value").await;
-    let res = get(bridge.addr, "/auth/token").await;
-    assert_eq!(res.status, 200);
-    assert_eq!(res.json(), json!({"token": "secret-token-value"}));
-    bridge.shutdown();
-}
+// (the old `GET /auth/token` endpoint is gone: see `the_token_is_never_handed_out`)
 
 #[tokio::test]
 async fn post_events_without_token_returns_401() {
@@ -98,23 +91,23 @@ async fn get_state_and_post_state_manage_companion_enabled_state() {
     let bridge = start_bridge("tok").await;
     let addr = bridge.addr;
 
-    let res = get(addr, "/state").await;
+    let res = get_auth(addr, "/state").await;
     assert_eq!(res.status, 200);
     assert!(res.json()["enabled"].is_boolean());
 
-    let off = post_json(addr, "/state", &[], &json!({"enabled": false})).await;
+    let off = post_auth(addr, "/state", &json!({"enabled": false})).await;
     assert_eq!(off.status, 200);
     assert_eq!(off.json(), json!({"status": "ok", "enabled": false}));
-    assert_eq!(get(addr, "/state").await.json()["enabled"], false);
+    assert_eq!(get_auth(addr, "/state").await.json()["enabled"], false);
 
     // No (boolean) enabled flag toggles.
-    let toggled = post_json(addr, "/state", &[], &json!({"enabled": "yes"})).await;
+    let toggled = post_auth(addr, "/state", &json!({"enabled": "yes"})).await;
     assert_eq!(toggled.json(), json!({"status": "ok", "enabled": true}));
 
-    let on = post_json(addr, "/state", &[], &json!({"enabled": true})).await;
+    let on = post_auth(addr, "/state", &json!({"enabled": true})).await;
     assert_eq!(on.status, 200);
     assert_eq!(on.json()["enabled"], true);
-    assert_eq!(get(addr, "/state").await.json()["enabled"], true);
+    assert_eq!(get_auth(addr, "/state").await.json()["enabled"], true);
     bridge.shutdown();
 }
 
@@ -124,15 +117,15 @@ async fn sessions_listing_lookup_and_reset() {
     let addr = bridge.addr;
     post_json(addr, "/events", &[("x-bridge-token", "tok")], &event("sess one", "task_started")).await;
 
-    let list = get(addr, "/sessions").await.json();
+    let list = get_auth(addr, "/sessions").await.json();
     assert_eq!(list["sessions"].as_array().unwrap().len(), 1);
     assert_eq!(list["sessions"][0]["sessionId"], "sess one");
 
-    let one = get(addr, "/sessions/sess%20one").await;
+    let one = get_auth(addr, "/sessions/sess%20one").await;
     assert_eq!(one.status, 200);
     assert_eq!(one.json()["session"]["status"], "WORKING");
 
-    let missing = get(addr, "/sessions/nope").await;
+    let missing = get_auth(addr, "/sessions/nope").await;
     assert_eq!(missing.status, 404);
     assert_eq!(missing.json(), json!({"error": "SessionNotFound", "message": "Session nope not found"}));
 
@@ -143,7 +136,7 @@ async fn sessions_listing_lookup_and_reset() {
     assert_eq!(reset.json(), json!({"status": "reset", "sessionId": "sess one"}));
     let again = request(addr, "POST", "/sessions/sess%20one/reset", &[("x-bridge-token", "tok")], None).await;
     assert_eq!(again.status, 404);
-    assert_eq!(get(addr, "/sessions").await.json()["sessions"].as_array().unwrap().len(), 0);
+    assert_eq!(get_auth(addr, "/sessions").await.json()["sessions"].as_array().unwrap().len(), 0);
     bridge.shutdown();
 }
 
@@ -174,12 +167,7 @@ async fn host_header_must_be_loopback() {
 #[tokio::test]
 async fn non_loopback_remote_is_forbidden() {
     isolate_env();
-    let state = Arc::new(BridgeState {
-        sessions: Arc::new(SessionManager::default()),
-        ws: None,
-        get_health: Box::new(|| unreachable!("health must not be reached")),
-        token: "tok".into(),
-    });
+    let state = Arc::new(BridgeState::new(Arc::new(SessionManager::default()), None, Box::new(|| unreachable!("health must not be reached")), "tok".into()));
     let (mut client, server) = tokio::io::duplex(8192);
     let remote: SocketAddr = "192.168.1.50:5555".parse().unwrap();
     tokio::spawn(serve_connection(server, remote, state));
@@ -264,10 +252,90 @@ async fn event_data_and_model_flow_into_the_session() {
     ev["model"] = json!("gpt-x");
     ev["data"] = json!({"tool": "bash", "intent": "build"});
     post_json(addr, "/events", &[("x-bridge-token", "tok")], &ev).await;
-    let s: Value = get(addr, "/sessions/meta").await.json()["session"].clone();
+    let s: Value = get_auth(addr, "/sessions/meta").await.json()["session"].clone();
     assert_eq!(s["model"], "gpt-x");
     assert_eq!(s["tool"], "bash");
     assert_eq!(s["intent"], "build");
     assert_eq!(s["agent"], "claude-code");
+    bridge.shutdown();
+}
+
+// ── security: authentication, no token endpoint, limits ──────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn every_route_except_health_requires_the_token() {
+    let bridge = start_bridge("tok").await;
+    let addr = bridge.addr;
+    let ev = event("s1", "task_started");
+    let cases: Vec<(&str, &str, Option<Vec<u8>>)> = vec![
+        ("GET", "/state", None),
+        ("POST", "/state", Some(b"{\"enabled\":false}".to_vec())),
+        ("GET", "/sessions", None),
+        ("GET", "/sessions/s1", None),
+        ("POST", "/sessions/s1/reset", None),
+        ("POST", "/events", Some(ev.to_string().into_bytes())),
+    ];
+    for (method, path, body) in &cases {
+        let headers: &[(&str, &str)] = if body.is_some() { &[("Content-Type", "application/json")] } else { &[] };
+        let res = request(addr, method, path, headers, body.as_deref()).await;
+        assert_eq!(res.status, 401, "{method} {path} must not work without a token");
+        let wrong = request(addr, method, path, &[("x-bridge-token", "not-the-token"), ("Content-Type", "application/json")], body.as_deref()).await;
+        assert_eq!(wrong.status, 401, "{method} {path} must not work with a wrong token");
+    }
+    assert_eq!(get(addr, "/health").await.status, 200, "/health stays open");
+    bridge.shutdown();
+}
+
+#[tokio::test]
+async fn the_token_is_never_handed_out() {
+    let bridge = start_bridge("secret-token-value").await;
+    for path in ["/auth/token", "/auth", "/token"] {
+        let res = request(bridge.addr, "GET", path, &[TOKEN], None).await;
+        assert_eq!(res.status, 404, "{path}");
+        assert!(!res.text().contains("secret-token-value"), "{path} leaked the token");
+    }
+    bridge.shutdown();
+}
+
+#[tokio::test]
+async fn unauthenticated_state_change_does_nothing() {
+    let bridge = start_bridge("tok").await;
+    let addr = bridge.addr;
+    // observe through this bridge's own broadcast (the on/off file is shared by every test in the process)
+    let (_id, _tx, mut rx) = bridge.hub.register();
+    let res = post_json(addr, "/state", &[], &json!({"enabled": false})).await;
+    assert_eq!(res.status, 401);
+    assert!(rx.try_recv().is_err(), "an unauthenticated request must not reach the clients or the switch");
+    bridge.shutdown();
+}
+
+#[tokio::test]
+async fn event_flood_is_limited_with_429() {
+    let bridge = start_bridge("tok").await;
+    let addr = bridge.addr;
+    let total = waitplay_bridge::limits::EVENTS_PER_SECOND as usize + 150;
+    let sends = (0..total).map(|i| async move { post_auth(addr, "/events", &event(&format!("flood-{}", i % 5), "task_running")).await });
+    let results = futures_util::future::join_all(sends).await;
+    let limited = results.iter().filter(|r| r.status == 429).count();
+    let ok = results.iter().filter(|r| r.status == 200).count();
+    assert!(limited >= 100, "expected the excess to be refused, got {limited} refusals and {ok} accepted");
+    assert!(ok <= waitplay_bridge::limits::EVENTS_PER_SECOND as usize + 20, "accepted {ok}");
+    let refused = results.iter().find(|r| r.status == 429).unwrap();
+    assert_eq!(refused.header("retry-after"), Some("1"));
+    bridge.shutdown();
+}
+
+#[tokio::test]
+async fn failed_authentication_flood_is_limited_but_the_right_token_still_works() {
+    let bridge = start_bridge("tok").await;
+    let addr = bridge.addr;
+    let total = waitplay_bridge::limits::FAILED_AUTH_PER_MINUTE as usize + 60;
+    let attempts = (0..total).map(|_| async move { request(addr, "GET", "/sessions", &[("x-bridge-token", "guess")], None).await });
+    let results = futures_util::future::join_all(attempts).await;
+    assert!(results.iter().any(|r| r.status == 429), "the flood of wrong tokens was never throttled");
+    assert!(results.iter().all(|r| r.status == 401 || r.status == 429));
+    // a legitimate client is not locked out by someone else's guesses
+    assert_eq!(get_auth(addr, "/sessions").await.status, 200);
+    assert_eq!(post_auth(addr, "/events", &event("still-fine", "task_started")).await.status, 200);
     bridge.shutdown();
 }

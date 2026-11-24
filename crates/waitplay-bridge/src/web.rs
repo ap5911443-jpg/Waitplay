@@ -1,6 +1,6 @@
 //! Static server for the production build of the companion web UI (port of apps/web/serve.cjs).
 //!
-//! Serves `apps/web/dist` with SPA fallback and forwards the bridge endpoints (`/ws /events /health /auth /sessions`,
+//! Serves `apps/web/dist` with SPA fallback and forwards the bridge endpoints (`/ws /events /health /sessions`,
 //! including WebSocket upgrades) to the bridge on loopback, mirroring the Vite dev proxy.
 
 use bytes::Bytes;
@@ -19,7 +19,7 @@ pub const DEFAULT_BRIDGE_PORT: u16 = 3150;
 const BRIDGE_HOST: &str = "127.0.0.1";
 
 /// Paths forwarded to the bridge instead of being served from disk.
-const PROXY_PREFIXES: [&str; 5] = ["/ws", "/events", "/health", "/auth", "/sessions"];
+const PROXY_PREFIXES: [&str; 4] = ["/ws", "/events", "/health", "/sessions"];
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 type Body = BoxBody<Bytes, BoxError>;

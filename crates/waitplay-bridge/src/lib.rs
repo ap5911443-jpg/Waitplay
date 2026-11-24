@@ -3,6 +3,7 @@
 pub mod bridge;
 pub mod event_validator;
 pub mod js;
+pub mod limits;
 pub mod notifier;
 pub mod security;
 pub mod server;

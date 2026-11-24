@@ -48,9 +48,9 @@ impl BridgeClient {
             .map_err(|e| e.to_string())
     }
 
-    /// GET /sessions as raw JSON text, `None` when the bridge is down or slow.
+    /// GET /sessions as raw JSON text, `None` when the bridge is down, slow or refuses the token.
     pub fn get_sessions(&self, timeout: Duration) -> Option<String> {
-        Self::agent(timeout).get(&self.url("/sessions")).call().ok()?.into_string().ok()
+        Self::agent(timeout).get(&self.url("/sessions")).set("x-bridge-token", &token::find_token()).call().ok()?.into_string().ok()
     }
 
     /// POST /state: lets the bridge broadcast an ON/OFF change to web clients.
@@ -58,6 +58,7 @@ impl BridgeClient {
         let _ = Self::agent(Duration::from_millis(400))
             .post(&self.url("/state"))
             .set("Content-Type", "application/json")
+            .set("x-bridge-token", &token::find_token())
             .send_string(&format!("{{\"enabled\":{}}}", enabled));
     }
 }

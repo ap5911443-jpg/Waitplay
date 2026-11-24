@@ -75,6 +75,14 @@ APP_PID=$!
 wait_for "app logged its start" 30 grep -q "started;" "$LOG"
 wait_for "menu bar item created" 10 grep -q "menu bar item created" "$LOG"
 wait_for "bridge listening on 3150" 30 nc -z 127.0.0.1 3150
+
+# bridge security on the real app: nothing but /health answers without the token, no token endpoint, no foreign-origin socket
+code() { curl -s -o /dev/null -w "%{http_code}" "$@"; }
+[ "$(code http://127.0.0.1:3150/sessions)" = "401" ] && ok "GET /sessions without a token is refused" || bad "GET /sessions answered without a token"
+[ "$(code -X POST -H 'Content-Type: application/json' -d '{"enabled":false}' http://127.0.0.1:3150/state)" = "401" ] && ok "POST /state without a token is refused" || bad "POST /state answered without a token"
+[ "$(code http://127.0.0.1:3150/auth/token)" = "404" ] && ok "the bridge hands out no token" || bad "/auth/token still exists"
+[ "$(code -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H 'Origin: http://evil.example' http://127.0.0.1:3150/ws)" = "403" ] && ok "a foreign-origin WebSocket is refused" || bad "a foreign-origin WebSocket was not refused"
+[ "$(code -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' http://127.0.0.1:3150/ws)" = "401" ] && ok "a WebSocket without the token is refused" || bad "a tokenless WebSocket was not refused"
 wait_for "widget shown" 20 grep -q "widget shown bottom-right" "$LOG"
 kill -0 "$APP_PID" 2>/dev/null && ok "app still running" || bad "app exited early"
 sleep 2
@@ -101,7 +109,7 @@ wait_for "entertainment window visible" 60 state_visible true
 sleep 8
 shot 03-entertainment
 echo "note: total memory of WaitPlay + WebKit processes with the window open: $(total_rss_mb) MB"
-curl -s http://127.0.0.1:3150/sessions >"$OUT/sessions-1.json" || true
+curl -s -H "x-bridge-token: $(cat "$SIG/.bridge-token")" http://127.0.0.1:3150/sessions >"$OUT/sessions-1.json" || true
 grep -q 'claude-code-aaaaaaaa1111' "$OUT/sessions-1.json" && ok "bridge tracks session claude-code-aaaaaaaa1111" || bad "bridge does not list claude-code-aaaaaaaa1111"
 
 # second concurrent conversation: its own session, the same window
@@ -109,7 +117,7 @@ hook start "$(prompt_json bbbbbbbb-2222)"
 keepalive bbbbbbbb-2222 >/dev/null 2>&1 &
 KA_B=$!
 sleep 4
-curl -s http://127.0.0.1:3150/sessions >"$OUT/sessions-2.json" || true
+curl -s -H "x-bridge-token: $(cat "$SIG/.bridge-token")" http://127.0.0.1:3150/sessions >"$OUT/sessions-2.json" || true
 grep -q 'claude-code-bbbbbbbb2222' "$OUT/sessions-2.json" && ok "second conversation is a separate session" || bad "second session missing"
 [ "$(grep -c 'companion started' "$LOG")" -eq 1 ] && ok "one entertainment window serves both sessions" || bad "more than one entertainment window was started"
 
@@ -126,7 +134,7 @@ hook stop "$(stop_json bbbbbbbb-2222)"
 wait_for "window hides when the last session finished" 30 state_visible false
 sleep 1
 shot 05-after-finish
-curl -s http://127.0.0.1:3150/sessions >"$OUT/sessions-3.json" || true
+curl -s -H "x-bridge-token: $(cat "$SIG/.bridge-token")" http://127.0.0.1:3150/sessions >"$OUT/sessions-3.json" || true
 
 if grep -E ' ERROR ' "$LOG" >"$OUT/errors-1.log"; then bad "scenario 1 log contains errors:"; sed 's/^/   /' "$OUT/errors-1.log"; else ok "no errors in the scenario 1 log"; fi
 cp "$LOG" "$OUT/waitplay-1.log" 2>/dev/null

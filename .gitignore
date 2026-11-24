@@ -22,3 +22,6 @@ cloudflared.exe
 dist-ssr/
 # System
 # Binaries
+
+# Security audit report lists the app weaknesses: never commit it
+SECURITY_AUDIT.md

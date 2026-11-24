@@ -48,7 +48,7 @@ pub fn start(listener: TcpListener, token: String, on_task_completed: Option<Ses
     let broadcast_hub = hub.clone();
     sessions.on_session_change(Arc::new(move |session: &AgentSessionInfo| broadcast_hub.broadcast_session_update(session)));
 
-    let state = Arc::new(BridgeState { sessions, ws: Some(hub.clone()), get_health, token });
+    let state = Arc::new(BridgeState::new(sessions, Some(hub.clone()), get_health, token));
     let accept_loop = tokio::spawn(server::serve(listener, state.clone()));
     Bridge { state, hub, addr, accept_loop }
 }
@@ -79,12 +79,21 @@ pub fn port_from_env() -> Result<u16, String> {
 }
 
 fn task_completed_hook() -> SessionCallback {
-    Arc::new(|session: &AgentSessionInfo| {
+    // SMS costs money and reaches a person: cap it, so a runaway or forged stream of completions cannot turn into a bill
+    let sms_limit = Arc::new(crate::limits::RateLimiter::new(crate::limits::SMS_PER_HOUR, std::time::Duration::from_secs(3600)));
+    Arc::new(move |session: &AgentSessionInfo| {
         let task = CompletedTaskNotification {
             agent: session.agent.as_str().to_string(),
             session_id: session.session_id.clone(),
             duration_ms: session.last_task_duration_ms,
         };
+        if !notifier::is_phone_notification_configured() {
+            return;
+        }
+        if !sms_limit.allow() {
+            eprintln!("[WaitPlay Bridge] SMS limit reached ({} per hour): completion notice not sent", crate::limits::SMS_PER_HOUR);
+            return;
+        }
         // Fire and forget: SMS problems are logged and never block event handling.
         tokio::spawn(async move {
             if let Err(e) = notifier::notify_task_completed(&task).await {
