@@ -60,7 +60,7 @@ mod tests {
 
     #[test]
     fn enable_is_idempotent_and_disable_removes_the_file() {
-        let home = std::env::temp_dir().join(format!("wp-login-{}", std::process::id()));
+        let home = std::env::current_exe().unwrap().parent().unwrap().join(format!("wp-login-{}", std::process::id())); // not TMPDIR: see integrations tests
         let _ = std::fs::remove_dir_all(&home);
         let exe = Path::new("/Applications/WaitPlay.app/Contents/MacOS/waitplay");
         assert_eq!(sync(&home, true, exe), Ok(true));

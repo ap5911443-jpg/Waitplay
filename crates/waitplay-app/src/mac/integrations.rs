@@ -206,7 +206,9 @@ mod tests {
     fn scratch(tag: &str) -> PathBuf {
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let p = std::env::temp_dir().join(format!("wp-integ-{}-{}-{}", tag, std::process::id(), n));
+        // next to the test binary, not in TMPDIR: another test in this process rewrites TMPDIR and deletes that folder
+        let base = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        let p = base.join(format!("wp-integ-{}-{}-{}", tag, std::process::id(), n));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p

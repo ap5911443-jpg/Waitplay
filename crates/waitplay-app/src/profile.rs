@@ -91,7 +91,8 @@ mod tests {
     use super::*;
 
     fn scratch(tag: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("wp-adopt-{}-{}", tag, std::process::id()));
+        // next to the test binary, not in TMPDIR: the poller tests rewrite TMPDIR for the whole process and delete that folder
+        let p = std::env::current_exe().unwrap().parent().unwrap().join(format!("wp-adopt-{}-{}", tag, std::process::id()));
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
         p
