@@ -33,7 +33,7 @@ export const FinalCTA: React.FC = () => {
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 w-full max-w-[560px] mb-6">
           <PrimaryButton
             size="lg"
-            href="https://github.com/your-username/waitplay/releases"
+            href="https://github.com/ap5911443-jpg/waitplay-website/releases"
             icon={<Download className="w-4 h-4" />}
             className="w-full sm:w-auto"
           >

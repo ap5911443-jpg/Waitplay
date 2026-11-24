@@ -21,7 +21,7 @@ export const SiteFooter: React.FC = () => {
             </p>
             <div className="flex items-center gap-3 text-[#666666]">
               <a
-                href="https://github.com/your-username/waitplay"
+                href="https://github.com/ap5911443-jpg/waitplay-website"
                 target="_blank"
                 rel="noreferrer"
                 className="w-8 h-8 rounded-full border border-[rgba(26,26,26,0.15)] flex items-center justify-center hover:text-[#1A1A1A] hover:border-[rgba(26,26,26,0.3)] transition-colors"
@@ -85,13 +85,13 @@ export const SiteFooter: React.FC = () => {
             <h4 className="font-sans font-semibold text-[13px] uppercase tracking-wider text-[#888888] mb-1">
               Resources
             </h4>
-            <a href="https://github.com/your-username/waitplay/blob/main/docs/ARCHITECTURE.md" className="text-[14px] text-[#666666] hover:text-[#1A1A1A] transition-colors">
+            <a href="https://github.com/ap5911443-jpg/waitplay-website/blob/main/docs/ARCHITECTURE.md" className="text-[14px] text-[#666666] hover:text-[#1A1A1A] transition-colors">
               Architecture Spec
             </a>
-            <a href="https://github.com/your-username/waitplay/blob/main/docs/EVENT_PROTOCOL.md" className="text-[14px] text-[#666666] hover:text-[#1A1A1A] transition-colors">
+            <a href="https://github.com/ap5911443-jpg/waitplay-website/blob/main/docs/EVENT_PROTOCOL.md" className="text-[14px] text-[#666666] hover:text-[#1A1A1A] transition-colors">
               Event Protocol
             </a>
-            <a href="https://github.com/your-username/waitplay/blob/main/docs/GETTING_STARTED.md" className="text-[14px] text-[#666666] hover:text-[#1A1A1A] transition-colors">
+            <a href="https://github.com/ap5911443-jpg/waitplay-website/blob/main/docs/GETTING_STARTED.md" className="text-[14px] text-[#666666] hover:text-[#1A1A1A] transition-colors">
               Getting Started
             </a>
             <a href="#faq" className="text-[14px] text-[#666666] hover:text-[#1A1A1A] transition-colors">

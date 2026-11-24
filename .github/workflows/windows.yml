@@ -1,0 +1,113 @@
+name: Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# Nothing in this workflow may write to the repository, except the `release` job below that says so.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  build:
+    name: windows x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # `stable` is a moving branch: the action is pinned to a commit and the toolchain channel is passed as an input
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Build
+        shell: bash
+        run: |
+          export WAITPLAY_BUILD="$(git rev-parse --short HEAD)"
+          cargo build --release --workspace
+
+      - name: Test
+        shell: bash
+        run: cargo test --workspace
+
+      # Runs the real bridge binary: nothing but /health answers without the token, no token endpoint, no foreign-origin socket.
+      - name: Bridge security smoke test (real binary)
+        shell: bash
+        run: |
+          set -u
+          export BRIDGE_PORT=3999 BRIDGE_AUTH_TOKEN=ci-smoke-token
+          ./target/release/waitplay-bridge.exe >bridge.out 2>&1 &
+          BPID=$!
+          for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:3999/health && break; sleep 1; done
+          code() { curl -s -o /dev/null -w "%{http_code}" "$@"; }
+          WS=(-H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==')
+          fail=0
+          check() { if [ "$2" = "$3" ]; then echo "ok: $1"; else echo "FAIL: $1 (got $2, wanted $3)"; fail=1; fi; }
+          check "health is open"                        "$(code http://127.0.0.1:3999/health)" 200
+          check "GET /sessions without a token"         "$(code http://127.0.0.1:3999/sessions)" 401
+          check "POST /state without a token"           "$(code -X POST -H 'Content-Type: application/json' -d '{"enabled":false}' http://127.0.0.1:3999/state)" 401
+          check "no token endpoint"                     "$(code http://127.0.0.1:3999/auth/token)" 404
+          check "foreign-origin WebSocket"              "$(code "${WS[@]}" -H 'Origin: http://evil.example' http://127.0.0.1:3999/ws)" 403
+          check "WebSocket without the token"           "$(code "${WS[@]}" http://127.0.0.1:3999/ws)" 401
+          check "GET /sessions with the token"          "$(code -H 'x-bridge-token: ci-smoke-token' http://127.0.0.1:3999/sessions)" 200
+          kill "$BPID" 2>/dev/null || true
+          exit $fail
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/WaitPlay | Out-Null
+          Copy-Item target/release/waitplay.exe, target/release/waitplay-bridge.exe, target/release/waitplay-hook.exe dist/WaitPlay/
+          Compress-Archive -Path dist/WaitPlay/* -DestinationPath dist/WaitPlay-windows-x86_64.zip -Force
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: WaitPlay-windows-x86_64
+          path: dist/WaitPlay-windows-x86_64.zip
+          if-no-files-found: error
+
+  # Publishes the zip. Only this job can write to the repository, and it runs no build code: it records the SHA-256 sum,
+  # attaches a signed build-provenance attestation (verify with `gh attestation verify`) and uploads with the GitHub CLI.
+  release:
+    name: publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: WaitPlay-windows-x86_64
+          path: release
+
+      - name: Checksums
+        run: |
+          cd release
+          sha256sum *.zip > SHA256SUMS-windows.txt
+          cat SHA256SUMS-windows.txt
+
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: release/*.zip
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
+          gh release upload "$TAG" release/*.zip release/SHA256SUMS-windows.txt --clobber

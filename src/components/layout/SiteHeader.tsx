@@ -62,7 +62,7 @@ export const SiteHeader: React.FC = () => {
           {/* Right Action Buttons */}
           <div className="hidden sm:flex items-center gap-3">
             <a
-              href="https://github.com/your-username/waitplay"
+              href="https://github.com/ap5911443-jpg/waitplay-website"
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-[#666666] hover:text-[#1A1A1A] hover:bg-[#E4E4D0]/50 transition-colors"

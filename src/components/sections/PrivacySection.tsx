@@ -80,7 +80,7 @@ export const PrivacySection: React.FC = () => {
             </span>
           </div>
           <a
-            href="https://github.com/your-username/waitplay/blob/main/docs/ARCHITECTURE.md"
+            href="https://github.com/ap5911443-jpg/waitplay-website/blob/main/docs/ARCHITECTURE.md"
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-[13px] font-semibold bg-[#FFFFEB] text-[#034F46] hover:bg-[#F0D7FF] transition-colors cursor-pointer"
