@@ -74,6 +74,48 @@ enum Ev {
 
 // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+fn widget_anchor_file() -> PathBuf {
+    waitplay_core::paths::app_support_dir().join("widget-position.json")
+}
+
+fn load_widget_anchor() -> Option<(String, i32, i32)> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(widget_anchor_file()).ok()?).ok()?;
+    let corner = v.get("corner")?.as_str()?.to_string();
+    if !matches!(corner.as_str(), "top-right" | "bottom-right" | "bottom-left") {
+        return None;
+    }
+    Some((corner, i32::try_from(v.get("x")?.as_i64()?).ok()?, i32::try_from(v.get("y")?.as_i64()?).ok()?))
+}
+
+fn save_widget_anchor(a: Option<&(String, i32, i32)>) {
+    match a {
+        Some((c, x, y)) => {
+            let _ = waitplay_core::paths::write_atomic(&widget_anchor_file(), json!({"corner": c, "x": x, "y": y}).to_string().as_bytes());
+        }
+        None => {
+            let _ = std::fs::remove_file(widget_anchor_file());
+        }
+    }
+}
+
+/// The window origin (physical px) for a widget anchored at `anchor` (the corner it grows from), kept fully inside the work area of
+/// the display that contains the anchor. `None` when no display contains it any more (monitor unplugged): the caller uses the corner.
+fn origin_from_anchor(corner: &str, anchor: (i32, i32), size: (i32, i32), screens: &[Screen]) -> Option<(i32, i32)> {
+    let ox = if corner.ends_with("right") { anchor.0 - size.0 } else { anchor.0 };
+    let oy = if corner.starts_with("bottom") { anchor.1 - size.1 } else { anchor.1 };
+    for s in screens {
+        let (wx, wy) = platform::to_physical(s, s.work.x, s.work.y);
+        let (ww, wh) = ((s.work.w * s.scale).round() as i32, (s.work.h * s.scale).round() as i32);
+        // the anchor may sit exactly on the far edge of the work area
+        if anchor.0 >= wx && anchor.0 <= wx + ww && anchor.1 >= wy && anchor.1 <= wy + wh {
+            let x = if size.0 >= ww { wx } else { ox.clamp(wx, wx + ww - size.0) };
+            let y = if size.1 >= wh { wy } else { oy.clamp(wy, wy + wh - size.1) };
+            return Some((x, y));
+        }
+    }
+    None
+}
+
 fn home() -> PathBuf {
     std::env::var_os("USERPROFILE").filter(|h| !h.is_empty()).map(PathBuf::from).unwrap_or_else(std::env::temp_dir)
 }
@@ -250,6 +292,11 @@ struct WidgetWin {
     screen_origin: Option<(f64, f64)>,
     /// Last applied (x, y, w, h) in physical pixels.
     last_rect: Option<(i32, i32, u32, u32)>,
+    /// The user is moving the widget (native move loop); placement is paused until it ends.
+    dragging: bool,
+    moved: bool,
+    drag_started: Instant,
+    last_move: Instant,
 }
 
 struct SettingsWin {
@@ -273,6 +320,8 @@ struct App {
     supervisor: Supervisor,
     widget: Option<WidgetWin>,
     settings_win: Option<SettingsWin>,
+    /// Where the user dragged the widget: (corner it is anchored to, anchor x, anchor y) in physical pixels. Cleared when the corner setting changes.
+    widget_anchor: Option<(String, i32, i32)>,
     account: AccountUi,
     tray: Option<TrayIcon>,
     menu: Option<Menu>,
@@ -305,6 +354,7 @@ impl App {
             supervisor: Supervisor::new(),
             widget: None,
             settings_win: None,
+            widget_anchor: load_widget_anchor(),
             account: AccountUi::new(waitplay_core::paths::app_support_dir()),
             tray: None,
             menu: None,
@@ -437,6 +487,7 @@ impl App {
 
     fn on_tick(&mut self, target: &EventLoopWindowTarget<Ev>) {
         self.ticks += 1;
+        self.finish_widget_drag();
         self.account.on_tick(&self.account_notify());
         // a second launch of the app (run from a shell, or the Start menu) asks this one to show its settings
         if open_request_pending() {
@@ -763,7 +814,7 @@ impl App {
             .build(&window)
             .map_err(|e| format!("webview: {}", e))?;
         let glass = Glass::attach(window.hwnd());
-        Ok(WidgetWin { webview, glass, window, size: None, shown: false, screen_origin: None, last_rect: None })
+        Ok(WidgetWin { webview, glass, window, size: None, shown: false, screen_origin: None, last_rect: None, dragging: false, moved: false, drag_started: Instant::now(), last_move: Instant::now() })
     }
 
     /// The widget stays on the display it was on; a first placement (or a vanished display) uses the display under the pointer.
@@ -783,13 +834,51 @@ impl App {
         self.screens.iter().find(|s| (s.frame.x, s.frame.y) == o).copied().or_else(|| self.screens.first().copied())
     }
 
+    /// A drag has ended when Windows stopped sending move events: remember where the widget now sits.
+    fn finish_widget_drag(&mut self) {
+        let pos = self.settings.widget_position;
+        let Some(w) = self.widget.as_mut() else { return };
+        if !w.dragging || w.drag_started.elapsed() < Duration::from_millis(500) || w.last_move.elapsed() < Duration::from_millis(400) {
+            return;
+        }
+        w.dragging = false;
+        if !std::mem::take(&mut w.moved) {
+            return; // pressed and released without moving
+        }
+        let (p, s) = (w.window.outer_position(), w.window.outer_size());
+        let (Ok(p), s) = (p, s) else { return };
+        let (right, bottom) = (pos.as_str().ends_with("right"), pos.as_str().starts_with("bottom"));
+        let ax = if right { p.x + s.width as i32 } else { p.x };
+        let ay = if bottom { p.y + s.height as i32 } else { p.y };
+        w.last_rect = None;
+        self.widget_anchor = Some((pos.as_str().to_string(), ax, ay));
+        save_widget_anchor(self.widget_anchor.as_ref());
+        self.place_widget();
+    }
+
     fn place_widget(&mut self) {
         let Some(screen) = self.widget_screen() else { return };
         let pos = self.settings.widget_position;
+        if self.widget_anchor.as_ref().map_or(false, |(c, _, _)| c != pos.as_str()) {
+            self.widget_anchor = None; // the corner setting changed: back to that corner
+            save_widget_anchor(None);
+        }
+        let anchor = self.widget_anchor.clone();
+        let screens = self.screens.clone();
         let Some(w) = self.widget.as_mut() else { return };
+        if w.dragging {
+            return;
+        }
         let Some((cw, ch)) = w.size else { return }; // wait for the page's first size report
         let (x, y) = placement::corner_origin(screen.work, (cw, ch), pos, 0.0);
-        let (px, py) = platform::to_physical(&screen, x, y);
+        let (mut px, mut py) = platform::to_physical(&screen, x, y);
+        if let Some((corner, ax, ay)) = anchor {
+            let sf = w.window.scale_factor();
+            let (pw, ph) = ((cw * sf).ceil() as i32, (ch * sf).ceil() as i32);
+            if let Some((ox, oy)) = origin_from_anchor(&corner, (ax, ay), (pw, ph), &screens) {
+                (px, py) = (ox, oy);
+            }
+        }
         // moving can change the window's scale factor (another display), so size it after the move with the scale it has now
         w.window.set_outer_position(PhysicalPosition::new(px, py));
         let sf = w.window.scale_factor();
@@ -1126,6 +1215,20 @@ impl App {
                     self.place_widget();
                 }
             }
+            "drag" => {
+                // the user pressed on the pill and moved: hand the pointer to Windows' own move loop (smooth, snaps like any window)
+                if let Some(w) = self.widget.as_mut() {
+                    if !w.dragging {
+                        w.dragging = true;
+                        w.moved = false;
+                        w.drag_started = Instant::now();
+                        w.last_move = Instant::now();
+                        if w.window.drag_window().is_err() {
+                            w.dragging = false;
+                        }
+                    }
+                }
+            }
             "shape" => {
                 // the page's live pill rectangle: the glass follows it frame by frame during expand/collapse
                 let g = |k: &str| v.get(k).and_then(Value::as_f64).unwrap_or(0.0);
@@ -1201,6 +1304,14 @@ impl App {
     fn handle_window_event(&mut self, wid: WindowId, event: &WindowEvent) {
         if self.account.on_window_event(wid, event) {
             return;
+        }
+        if let WindowEvent::Moved(_) = event {
+            if let Some(w) = self.widget.as_mut() {
+                if w.window.id() == wid && w.dragging {
+                    w.moved = true;
+                    w.last_move = Instant::now();
+                }
+            }
         }
         match event {
             WindowEvent::CloseRequested => {
@@ -1346,4 +1457,41 @@ pub fn run() -> Result<(), String> {
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::placement::LRect;
+
+    fn screen(x: f64, y: f64, w: f64, h: f64, scale: f64) -> Screen {
+        Screen { frame: LRect::new(x, y, w, h), work: LRect::new(x, y, w, h - 40.0), scale }
+    }
+
+    #[test]
+    fn a_dragged_widget_keeps_its_anchor_corner_and_stays_on_screen() {
+        let screens = [screen(0.0, 0.0, 1920.0, 1080.0, 1.0)];
+        // bottom-right anchored: the window grows up and to the left from the anchor
+        assert_eq!(origin_from_anchor("bottom-right", (1000, 700), (364, 96), &screens), Some((636, 604)));
+        assert_eq!(origin_from_anchor("bottom-right", (1000, 700), (340, 282), &screens), Some((660, 418)), "expanded: same anchor, bigger window");
+        // top-left style corners grow down/right from the anchor
+        assert_eq!(origin_from_anchor("top-right", (1000, 100), (340, 282), &screens), Some((660, 100)));
+        assert_eq!(origin_from_anchor("bottom-left", (50, 700), (340, 282), &screens), Some((50, 418)));
+        // an anchor near an edge never pushes the window off the usable area
+        assert_eq!(origin_from_anchor("bottom-right", (200, 20), (340, 282), &screens), Some((0, 0)));
+        assert_eq!(origin_from_anchor("top-right", (1900, 1030), (340, 282), &screens), Some((1900 - 340, 1040 - 282)));
+    }
+
+    #[test]
+    fn an_anchor_on_a_missing_display_falls_back_to_the_corner() {
+        let screens = [screen(0.0, 0.0, 1920.0, 1080.0, 1.0)];
+        assert_eq!(origin_from_anchor("bottom-right", (3000, 500), (340, 96), &screens), None, "the second monitor was unplugged");
+        assert_eq!(origin_from_anchor("bottom-right", (1000, 700), (340, 96), &[]), None);
+    }
+
+    #[test]
+    fn the_anchor_belongs_to_the_display_it_was_dropped_on() {
+        let screens = [screen(0.0, 0.0, 1920.0, 1080.0, 1.0), screen(1920.0, 0.0, 1280.0, 1024.0, 1.0)];
+        assert_eq!(origin_from_anchor("bottom-right", (2500, 600), (340, 96), &screens), Some((2160, 504)));
+    }
 }

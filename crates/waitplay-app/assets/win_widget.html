@@ -223,7 +223,7 @@ body.demo #wrap{margin:40px}
   function setExpanded(on){
     expanded = on; pill.classList.toggle('open', on);
     $('chev').setAttribute('aria-expanded', on ? 'true' : 'false'); $('bar').setAttribute('aria-label', on ? 'Collapse WaitPlay' : 'Expand WaitPlay');
-    layout();
+    layout(); scheduleCollapse();
   }
 
   function apply(s){
@@ -254,6 +254,29 @@ body.demo #wrap{margin:40px}
   $('sw').addEventListener('click', e => { e.stopPropagation(); send({t:'toggle'}); });
   $('settings').addEventListener('click', e => { e.stopPropagation(); send({t:'openSettings'}); });
   document.addEventListener('contextmenu', e => { e.preventDefault(); send({t:'menu'}); });
+
+  /* hover: the panel collapses by itself once the pointer is not over the pill (and is not being dragged) */
+  let hoverTimer = 0, dragging = false, downAt = null;
+  function scheduleCollapse(){
+    clearTimeout(hoverTimer);
+    if (!expanded) return;
+    hoverTimer = setTimeout(() => { if (expanded && !dragging && !pill.matches(':hover')) setExpanded(false); }, 650);
+  }
+  pill.addEventListener('pointerenter', () => clearTimeout(hoverTimer));
+  pill.addEventListener('pointerleave', scheduleCollapse);
+
+  /* drag: press on the pill (not on a control) and move a few pixels, then Windows moves the window; the app remembers where it lands */
+  pill.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || e.target.closest('#plats,#sw,#settings,.link,#chev')) return;
+    downAt = { x: e.screenX, y: e.screenY };
+  });
+  let dragAt = 0;
+  document.addEventListener('pointermove', e => {
+    if (dragging){ if (performance.now() - dragAt > 400){ dragging = false; scheduleCollapse(); } return; }   // the native move loop ended: pointer events resume
+    if (!downAt || !(e.buttons & 1)) return;
+    if (Math.abs(e.screenX - downAt.x) + Math.abs(e.screenY - downAt.y) > 5){ downAt = null; dragging = true; dragAt = performance.now(); clearTimeout(hoverTimer); send({t:'drag'}); }
+  });
+  document.addEventListener('pointerup', () => { downAt = null; });
   new ResizeObserver(() => { reportSize(); }).observe(wrap);
 
   window.wpWidget = { apply, expand: setExpanded, fadeOut(){ pill.classList.remove('in'); pill.classList.add('out'); } };

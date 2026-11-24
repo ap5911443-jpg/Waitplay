@@ -605,25 +605,6 @@ fn place_on_macos(window: &Window, settings: &waitplay_core::settings::Settings)
     window.set_outer_position(LogicalPosition::new(r.x, r.y));
 }
 
-/// The Windows twin of `place_on_macos`: the same compact portrait window in the widget's corner of the display under the pointer
-/// (`placement::companion_rect`), with no title bar to subtract (the header page draws the caption). `platform::screens()` gives each
-/// display in its own logical units, so the window is moved first and sized with the scale factor of the display it landed on.
-#[cfg(windows)]
-fn place_on_windows(window: &Window, settings: &waitplay_core::settings::Settings) {
-    use crate::placement;
-    const WIDGET_BLOCK: f64 = 68.0;
-    let screens = platform::screens();
-    let idx = platform::cursor_logical().and_then(|(x, y)| placement::screen_at(&screens, x, y)).unwrap_or(0);
-    let Some(screen) = screens.get(idx) else { return };
-    let widget = if settings.show_widget { WIDGET_BLOCK } else { 0.0 };
-    let r = placement::companion_rect(screen.work, (440.0, 800.0), settings.widget_position, widget);
-    let (px, py) = platform::to_physical(screen, r.x, r.y);
-    window.set_outer_position(PhysicalPosition::new(px, py));
-    let sf = window.scale_factor();
-    window.set_inner_size(PhysicalSize::new((r.w * sf).round() as u32, (r.h.max(MIN_HEIGHT_DIP) * sf).round() as u32));
-    window.set_outer_position(PhysicalPosition::new(px, py));
-}
-
 fn header_html() -> String {
     // Only the platforms the user switched on (always the one this window opens on)
     let settings = waitplay_core::settings::Settings::load();
@@ -685,14 +666,7 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
     window.set_min_inner_size(Some(PhysicalSize::new((MIN_WIDTH_DIP * scale) as u32, (MIN_HEIGHT_DIP * scale) as u32)));
     #[cfg(target_os = "macos")]
     place_on_macos(&window, &user_settings);
-    #[cfg(windows)]
-    {
-        place_on_windows(&window, &user_settings);
-        // the placement may have moved the window to a display with another scale factor
-        let sf = window.scale_factor();
-        window.set_min_inner_size(Some(PhysicalSize::new((MIN_WIDTH_DIP * sf) as u32, (MIN_HEIGHT_DIP * sf) as u32)));
-    }
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(not(target_os = "macos"))]
     {
         // Centred, large enough that the site's desktop layout fits without scrolling sideways
         let wa = platform::work_area();
