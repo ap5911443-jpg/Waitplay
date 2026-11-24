@@ -15,7 +15,8 @@ use tokio::task::JoinHandle;
 use waitplay_core::{AgentSessionInfo, BridgeHealth, HealthStatus};
 
 pub const DEFAULT_PORT: u16 = 3150;
-pub const BRIDGE_VERSION: &str = "0.1.0";
+/// The release version (the workspace version, so /health, the DMG and the zip always agree).
+pub const BRIDGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// A running bridge on an already-bound listener.
 pub struct Bridge {

@@ -64,21 +64,43 @@ jobs:
           if grep -q "ci-smoke-token" bridge.out; then echo "FAIL: the token was printed"; fail=1; else echo "ok: the token is not printed"; fi
           exit $fail
 
-      - name: Package
+      # dist\windows\WaitPlay-<version>-windows-x64-setup.exe (self-extracting installer, built with Windows' own IExpress) and
+      # WaitPlay-<version>-windows-x64.zip (portable), versioned from the workspace version
+      - name: Package (installer exe + zip)
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File packaging\windows\build_installer.ps1
+
+      - name: Installer smoke test (install, check, uninstall)
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force dist/WaitPlay | Out-Null
-          Copy-Item target/release/waitplay.exe, target/release/waitplay-bridge.exe, target/release/waitplay-hook.exe dist/WaitPlay/
-          Compress-Archive -Path dist/WaitPlay/* -DestinationPath dist/WaitPlay-windows-x86_64.zip -Force
+          $dest = Join-Path $env:RUNNER_TEMP 'wp-install'
+          $env:WAITPLAY_INSTALL_DIR = $dest
+          $env:WAITPLAY_NO_START = '1'
+          $setup = Get-ChildItem dist\windows\*-setup.exe
+          $ver = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          if ($setup.Name -ne "WaitPlay-$ver-windows-x64-setup.exe") { throw "unexpected installer name $($setup.Name)" }
+          Start-Process $setup.FullName -Wait
+          foreach ($f in 'waitplay.exe', 'waitplay-bridge.exe', 'waitplay-hook.exe', 'uninstall.cmd') { if (-not (Test-Path "$dest\$f")) { throw "missing $f after install" } }
+          if ((Get-Content "$dest\version.txt").Trim() -ne $ver) { throw 'version.txt does not match Cargo.toml' }
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WaitPlay'
+          if (-not (Test-Path $key)) { throw 'no Apps & features entry' }
+          Start-Process cmd.exe -ArgumentList '/c', (Get-ItemProperty $key).UninstallString -Wait
+          Start-Sleep 6
+          if (Test-Path $dest) { throw 'uninstall left the install folder' }
+          if (Test-Path $key) { throw 'uninstall left the Apps & features entry' }
+          'installer smoke test passed'
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: WaitPlay-windows-x86_64
-          path: dist/WaitPlay-windows-x86_64.zip
+          name: WaitPlay-windows-x64
+          path: |
+            dist/windows/*.exe
+            dist/windows/*.zip
+            dist/windows/SHA256SUMS-windows.txt
           if-no-files-found: error
 
-  # Publishes the zip. Only this job can write to the repository, and it runs no build code: it records the SHA-256 sum,
-  # attaches a signed build-provenance attestation (verify with `gh attestation verify`) and uploads with the GitHub CLI.
+  # Publishes the installer and the zip. Only this job can write to the repository, and it runs no build code: it records the SHA-256
+  # sums, attaches a signed build-provenance attestation (verify with `gh attestation verify`) and uploads with the GitHub CLI.
   release:
     name: publish release
     needs: build
@@ -91,24 +113,27 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: WaitPlay-windows-x86_64
+          name: WaitPlay-windows-x64
           path: release
 
       - name: Checksums
         run: |
           cd release
-          sha256sum *.zip > SHA256SUMS-windows.txt
+          sha256sum *.exe *.zip > SHA256SUMS-windows.txt
           cat SHA256SUMS-windows.txt
 
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          subject-path: release/*.zip
+          subject-path: |
+            release/*.exe
+            release/*.zip
 
+      # The Windows files are not code-signed, so the release is created as a pre-release (the macOS release job decides for the DMGs).
       - name: Upload to the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
-          gh release upload "$TAG" release/*.zip release/SHA256SUMS-windows.txt --clobber
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes --prerelease
+          gh release upload "$TAG" release/*.exe release/*.zip release/SHA256SUMS-windows.txt --clobber

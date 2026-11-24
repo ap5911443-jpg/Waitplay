@@ -18,7 +18,7 @@ async fn get_health_succeeds_without_authentication() {
     assert_eq!(res.status, 200);
     let body: BridgeHealth = serde_json::from_value(res.json()).unwrap();
     assert_eq!(serde_json::to_value(body.status).unwrap(), "ok");
-    assert_eq!(body.version, "0.1.0");
+    assert_eq!(body.version, env!("CARGO_PKG_VERSION"));
     assert_eq!(body.port, bridge.addr.port());
     bridge.shutdown();
 }

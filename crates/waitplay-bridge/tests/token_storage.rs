@@ -56,6 +56,19 @@ fn the_token_is_in_the_private_file_only_never_on_stdout_or_in_the_working_direc
         assert_eq!(std::fs::metadata(&token_file).unwrap().permissions().mode() & 0o777, 0o600);
         assert_eq!(std::fs::metadata(token_file.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
     }
+    #[cfg(windows)]
+    {
+        // only the current user may touch the directory and the token (no Administrators, SYSTEM, Users, Everyone, sandbox groups)
+        let me = std::env::var("USERNAME").unwrap();
+        for target in [token_file.parent().unwrap().to_path_buf(), token_file.clone()] {
+            let out = Command::new("icacls").arg(&target).output().unwrap();
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            let entries: Vec<&str> = text.lines().filter(|l| l.contains(":(") ).collect();
+            assert_eq!(entries.len(), 1, "{} has more than one access entry:\n{text}", target.display());
+            assert!(entries[0].to_lowercase().contains(&me.to_lowercase()), "the one entry is not the current user:\n{text}");
+            assert!(!text.contains("Everyone") && !text.contains("BUILTIN\\Users") && !text.contains("Administrators"), "{text}");
+        }
+    }
     let _ = std::fs::remove_dir_all(&temp);
     let _ = std::fs::remove_dir_all(&cwd);
 }

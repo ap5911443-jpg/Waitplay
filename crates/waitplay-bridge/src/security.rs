@@ -119,7 +119,8 @@ pub fn random_token() -> String {
 /// - the directory is forced to `0700` (unix) and the call fails if that is not possible (someone else owns it);
 /// - the data goes to a new `0600` file next to the target (`create_new`: never follows a pre-planted file or symlink) which is then
 ///   renamed over the target, so a stale file with looser permissions, a symlink or a hard link at the target cannot leak or redirect it.
-/// On Windows the file inherits the per-user ACL of the temp folder (`%TEMP%` is readable only by the user and administrators).
+/// On Windows the directory's inherited ACL is replaced by one entry, full control for the current user: `%TEMP%` can carry entries
+/// for other accounts (this PC's has a sandbox group with modify rights), and the token must not be readable or replaceable by them.
 fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     let dir = match path.parent() {
         Some(d) if !d.as_os_str().is_empty() => d,
@@ -131,6 +132,8 @@ fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     }
+    #[cfg(windows)]
+    restrict_to_current_user(dir)?;
     let tmp = dir.join(format!(".bridge-token.{}.tmp", std::process::id()));
     let _ = std::fs::remove_file(&tmp);
     let mut opts = std::fs::OpenOptions::new();
@@ -150,6 +153,32 @@ fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
         let _ = std::fs::remove_file(&tmp);
     }
     result
+}
+
+/// Removes inherited permissions from `dir` and grants full control to the current user only (`icacls`, the Windows system tool).
+/// New files in the directory inherit that. Fails closed: if the permissions cannot be set the token is not published.
+#[cfg(windows)]
+fn restrict_to_current_user(dir: &Path) -> std::io::Result<()> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let (Some(user), Some(root)) = (std::env::var_os("USERNAME"), std::env::var_os("SystemRoot")) else {
+        return Err(std::io::Error::other("USERNAME or SystemRoot is not set"));
+    };
+    let mut account = std::env::var_os("USERDOMAIN").map(|d| { let mut a = d; a.push("\\"); a }).unwrap_or_default();
+    account.push(&user);
+    let mut grant = account;
+    grant.push(":(OI)(CI)F");
+    let out = std::process::Command::new(Path::new(&root).join("System32").join("icacls.exe"))
+        .arg(dir)
+        .args(["/inheritance:r", "/grant:r"])
+        .arg(grant)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!("icacls failed: {}", String::from_utf8_lossy(&out.stdout).trim())))
+    }
 }
 
 /// Extracts the presented token the way `requireBridgeAuth` does: `x-bridge-token` wins when present at all, else a
