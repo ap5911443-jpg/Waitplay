@@ -725,6 +725,7 @@ impl App {
             })
             .build(&window)
             .map_err(|e| format!("webview: {}", e))?;
+        platform::set_window_level(window.ns_window(), 8);
         let glass = platform::Glass::attach(window.ns_view());
         if glass.is_none() {
             wp_warn!("native glass could not be attached; the widget falls back to its flat tint");

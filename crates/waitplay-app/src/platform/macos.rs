@@ -259,6 +259,19 @@ impl Glass {
     }
 }
 
+/// Sets an `NSWindow`'s level (tao's always-on-top is the floating level; the widget sits above it so its expanded panel is never
+/// covered by the entertainment window).
+pub fn set_window_level(ns_window: *mut std::ffi::c_void, level: isize) {
+    if ns_window.is_null() {
+        return;
+    }
+    // SAFETY: tao hands out the window's live NSWindow; setLevel: takes an NSInteger
+    unsafe {
+        let w = ns_window as *mut objc2::runtime::AnyObject;
+        let _: () = objc2::msg_send![w, setLevel: level];
+    }
+}
+
 pub mod memory {
     pub fn park(_browser_pid: u32) {}
     pub fn wake(_browser_pid: u32) {}

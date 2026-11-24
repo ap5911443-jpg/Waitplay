@@ -69,7 +69,7 @@ sw_vers 2>/dev/null | sed 's/^/   /'
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 echo "== scenario 1: defaults"
 new_env
-"$BIN/waitplay" >"$OUT/app.stdout" 2>&1 &
+WAITPLAY_TEST_EXPAND_WIDGET=1 "$BIN/waitplay" >"$OUT/app.stdout" 2>&1 &
 APP_PID=$!
 
 wait_for "app logged its start" 30 grep -q "started;" "$LOG"
