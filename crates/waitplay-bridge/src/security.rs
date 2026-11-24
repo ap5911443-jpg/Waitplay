@@ -86,22 +86,23 @@ fn valid_port(p: &str) -> bool {
     p.is_empty() || (p.chars().all(|c| c.is_ascii_digit()) && p.parse::<u32>().is_ok_and(|n| n <= 65535))
 }
 
-/// `BRIDGE_AUTH_TOKEN` (trimmed) when set; otherwise a fresh random 24-byte hex token that is persisted (mode 0600 where
-/// the platform supports it) to every path in `persist_to`. Persist failures are warnings, never fatal.
-pub fn initialize_bridge_token(persist_to: &[std::path::PathBuf]) -> String {
+/// `BRIDGE_AUTH_TOKEN` (trimmed) when set; otherwise a fresh random 24-byte hex token that is published to `token_file` and
+/// nowhere else (see [`write_private`]). An error means the clients could not learn the token, so the bridge must not start.
+pub fn initialize_bridge_token(token_file: &Path) -> Result<String, String> {
     if let Ok(t) = std::env::var("BRIDGE_AUTH_TOKEN") {
         let t = t.trim();
         if !t.is_empty() {
-            return t.to_string();
+            return Ok(t.to_string());
         }
     }
+    publish_token(token_file)
+}
+
+/// A fresh random token, written to `token_file` (and nowhere else).
+fn publish_token(token_file: &Path) -> Result<String, String> {
     let token = random_token();
-    for path in persist_to {
-        if let Err(e) = write_private(path, token.as_bytes()) {
-            eprintln!("Could not persist token to {}: {}", path.display(), e);
-        }
-    }
-    token
+    write_private(token_file, token.as_bytes()).map_err(|e| format!("could not publish the token to {}: {}", token_file.display(), e))?;
+    Ok(token)
 }
 
 pub fn random_token() -> String {
@@ -114,21 +115,41 @@ pub fn random_token() -> String {
     s
 }
 
+/// Writes `contents` so that only the current user can read them, on every write (not only when the file is first created):
+/// - the directory is forced to `0700` (unix) and the call fails if that is not possible (someone else owns it);
+/// - the data goes to a new `0600` file next to the target (`create_new`: never follows a pre-planted file or symlink) which is then
+///   renamed over the target, so a stale file with looser permissions, a symlink or a hard link at the target cannot leak or redirect it.
+/// On Windows the file inherits the per-user ACL of the temp folder (`%TEMP%` is readable only by the user and administrators).
 fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        if !dir.as_os_str().is_empty() {
-            std::fs::create_dir_all(dir)?;
-        }
+    let dir = match path.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d,
+        _ => Path::new("."),
+    };
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     }
+    let tmp = dir.join(format!(".bridge-token.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
     let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
+    opts.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
-    let mut f = opts.open(path)?;
-    f.write_all(contents)
+    let result = (|| {
+        let mut f = opts.open(&tmp)?;
+        f.write_all(contents)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// Extracts the presented token the way `requireBridgeAuth` does: `x-bridge-token` wins when present at all, else a
@@ -224,6 +245,71 @@ mod tests {
         assert_eq!(presented_token(None, Some("Basic zzz")), None);
         assert_eq!(presented_token(Some("  "), Some("Bearer zzz")), None);
         assert_eq!(presented_token(None, None), None);
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let p = std::env::current_exe().unwrap().parent().unwrap().join(format!("wp-token-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn the_token_is_published_to_exactly_the_given_file_and_replaced_on_every_start() {
+        let dir = scratch("publish");
+        let file = dir.join("waitplay").join(".bridge-token");
+        write_private(&file, b"first").unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "first");
+        write_private(&file, b"second").unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "second");
+        let names: Vec<_> = std::fs::read_dir(file.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, [".bridge-token"], "no temp or extra copies are left behind");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unwritable_location_is_an_error_not_a_silent_skip() {
+        let dir = scratch("unwritable");
+        let blocker = dir.join("a-file");
+        std::fs::write(&blocker, "x").unwrap();
+        let err = publish_token(&blocker.join(".bridge-token")).unwrap_err();
+        assert!(err.contains("could not publish the token"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn permissions_are_enforced_on_every_write_not_only_on_creation() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("perms");
+        let sig = dir.join("waitplay");
+        std::fs::create_dir_all(&sig).unwrap();
+        std::fs::set_permissions(&sig, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let file = sig.join(".bridge-token");
+        std::fs::write(&file, "stale").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_private(&file, b"fresh").unwrap();
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&file), 0o600, "a stale world-readable file must not keep its mode");
+        assert_eq!(mode(&sig), 0o700);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_symlink_is_replaced_not_followed() {
+        let dir = scratch("symlink");
+        let sig = dir.join("waitplay");
+        std::fs::create_dir_all(&sig).unwrap();
+        let victim = dir.join("victim.txt");
+        std::fs::write(&victim, "precious").unwrap();
+        std::os::unix::fs::symlink(&victim, sig.join(".bridge-token")).unwrap();
+
+        write_private(&sig.join(".bridge-token"), b"tok").unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "precious", "the link target was overwritten");
+        assert_eq!(std::fs::read_to_string(sig.join(".bridge-token")).unwrap(), "tok");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

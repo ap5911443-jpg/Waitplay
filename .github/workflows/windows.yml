@@ -61,6 +61,7 @@ jobs:
           check "WebSocket without the token"           "$(code "${WS[@]}" http://127.0.0.1:3999/ws)" 401
           check "GET /sessions with the token"          "$(code -H 'x-bridge-token: ci-smoke-token' http://127.0.0.1:3999/sessions)" 200
           kill "$BPID" 2>/dev/null || true
+          if grep -q "ci-smoke-token" bridge.out; then echo "FAIL: the token was printed"; fail=1; else echo "ok: the token is not printed"; fi
           exit $fail
 
       - name: Package

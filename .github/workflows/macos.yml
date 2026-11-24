@@ -13,7 +13,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: never
-  APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12 }}
 
 jobs:
   build:
@@ -55,34 +54,36 @@ jobs:
           set -o pipefail
           cargo test --workspace --target ${{ matrix.target }} -- --test-threads=4 2>&1 | tee test.log || { bash .github/scripts/annotate.sh test.log "cargo test"; exit 1; }
 
-      - name: Import Developer ID certificate
-        if: env.APPLE_CERTIFICATE != ''
-        shell: bash
-        env:
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
-          PASS="$(uuidgen)"
-          security create-keychain -p "$PASS" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$PASS" "$KEYCHAIN"
-          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
-          security set-key-partition-list -S apple-tool:,apple: -k "$PASS" "$KEYCHAIN"
-          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
-
+      # No signing secrets exist in this job. It produces the ad-hoc signed development build; Developer ID signing and
+      # notarization happen in the separate `sign` job below.
       - name: Package WaitPlay.app and DMG
         shell: bash
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        # (no environment: unsigned development build)
         run: |
           set -o pipefail
           export WAITPLAY_BUILD="$(git rev-parse --short HEAD)"
           bash packaging/macos/build_app.sh ${{ matrix.target }} 2>&1 | tee package.log || { bash .github/scripts/annotate.sh package.log "package (${{ matrix.target }})"; exit 1; }
 
+
+      # the raw binaries for the `sign` job (a different job, so the signing secrets never share a job with `cargo build`)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: binaries-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/waitplay
+            target/${{ matrix.target }}/release/waitplay-bridge
+            target/${{ matrix.target }}/release/waitplay-hook
+          if-no-files-found: error
+          retention-days: 1
+
+      # A SEPARATE binary with the `test-hooks` feature, used only by the screenshot scenario of the smoke test. It is built after
+      # the shipped binaries were packaged and uploaded, is never packaged or published, and the shipped app has no test switches.
+      - name: Build the smoke-test-only binary (test hooks)
+        if: matrix.target == 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          cargo build --release -p waitplay-app --features test-hooks --target ${{ matrix.target }}
+          mkdir -p testhooks && cp target/${{ matrix.target }}/release/waitplay testhooks/waitplay
       - name: Smoke test the bundle
         if: matrix.target == 'x86_64-apple-darwin'
         shell: bash
@@ -107,7 +108,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          bash packaging/macos/smoke.sh "dist/${{ matrix.target }}/WaitPlay.app" smoke-out 2>&1 | tee smoke-run.log
+          WAITPLAY_TESTHOOKS_BIN="$PWD/testhooks/waitplay" bash packaging/macos/smoke.sh "dist/${{ matrix.target }}/WaitPlay.app" smoke-out 2>&1 | tee smoke-run.log
 
       - name: Annotate runtime smoke result
         if: always() && matrix.target == 'x86_64-apple-darwin'
@@ -138,13 +139,72 @@ jobs:
             dist/${{ matrix.target }}/*.dmg
           if-no-files-found: error
 
+  # Developer ID signing, Hardened Runtime and notarization. WAITING FOR AN ACTIVE APPLE DEVELOPER MEMBERSHIP: this job is skipped
+  # until the repository variable APPLE_SIGNING_ENABLED is set to `true` (see docs/RELEASE_SIGNING.md). It runs no cargo build: it takes
+  # the binaries built above, and the signing secrets exist in exactly one step (the import step), in a protected environment.
+  sign:
+    name: sign and notarize (${{ matrix.target }})
+    needs: build
+    if: vars.APPLE_SIGNING_ENABLED == 'true' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    runs-on: macos-15-intel
+    environment: release-signing
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: binaries-${{ matrix.target }}
+          path: signed-input
+
+      # The ONLY step that receives signing secrets.
+      - name: Import certificate and store notary credentials
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_NOTARY_API_KEY_P8: ${{ secrets.APPLE_NOTARY_API_KEY_P8 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: bash .github/scripts/import_signing.sh
+
+      - name: Package, sign, notarize and staple
+        shell: bash
+        run: |
+          chmod +x signed-input/*
+          export WAITPLAY_BUILD="$(git rev-parse --short HEAD)"
+          WAITPLAY_BIN_DIR="$PWD/signed-input" bash packaging/macos/build_app.sh ${{ matrix.target }}
+
+      - name: Verify as a user's Mac will
+        shell: bash
+        run: bash packaging/macos/verify_release.sh dist/${{ matrix.target }}/*.dmg
+
+      - name: Remove the signing keychain
+        if: always()
+        shell: bash
+        run: |
+          [ -z "${APPLE_KEYCHAIN:-}" ] || security delete-keychain "$APPLE_KEYCHAIN" || true
+          rm -f "$RUNNER_TEMP"/certificate.p12 "$RUNNER_TEMP"/notary-key.p8
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: signed-WaitPlay-${{ matrix.target }}
+          path: dist/${{ matrix.target }}/*.dmg
+          if-no-files-found: error
+
   # Publishes the DMGs. Only this job can write to the repository, and it runs no build code: it downloads the artifacts built
   # above, records their SHA-256 sums, attaches a signed build-provenance attestation (verify with `gh attestation verify`),
-  # and uploads with the preinstalled GitHub CLI (no third-party release action).
+  # and uploads with the preinstalled GitHub CLI (no third-party release action). Signed DMGs when the sign job ran; otherwise the
+  # ad-hoc development DMGs, renamed *-UNSIGNED.dmg and published as a pre-release so nobody mistakes them for a distribution build.
   release:
     name: publish release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, sign]
+    if: always() && needs.build.result == 'success' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -153,19 +213,33 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: WaitPlay-*-apple-darwin
-          path: release
+          pattern: signed-WaitPlay-*
+          path: signed
           merge-multiple: true
 
-      - name: Checksums
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: WaitPlay-*-apple-darwin
+          path: unsigned
+          merge-multiple: true
+
+      - name: Choose the files and write checksums
         run: |
-          cd release
+          mkdir publish
+          if [ "${{ needs.sign.result }}" = "success" ] && ls signed/*.dmg >/dev/null 2>&1; then
+            cp signed/*.dmg publish/
+            echo "PRERELEASE=" >> "$GITHUB_ENV"
+          else
+            for f in unsigned/*.dmg; do cp "$f" "publish/$(basename "$f" .dmg)-UNSIGNED.dmg"; done
+            echo "PRERELEASE=--prerelease" >> "$GITHUB_ENV"
+          fi
+          cd publish
           sha256sum *.dmg > SHA256SUMS-macos.txt
           cat SHA256SUMS-macos.txt
 
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          subject-path: release/*.dmg
+          subject-path: publish/*.dmg
 
       - name: Upload to the release
         env:
@@ -173,8 +247,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
-          gh release upload "$TAG" release/*.dmg release/SHA256SUMS-macos.txt --clobber
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes $PRERELEASE
+          gh release upload "$TAG" publish/*.dmg publish/SHA256SUMS-macos.txt --clobber
 
   # Runs the arm64 build on a real Apple Silicon runner. Those runners are capacity-limited, so this job must never block the
   # release: it is allowed to fail or be cancelled; when it does run it is the only proof that the arm64 binary works.

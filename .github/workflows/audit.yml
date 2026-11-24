@@ -1,0 +1,39 @@
+name: Dependency audit
+
+on:
+  push:
+    branches: [main]
+    paths: ["Cargo.lock", "**/Cargo.toml", "package-lock.json", ".github/workflows/audit.yml"]
+  pull_request:
+    paths: ["Cargo.lock", "**/Cargo.toml", "package-lock.json", ".github/workflows/audit.yml"]
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: cargo audit and npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # `stable` is a moving branch: the action is pinned to a commit and the toolchain channel is passed as an input
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # The two ignored advisories are in the Linux-only GTK stack pulled in by wry; WaitPlay ships for macOS and Windows only, where
+      # `cargo tree -i glib` / `-i proc-macro-error` print nothing. Everything else fails the job.
+      - name: cargo audit
+        run: cargo audit --deny warnings --ignore RUSTSEC-2024-0370 --ignore RUSTSEC-2024-0429
+
+      - name: npm audit (website)
+        run: npm audit --omit=dev --audit-level=high

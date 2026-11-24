@@ -1000,7 +1000,9 @@ impl App {
         match v.get("t").and_then(Value::as_str).unwrap_or("") {
             "ready" => {
                 self.last_widget_state = None;
-                // test-only: the CI smoke test cannot click, so it asks the page to show its expanded panel
+                // test-only, and only in the separate `--features test-hooks` build the CI smoke test uses for its screenshots (it
+                // cannot click): the page is asked to show its expanded panel. The shipped app does not contain this code.
+                #[cfg(feature = "test-hooks")]
                 if std::env::var_os("WAITPLAY_TEST_EXPAND_WIDGET").is_some() {
                     if let Some(w) = self.widget.as_ref() {
                         let _ = w.webview.evaluate_script("setTimeout(function(){window.wpWidget&&wpWidget.expand(true)},3500)");

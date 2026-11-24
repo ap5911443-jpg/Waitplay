@@ -1,5 +1,5 @@
-//! WaitPlay desktop app: the floating widget (`--widget`, the default) and the companion window that shows Instagram,
-//! YouTube or X while a coding agent works. One executable, same command line as the C# build (see `cli`).
+//! WaitPlay desktop app: the tray application (no arguments or `--widget`: tray icon, floating widget, settings) and the companion
+//! window that shows Instagram, YouTube or X while a coding agent works. One executable, same command line as the C# build (see `cli`).
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -9,11 +9,15 @@ mod logging;
 #[cfg(any(target_os = "macos", test))]
 mod mac;
 mod platform;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", windows, test))]
 mod placement;
 mod profile;
 mod single_instance;
 mod sites;
+#[cfg(windows)]
+mod win;
+// The older floating widget UI: still the `--dock` side store; the tray app replaced it on Windows and macOS
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
 mod widget;
 
 use waitplay_core::signals::{self, LaunchSignal};
@@ -41,10 +45,14 @@ fn main() {
         return;
     }
 
-    // macOS: no arguments (or --widget) starts the menu-bar app, whatever the automation switch says
-    #[cfg(target_os = "macos")]
+    // macOS and Windows: no arguments (or --widget) starts the tray application, whatever the automation switch says
+    #[cfg(any(target_os = "macos", windows))]
     if args.widget || (args.session.is_empty() && !args.force_open) {
-        if let Err(e) = mac::app::run() {
+        #[cfg(target_os = "macos")]
+        let result = mac::app::run();
+        #[cfg(windows)]
+        let result = win::app::run();
+        if let Err(e) = result {
             eprintln!("waitplay: {}", e);
             std::process::exit(1);
         }

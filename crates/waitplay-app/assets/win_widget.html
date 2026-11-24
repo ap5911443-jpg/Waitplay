@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<title>WaitPlay Widget</title>
+<style>
+/* WaitPlay glass bar (Windows).
+   In the app the glass itself (real behind-window blur) is DWM blur-behind enabled on the widget window and clipped to a rounded
+   rectangle that follows #pill frame by frame (the page reports the pill rectangle over IPC); this page draws the tint, the edge
+   light, the inner highlight, the hairline border and the contents on top of it. Opened in a plain browser (demo mode) the same
+   look is approximated with backdrop-filter. */
+:root{
+  --label:#1d1d1f; --secondary:rgba(60,60,67,.72); --accent:#007aff; --on-accent:#fff;
+  --tint:rgba(255,255,255,.18); --sheen-a:rgba(255,255,255,.55); --sheen-b:rgba(255,255,255,0);
+  --edge:rgba(255,255,255,.75); --border:rgba(255,255,255,.45); --rim:rgba(0,0,0,.10);
+  --inner:rgba(255,255,255,.35); --chip:rgba(120,120,128,.16); --chip-on:rgba(255,255,255,.55);
+  --shadow:0 10px 30px rgba(0,0,0,.16), 0 1px 3px rgba(0,0,0,.10);
+  --grey:#8e8e93; --green:#34c759; --orange:#ff9500; --red:#ff3b30; --text-shadow:0 0 12px rgba(255,255,255,.35);
+  --spring:cubic-bezier(.22,1.12,.36,1);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --label:#f5f5f7; --secondary:rgba(235,235,245,.66); --accent:#0a84ff;
+    --tint:rgba(30,30,34,.22); --sheen-a:rgba(255,255,255,.22); --sheen-b:rgba(255,255,255,0);
+    --edge:rgba(255,255,255,.38); --border:rgba(255,255,255,.18); --rim:rgba(0,0,0,.45);
+    --inner:rgba(255,255,255,.10); --chip:rgba(255,255,255,.10); --chip-on:rgba(255,255,255,.22);
+    --shadow:0 12px 34px rgba(0,0,0,.40), 0 1px 3px rgba(0,0,0,.35);
+    --green:#30d158; --orange:#ff9f0a; --red:#ff453a; --text-shadow:0 0 12px rgba(0,0,0,.35);
+  }
+}
+/* Increase Contrast: stronger edge and label */
+@media (prefers-contrast: more){
+  :root{ --border:rgba(0,0,0,.55); --edge:rgba(255,255,255,.9); --secondary:inherit; --sheen-a:rgba(255,255,255,.2); }
+}
+/* Reduce Transparency: the native glass turns opaque; give the page a solid tint so text keeps its contrast */
+@media (prefers-reduced-transparency: reduce){
+  :root{ --tint:rgba(246,246,248,.96); --sheen-a:rgba(255,255,255,0); }
+  @media (prefers-color-scheme: dark){ :root{ --tint:rgba(44,44,46,.97); } }
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:transparent;overflow:hidden;
+  font:13px "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  user-select:none;-webkit-user-select:none;cursor:default}
+
+#wrap{display:flex;padding:12px;width:364px;height:96px}
+#wrap.top{align-items:flex-start} #wrap.bottom{align-items:flex-end}
+#wrap.left{justify-content:flex-start} #wrap.right{justify-content:flex-end}
+
+#pill{position:relative;overflow:hidden;width:340px;height:72px;border-radius:36px;color:var(--label);
+  background:linear-gradient(180deg,var(--sheen-a) 0%,var(--sheen-b) 46%),var(--tint);
+  box-shadow:var(--shadow), inset 0 1px 0 var(--edge), inset 0 0 0 .5px var(--border), inset 0 -1px 0 var(--rim), inset 0 0 14px var(--inner);
+  opacity:0;transform:scale(.96);
+  transition:width .46s var(--spring),height .46s var(--spring),border-radius .46s var(--spring),opacity .28s ease,transform .46s var(--spring)}
+#pill.in{opacity:1;transform:none}
+#pill.out{opacity:0;transform:scale(.97);transition-duration:.2s}
+/* slight lensing: a faint bright arc hugging the top edge and a soft darker one at the bottom */
+#pill::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(120% 90% at 50% -25%,rgba(255,255,255,.35),rgba(255,255,255,0) 55%),
+             radial-gradient(120% 80% at 50% 135%,rgba(255,255,255,.16),rgba(255,255,255,0) 55%)}
+
+#bar{position:relative;display:flex;align-items:center;gap:12px;height:72px;padding:0 10px 0 14px;cursor:pointer}
+#pill.compact #bar{height:52px;padding:0 8px 0 10px;gap:9px}
+
+/* icon with status ring */
+#icon{position:relative;width:34px;height:34px;flex:none}
+#pill.compact #icon{width:28px;height:28px}
+#icon svg{width:100%;height:100%;display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
+#ring{position:absolute;right:-3px;bottom:-3px;width:12px;height:12px;border-radius:50%;background:var(--grey);
+  box-shadow:0 0 0 2px var(--tint),0 0 0 2.5px rgba(0,0,0,.12);transition:background .3s ease}
+#pill[data-status=working] #ring{background:var(--accent);animation:breathe 2.4s ease-in-out infinite}
+#pill[data-status=entertainment] #ring{background:var(--green)}
+#pill[data-status=paused] #ring{background:var(--orange)}
+#pill[data-status=error] #ring{background:var(--red)}
+#pill[data-done=true] #ring{background:var(--green);animation:none}
+@keyframes breathe{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.8);opacity:.6}}
+
+#text{display:flex;flex-direction:column;justify-content:center;min-width:0;flex:1;gap:2px}
+#text.hide{display:none}
+#title{font-size:13.5px;font-weight:600;line-height:17px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:var(--text-shadow)}
+#sub{font-size:11.5px;line-height:14px;color:var(--secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sub:empty,#pill.compact #sub{display:none}
+#text.swap{animation:swap .32s var(--spring)}
+@keyframes swap{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+
+/* right: activity indicator + expand control */
+#act{display:flex;align-items:flex-end;gap:2px;height:14px;width:16px;flex:none;justify-content:center}
+#act i{display:block;width:3px;height:4px;border-radius:2px;background:var(--secondary);opacity:.7;transition:height .3s ease,background .3s ease}
+#pill[data-status=working] #act i{background:var(--accent);opacity:1;animation:eq 1.1s ease-in-out infinite}
+#pill[data-status=working] #act i:nth-child(2){animation-delay:.18s}
+#pill[data-status=working] #act i:nth-child(3){animation-delay:.36s}
+@keyframes eq{0%,100%{height:4px}50%{height:13px}}
+#chev{all:unset;box-sizing:border-box;width:28px;height:28px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
+  background:var(--chip);color:var(--secondary);cursor:pointer;transition:background .2s ease,transform .46s var(--spring)}
+#chev:hover{background:var(--chip-on)}
+#chev svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#pill.open #chev{transform:rotate(180deg)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* expanded panel body */
+#body{position:absolute;left:0;right:0;top:72px;padding:2px 16px 16px;opacity:0;pointer-events:none;transition:opacity .22s ease}
+#pill.open #body{opacity:1;pointer-events:auto;transition:opacity .3s ease .12s}
+.sep{height:.5px;background:var(--rim);margin:6px 0 10px;opacity:.7}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:26px}
+.k{font-size:11.5px;color:var(--secondary)} .v{font-size:12.5px;font-weight:500;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#plats{display:flex;gap:6px;margin:8px 0 10px}
+.plat{all:unset;box-sizing:border-box;flex:1;height:30px;border-radius:15px;display:flex;align-items:center;justify-content:center;gap:6px;
+  background:var(--chip);font-size:12px;font-weight:500;cursor:pointer;transition:background .2s ease,transform .2s var(--spring)}
+.plat:hover{background:var(--chip-on)} .plat:active{transform:scale(.97)}
+.plat.on{background:var(--chip-on);box-shadow:inset 0 0 0 .5px var(--border),0 1px 3px rgba(0,0,0,.12)}
+.plat svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.plat svg .f{fill:currentColor;stroke:none}
+.plat[hidden]{display:none}
+#foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px}
+.sw{all:unset;box-sizing:border-box;width:38px;height:22px;border-radius:11px;background:var(--chip);position:relative;cursor:pointer;transition:background .25s ease}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .3s var(--spring)}
+.sw[aria-checked=true]{background:var(--green)} .sw[aria-checked=true]::after{transform:translateX(16px)}
+.link{all:unset;box-sizing:border-box;font-size:12px;font-weight:500;color:var(--accent);cursor:pointer;padding:4px 8px;border-radius:8px}
+.link:hover{background:var(--chip)}
+
+@media (prefers-reduced-motion: reduce){
+  *{transition:none!important;animation:none!important}
+}
+
+/* demo mode: a page opened in a browser has no native glass behind it, so fake a wallpaper and blur it */
+body.demo{background:linear-gradient(135deg,#6a85f1 0%,#b57bd8 45%,#f0a58a 100%);min-height:100vh;overflow:auto}
+body.demo.dark{background:linear-gradient(135deg,#1b2340 0%,#3a2a58 50%,#5a3a45 100%)}
+body.demo #pill{backdrop-filter:blur(26px) saturate(1.8);-webkit-backdrop-filter:blur(26px) saturate(1.8)}
+body.demo #wrap{margin:40px}
+#demo{position:fixed;left:12px;bottom:12px;display:flex;flex-wrap:wrap;gap:6px;max-width:560px}
+#demo button{font:11px "Segoe UI",system-ui,sans-serif;padding:3px 9px;border-radius:7px;border:0;background:rgba(255,255,255,.7);color:#111;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="wrap" class="bottom right">
+  <div id="pill" data-status="idle">
+    <div id="bar" role="button" tabindex="0" aria-label="Expand WaitPlay">
+      <span id="icon">
+        <svg viewBox="0 0 34 34" aria-hidden="true">
+          <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b92ff"/><stop offset="1" stop-color="#4046e0"/></linearGradient></defs>
+          <rect x="1" y="1" width="32" height="32" rx="9" fill="url(#g)"/>
+          <path d="M13 9.5v15l12-7.5z" fill="#fff" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/>
+        </svg>
+        <span id="ring"></span>
+      </span>
+      <span id="text"><span id="title"></span><span id="sub"></span></span>
+      <span id="act" aria-hidden="true"><i></i><i></i><i></i></span>
+      <button id="chev" type="button" aria-label="Expand" aria-expanded="false"><svg viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5"/></svg></button>
+    </div>
+    <div id="body">
+      <div class="sep"></div>
+      <div class="row"><span class="k">Agent</span><span class="v" id="vAgent"></span></div>
+      <div class="row"><span class="k">Status</span><span class="v" id="vStatus"></span></div>
+      <div class="row"><span class="k">Active sessions</span><span class="v" id="vSessions"></span></div>
+      <div id="plats" role="radiogroup" aria-label="Entertainment platform"></div>
+      <div id="foot">
+        <span class="row" style="gap:10px"><span class="k">Automation</span><button class="sw" id="sw" type="button" role="switch" aria-checked="true" aria-label="Automation"></button></span>
+        <button class="link" id="settings" type="button">Settings…</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  const send = m => window.ipc && window.ipc.postMessage(JSON.stringify(m));
+  const $ = id => document.getElementById(id);
+  const NS = 'http://www.w3.org/2000/svg';
+  const wrap = $('wrap'), pill = $('pill'), text = $('text');
+  const GLYPHS = {
+    instagram: [['rect',{x:2,y:2,width:12,height:12,rx:3.5}],['circle',{cx:8,cy:8,r:2.8}],['circle',{cx:11.6,cy:4.4,r:.5}]],
+    x: [['path',{d:'M3 3l10 10M13 3L3 13'}]],
+    youtube: [['rect',{x:1.5,y:3.5,width:13,height:9,rx:3}],['path',{d:'M6.7 6v4l3.5-2z',class:'f'}]]
+  };
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let S = {}, expanded = false, lastLabel = null, lastStatus = null, lastSize = '', animUntil = 0, raf = 0, shrinkTimer = 0;
+  const PANEL_H = 258;
+
+  const cap = () => ({ w: S.compact ? 280 : 340, h: S.compact ? 52 : 72 });
+  const target = () => expanded ? { w: 340, h: PANEL_H } : cap();
+
+  function glyph(key){
+    const s = document.createElementNS(NS, 'svg'); s.setAttribute('viewBox','0 0 16 16'); s.setAttribute('aria-hidden','true');
+    GLYPHS[key].forEach(([tag, a]) => { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); s.appendChild(e); });
+    return s;
+  }
+  function buildPlatforms(){
+    const box = $('plats'); box.textContent = '';
+    (S.platforms || []).forEach(p => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'plat' + (p.key === S.platform ? ' on' : '');
+      b.setAttribute('role','radio'); b.setAttribute('aria-checked', p.key === S.platform ? 'true':'false'); b.hidden = !p.on && p.key !== S.platform;
+      b.append(glyph(p.key), document.createTextNode(p.label));
+      b.addEventListener('click', e => { e.stopPropagation(); send({t:'platform', key:p.key}); });
+      box.appendChild(b);
+    });
+  }
+
+  /* geometry: the window follows the pill, the native glass follows the pill's live rect during every transition */
+  function reportSize(){
+    const r = wrap.getBoundingClientRect(), w = Math.ceil(r.width), h = Math.ceil(r.height), k = w + 'x' + h;
+    if (k !== lastSize){ lastSize = k; send({t:'size', w, h}); }
+  }
+  function reportShape(){
+    const p = pill.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+    send({t:'shape', x:p.left - w.left, y:p.top - w.top, w:p.width, h:p.height, wh:w.height,
+          r:parseFloat(getComputedStyle(pill).borderTopLeftRadius) || 0});
+  }
+  function loop(){ reportShape(); raf = performance.now() < animUntil ? requestAnimationFrame(loop) : 0; }
+  function kick(ms){ animUntil = performance.now() + (reduce.matches ? 0 : ms); if (!raf) raf = requestAnimationFrame(loop); }
+
+  function layout(){
+    const t = target(), c = cap();
+    clearTimeout(shrinkTimer);
+    // the window is always at least as big as everything that is on screen during the transition
+    const big = { w: Math.max(t.w, expanded ? t.w : pill.offsetWidth, c.w), h: Math.max(t.h, expanded ? t.h : pill.offsetHeight, c.h) };
+    wrap.style.width = (big.w + 24) + 'px'; wrap.style.height = (big.h + 24) + 'px';
+    pill.style.width = t.w + 'px'; pill.style.height = t.h + 'px';
+    pill.style.borderRadius = (expanded ? 30 : t.h / 2) + 'px';
+    reportSize(); kick(620);
+    if (!expanded){
+      shrinkTimer = setTimeout(() => { wrap.style.width = (t.w + 24) + 'px'; wrap.style.height = (t.h + 24) + 'px'; reportSize(); reportShape(); }, reduce.matches ? 0 : 520);
+    }
+  }
+  function setExpanded(on){
+    expanded = on; pill.classList.toggle('open', on);
+    $('chev').setAttribute('aria-expanded', on ? 'true' : 'false'); $('bar').setAttribute('aria-label', on ? 'Collapse WaitPlay' : 'Expand WaitPlay');
+    layout();
+  }
+
+  function apply(s){
+    S = s || {};
+    const corner = S.corner || 'bottom-right', [v, h] = corner.split('-');
+    wrap.className = v + ' ' + h;
+    pill.dataset.status = S.status || 'idle';
+    pill.dataset.done = (S.status === 'idle' && S.justFinished) ? 'true' : 'false';
+    pill.classList.toggle('compact', !!S.compact);
+    const label = S.label || '';
+    $('title').textContent = label;
+    $('sub').textContent = S.compact ? '' : (S.detail || '');
+    text.classList.toggle('hide', S.showStatus === false);
+    if (label !== lastLabel){ lastLabel = label; text.classList.remove('swap'); void text.offsetWidth; text.classList.add('swap'); }
+    $('vAgent').textContent = (S.agent || '—') + (S.terminal ? ' · ' + S.terminal : '');
+    $('vStatus').textContent = S.statusText || label;
+    $('vSessions').textContent = String(S.sessions || 0);
+    $('sw').setAttribute('aria-checked', S.enabled ? 'true' : 'false');
+    buildPlatforms();
+    if (!pill.classList.contains('in')) requestAnimationFrame(() => pill.classList.add('in'));
+    if (S.status !== lastStatus){ lastStatus = S.status; }
+    layout();
+  }
+
+  $('bar').addEventListener('click', () => setExpanded(!expanded));
+  $('bar').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); setExpanded(!expanded); } });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && expanded) setExpanded(false); });
+  $('sw').addEventListener('click', e => { e.stopPropagation(); send({t:'toggle'}); });
+  $('settings').addEventListener('click', e => { e.stopPropagation(); send({t:'openSettings'}); });
+  document.addEventListener('contextmenu', e => { e.preventDefault(); send({t:'menu'}); });
+  new ResizeObserver(() => { reportSize(); }).observe(wrap);
+
+  window.wpWidget = { apply, expand: setExpanded, fadeOut(){ pill.classList.remove('in'); pill.classList.add('out'); } };
+  send({t:'ready'});
+
+  if (!window.ipc){
+    document.body.classList.add('demo');
+    const plats = on => [{key:'instagram',label:'Instagram',on:true},{key:'x',label:'X',on:on},{key:'youtube',label:'YouTube',on:true}];
+    const base = {status:'idle', label:'Idle', detail:'Waiting for an agent', agent:'', sessions:0, platform:'instagram', platformLabel:'Instagram',
+                  platforms:plats(true), enabled:true, compact:false, showStatus:true, corner:'bottom-right'};
+    const presets = {
+      idle: {},
+      working: {status:'working', label:'Claude Code is working', detail:'Claude Code · Instagram', agent:'Claude Code', terminal:'Windows Terminal', sessions:1, statusText:'Working'},
+      '2 agents': {status:'working', label:'2 agents working', detail:'Claude Code, OMP · YouTube', agent:'Claude Code', terminal:'PowerShell', sessions:2, platform:'youtube', platformLabel:'YouTube', statusText:'Working'},
+      entertainment: {status:'entertainment', label:'Claude Code is working', detail:'Instagram is open', agent:'Claude Code', terminal:'Windows Terminal', sessions:1, statusText:'Entertainment open'},
+      done: {status:'idle', label:'All done', detail:'Claude Code finished', justFinished:true, agent:'Claude Code', statusText:'Finished'},
+      paused: {status:'paused', label:'Paused', detail:'Automation is off', enabled:false},
+      error: {status:'error', label:'Needs attention', detail:'Local bridge is not running'}
+    };
+    let cur = Object.assign({}, base);
+    const bar = document.createElement('div'); bar.id = 'demo';
+    const add = (name, fn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = name; b.addEventListener('click', fn); bar.appendChild(b); };
+    Object.keys(presets).forEach(k => add(k, () => { cur = Object.assign({}, base, presets[k], {compact:cur.compact, corner:cur.corner, platform:presets[k].platform || cur.platform}); apply(cur); }));
+    add('compact', () => { cur.compact = !cur.compact; apply(cur); });
+    add('corner', () => { const c = ['top-right','bottom-right','bottom-left']; cur.corner = c[(c.indexOf(cur.corner)+1)%3]; apply(cur); });
+    add('dark backdrop', () => document.body.classList.toggle('dark'));
+    document.body.appendChild(bar);
+    // in the demo the buttons inside the panel act locally
+    window.ipc = null;
+    const q = new URLSearchParams(location.search);
+    if (q.get('s') && presets[q.get('s')]) cur = Object.assign({}, base, presets[q.get('s')]);
+    if (q.get('dark')) document.body.classList.add('dark');
+    apply(cur);
+    if (q.get('open')) setExpanded(true);
+    $('plats').addEventListener('click', e => { const b = e.target.closest('.plat'); if (b){ cur.platform = (S.platforms||[]).find(p => b.textContent.includes(p.label)).key; apply(cur); } });
+    $('sw').addEventListener('click', () => { cur.enabled = !cur.enabled; apply(cur); });
+  }
+})();
+</script>
+</body>
+</html>

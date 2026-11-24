@@ -110,8 +110,8 @@ export const SiteFooter: React.FC = () => {
             <a href="#security" className="hover:text-[#1A1A1A] transition-colors">
               Security Guarantee
             </a>
-            <a href="#privacy" className="hover:text-[#1A1A1A] transition-colors">
-              Zero-Telemetry Policy
+            <a href="https://github.com/ap5911443-jpg/waitplay-website/blob/main/docs/PRIVACY.md" className="hover:text-[#1A1A1A] transition-colors">
+              Privacy Policy
             </a>
             <span className="text-[12px] text-[#A0A090]">
               Inspired by Wispr Flow editorial clarity

@@ -119,12 +119,17 @@ pub async fn run() -> i32 {
         }
     };
 
-    let mut token_files = vec![waitplay_core::paths::signal_dir().join(".bridge-token")];
-    if let Ok(cwd) = std::env::current_dir() {
-        token_files.push(cwd.join(".bridge-token"));
-    }
-    let token = security::initialize_bridge_token(&token_files);
-    println!("[WaitPlay Bridge] Security token initialized: {}...", token.chars().take(6).collect::<String>());
+    // The token is written to ONE per-user file (owner-only permissions) and is never printed: stdout is often captured by
+    // log files, terminals and CI output.
+    let token_file = waitplay_core::paths::signal_dir().join(".bridge-token");
+    let token = match security::initialize_bridge_token(&token_file) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("[WaitPlay Bridge] {}", e);
+            return 1;
+        }
+    };
+    println!("[WaitPlay Bridge] Security token initialized");
     println!(
         "[WaitPlay Bridge] Phone completion notifications: {}",
         if notifier::is_phone_notification_configured() { "enabled" } else { "disabled" }
@@ -137,12 +142,12 @@ pub async fn run() -> i32 {
             return 1;
         }
     };
-    let bridge = start(listener, token.clone(), Some(task_completed_hook()));
+    let bridge = start(listener, token, Some(task_completed_hook()));
     println!("=======================================================");
     println!("  WaitPlay Local Companion Bridge running");
     println!("  HTTP:      http://127.0.0.1:{}", port);
     println!("  WebSocket: ws://127.0.0.1:{}/ws", port);
-    println!("  Auth Token: {}", token);
+    println!("  Token:     {} (readable by this user only)", token_file.display());
     println!("=======================================================");
 
     let signal = wait_for_shutdown_signal().await;

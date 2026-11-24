@@ -11,7 +11,7 @@ export const FAQS: FAQItem[] = [
     id: "security",
     question: "Does WaitPlay capture or upload my code, prompts, or API keys?",
     answer:
-      "Never. WaitPlay is 100% local-first and zero-telemetry. The local bridge listens exclusively on 127.0.0.1 (loopback) with auto-generated cryptographic token authentication. WaitPlay only receives lifecycle status flags (IDLE, WORKING, COMPLETED) and execution duration. Prompts, code diffs, file names, and secrets are never read, stored, or transmitted.",
+      "WaitPlay has no account, no analytics and no server of its own. The local bridge listens exclusively on 127.0.0.1 (loopback) and every request needs an auto-generated cryptographic token. Your source code, diffs, file contents and API keys are never read. To show status in your own widget, agent hooks send the bridge the state (idle, working, finished), the model and tool names and the first 100 characters of your prompt or of the agent's question; this stays in the bridge's memory on your computer and is never sent anywhere. Outgoing connections are limited to the entertainment site you choose to open (Instagram, X or YouTube) and, only if you configure it, SMS through Twilio.",
   },
   {
     id: "supported-agents",
@@ -47,6 +47,6 @@ export const FAQS: FAQItem[] = [
     id: "pricing-license",
     question: "Is WaitPlay free and open source?",
     answer:
-      "Yes. WaitPlay is 100% free and open source under the permissive MIT license. You can clone the repository, audit every line of code, run it completely offline, and build custom plugins for your team without any subscription or account required.",
+      "Yes. WaitPlay is 100% free and open source under the permissive MIT license. You can clone the repository, audit every line of code, run the app entirely on your own machine, and build custom plugins for your team without any subscription or account required.",
   },
 ];

@@ -3,6 +3,7 @@
 //! served by it. The rules for when to show or hide live in `logic`; background file/HTTP polling in `poller`.
 
 mod logic;
+mod navigation;
 mod poller;
 mod webview2;
 
@@ -531,7 +532,10 @@ impl App {
             }
             UserEvent::Ipc(body) => self.on_ipc(&body),
             UserEvent::Navigate(url) => {
-                let _ = self.content.load_url(&url);
+                // belt and braces: the event is only ever sent for an approved pop-up, but the load is the sink that matters
+                if navigation::popup_allowed(&url) {
+                    let _ = self.content.load_url(&url);
+                }
             }
             UserEvent::Suspended(ok) => self.on_suspended(ok),
         }
@@ -601,6 +605,25 @@ fn place_on_macos(window: &Window, settings: &waitplay_core::settings::Settings)
     window.set_outer_position(LogicalPosition::new(r.x, r.y));
 }
 
+/// The Windows twin of `place_on_macos`: the same compact portrait window in the widget's corner of the display under the pointer
+/// (`placement::companion_rect`), with no title bar to subtract (the header page draws the caption). `platform::screens()` gives each
+/// display in its own logical units, so the window is moved first and sized with the scale factor of the display it landed on.
+#[cfg(windows)]
+fn place_on_windows(window: &Window, settings: &waitplay_core::settings::Settings) {
+    use crate::placement;
+    const WIDGET_BLOCK: f64 = 68.0;
+    let screens = platform::screens();
+    let idx = platform::cursor_logical().and_then(|(x, y)| placement::screen_at(&screens, x, y)).unwrap_or(0);
+    let Some(screen) = screens.get(idx) else { return };
+    let widget = if settings.show_widget { WIDGET_BLOCK } else { 0.0 };
+    let r = placement::companion_rect(screen.work, (440.0, 800.0), settings.widget_position, widget);
+    let (px, py) = platform::to_physical(screen, r.x, r.y);
+    window.set_outer_position(PhysicalPosition::new(px, py));
+    let sf = window.scale_factor();
+    window.set_inner_size(PhysicalSize::new((r.w * sf).round() as u32, (r.h.max(MIN_HEIGHT_DIP) * sf).round() as u32));
+    window.set_outer_position(PhysicalPosition::new(px, py));
+}
+
 fn header_html() -> String {
     // Only the platforms the user switched on (always the one this window opens on)
     let settings = waitplay_core::settings::Settings::load();
@@ -662,7 +685,14 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
     window.set_min_inner_size(Some(PhysicalSize::new((MIN_WIDTH_DIP * scale) as u32, (MIN_HEIGHT_DIP * scale) as u32)));
     #[cfg(target_os = "macos")]
     place_on_macos(&window, &user_settings);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        place_on_windows(&window, &user_settings);
+        // the placement may have moved the window to a display with another scale factor
+        let sf = window.scale_factor();
+        window.set_min_inner_size(Some(PhysicalSize::new((MIN_WIDTH_DIP * sf) as u32, (MIN_HEIGHT_DIP * sf) as u32)));
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         // Centred, large enough that the site's desktop layout fits without scrolling sideways
         let wa = platform::work_area();
@@ -673,6 +703,8 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
         window.set_outer_position(PhysicalPosition::new(wa.left + ((wa_w - w) / 2.0) as i32, wa.top + ((wa_h - h) / 2.0) as i32));
     }
 
+    #[cfg(windows)]
+    let scale = window.scale_factor();
     let size = window.inner_size();
     let l = layout(size.width, size.height, scale);
     let rect = |(x, y, w, h): (i32, i32, u32, u32)| wry::Rect { position: wry::dpi::PhysicalPosition::new(x, y).into(), size: wry::dpi::PhysicalSize::new(w, h).into() };
@@ -697,9 +729,14 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
         .with_url(opts.start.url)
         .with_bounds(rect(l.content))
         .with_background_color((0, 0, 0, 255))
-        // Popups (Facebook login, 2FA / security checkpoint) open in place instead of being dropped, so login completes
+        // Only safe schemes (https, about, blob, data) in the site view, frames included: no file://, plain http or app schemes
+        .with_navigation_handler(|url| navigation::navigation_allowed(&url))
+        // Popups (Facebook login, 2FA / security checkpoint) open in place instead of being dropped, so login completes; but only
+        // https on the sites and their login providers (navigation::popup_allowed). Anything else is dropped.
         .with_new_window_req_handler(move |url, _| {
-            let _ = nav_proxy.send_event(UserEvent::Navigate(url));
+            if navigation::popup_allowed(&url) {
+                let _ = nav_proxy.send_event(UserEvent::Navigate(url));
+            }
             NewWindowResponse::Deny
         })
         .build_as_child(&window)

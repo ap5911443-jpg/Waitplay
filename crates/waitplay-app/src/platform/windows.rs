@@ -842,6 +842,133 @@ impl Drop for InputWatcher {
     }
 }
 
+// ------------------------------------------------------------------------------------------------------------------- displays
+
+pub use self::displays::{cursor_logical, screens, to_physical};
+
+/// The display list in the units `placement` works in, for the tray app (same contract as `macos.rs`: primary display first).
+///
+/// Windows has no single logical space across displays with different scale factors, so a [`Screen`] is expressed per display:
+/// its origin (`frame.x`, `frame.y`) is the display's PHYSICAL top-left corner, and every size and every offset from that origin
+/// (`work.x - frame.x`, `work.w`, ...) is in that display's logical units (physical px / `scale`). `placement` only does arithmetic
+/// inside one screen, so the result converts back to physical pixels exactly with [`to_physical`].
+mod displays {
+    use super::*;
+    use crate::placement::{LRect, Screen};
+    use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO};
+    use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct Monitor {
+        frame: Rect,
+        work: Rect,
+        scale: f64,
+    }
+
+    fn rect_of(r: RECT) -> Rect {
+        Rect { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+    }
+
+    fn monitors() -> Vec<Monitor> {
+        unsafe extern "system" fn cb(h: HMONITOR, _dc: HDC, _r: *mut RECT, lparam: LPARAM) -> BOOL {
+            let list = unsafe { &mut *(lparam.0 as *mut Vec<(bool, Monitor)>) };
+            let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+            if unsafe { GetMonitorInfoW(h, &mut info) }.as_bool() {
+                let (mut dx, mut dy) = (96u32, 96u32);
+                let _ = unsafe { GetDpiForMonitor(h, MDT_EFFECTIVE_DPI, &mut dx, &mut dy) };
+                let scale = if dx == 0 { 1.0 } else { dx as f64 / 96.0 };
+                list.push((info.dwFlags & 1 != 0, Monitor { frame: rect_of(info.rcMonitor), work: rect_of(info.rcWork), scale }));
+            }
+            BOOL(1)
+        }
+        let mut list: Vec<(bool, Monitor)> = Vec::new();
+        // SAFETY: the callback only runs during this call and `list` outlives it
+        unsafe {
+            let _ = EnumDisplayMonitors(None, None, Some(cb), LPARAM(&mut list as *mut _ as isize));
+        }
+        list.sort_by_key(|(primary, _)| !*primary);
+        list.into_iter().map(|(_, m)| m).collect()
+    }
+
+    fn logical_screen(m: &Monitor) -> Screen {
+        let (ox, oy) = (m.frame.left as f64, m.frame.top as f64);
+        let s = m.scale;
+        Screen {
+            frame: LRect::new(ox, oy, m.frame.width() as f64 / s, m.frame.height() as f64 / s),
+            work: LRect::new(
+                ox + (m.work.left - m.frame.left) as f64 / s,
+                oy + (m.work.top - m.frame.top) as f64 / s,
+                m.work.width() as f64 / s,
+                m.work.height() as f64 / s,
+            ),
+            scale: s,
+        }
+    }
+
+    /// A logical point inside `screen` (the convention above) in physical pixels.
+    pub fn to_physical(screen: &Screen, x: f64, y: f64) -> (i32, i32) {
+        ((screen.frame.x + (x - screen.frame.x) * screen.scale).round() as i32, (screen.frame.y + (y - screen.frame.y) * screen.scale).round() as i32)
+    }
+
+    fn point_to_logical(m: &Monitor, px: i32, py: i32) -> (f64, f64) {
+        (m.frame.left as f64 + (px - m.frame.left) as f64 / m.scale, m.frame.top as f64 + (py - m.frame.top) as f64 / m.scale)
+    }
+
+    /// Every display, primary first. Empty only if Windows reports none.
+    pub fn screens() -> Vec<Screen> {
+        monitors().iter().map(logical_screen).collect()
+    }
+
+    /// The mouse pointer in the same convention as [`screens`] (so `placement::screen_at` finds its display).
+    pub fn cursor_logical() -> Option<(f64, f64)> {
+        let (px, py) = cursor_position();
+        let list = monitors();
+        let m = list.iter().find(|m| px >= m.frame.left && px < m.frame.right && py >= m.frame.top && py < m.frame.bottom).or(list.first())?;
+        Some(point_to_logical(m, px, py))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn mon(frame: (i32, i32, i32, i32), work: (i32, i32, i32, i32), scale: f64) -> Monitor {
+            Monitor { frame: Rect { left: frame.0, top: frame.1, right: frame.2, bottom: frame.3 }, work: Rect { left: work.0, top: work.1, right: work.2, bottom: work.3 }, scale }
+        }
+
+        #[test]
+        fn a_150_percent_display_reports_logical_sizes_from_its_physical_origin() {
+            // 3840x2160 at 150%, taskbar 80 px tall at the bottom
+            let s = logical_screen(&mon((0, 0, 3840, 2160), (0, 0, 3840, 2080), 1.5));
+            assert_eq!((s.frame.w, s.frame.h), (2560.0, 1440.0));
+            assert_eq!((s.work.x, s.work.y, s.work.w, s.work.h), (0.0, 0.0, 2560.0, 2080.0 / 1.5));
+            assert_eq!(s.scale, 1.5);
+        }
+
+        #[test]
+        fn secondary_display_round_trips_exactly_to_physical_pixels() {
+            // a 1920x1080 display at 125% to the right of a 2560x1440 one; the taskbar sits on its left (60 px)
+            let s = logical_screen(&mon((2560, 0, 4480, 1080), (2620, 0, 4480, 1080), 1.25));
+            assert_eq!(s.frame.x, 2560.0);
+            assert_eq!(s.work.x, 2560.0 + 60.0 / 1.25);
+            // the widget in the bottom-right corner of the work area with an 8 px margin
+            let size = (340.0, 96.0);
+            let (x, y) = crate::placement::corner_origin(s.work, size, waitplay_core::settings::WidgetPosition::BottomRight, 8.0);
+            let (px, py) = to_physical(&s, x, y);
+            let (w, h) = ((size.0 * s.scale).round() as i32, (size.1 * s.scale).round() as i32);
+            assert_eq!(px + w + (8.0 * 1.25) as i32, 4480, "right edge sits 8 logical px inside the work area");
+            assert_eq!(py + h + (8.0 * 1.25) as i32, 1080, "bottom edge too");
+        }
+
+        #[test]
+        fn pointer_conversion_stays_on_its_display() {
+            let m = mon((-1920, 0, 0, 1080), (-1920, 0, 0, 1040), 1.0);
+            assert_eq!(point_to_logical(&m, -100, 500), (-100.0, 500.0));
+            let hi = mon((0, 0, 3000, 2000), (0, 0, 3000, 1960), 2.0);
+            assert_eq!(point_to_logical(&hi, 1000, 600), (500.0, 300.0));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

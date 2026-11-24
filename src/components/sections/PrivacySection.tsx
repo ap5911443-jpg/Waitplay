@@ -14,9 +14,9 @@ export const PrivacySection: React.FC = () => {
     },
     {
       icon: <EyeOff className="w-5 h-5 text-[#FFA946]" />,
-      title: "Zero Code or Prompt Telemetry",
+      title: "No Telemetry, No Cloud",
       description:
-        "WaitPlay only tracks lifecycle timestamps (IDLE, WORKING, COMPLETED). Your source files, git diffs, prompts, and API keys are never read, stored, or transmitted.",
+        "Agent hooks send status (idle, working, finished) and, only to show it in your own widget, the first 100 characters of your prompt or the agent's question, to the bridge on this computer. That text stays in the bridge's memory and is never written to disk by WaitPlay, never sent to a server and never forwarded to other programs. Your source files, diffs and API keys are not read.",
     },
     {
       icon: <ShieldCheck className="w-5 h-5 text-[#F0D7FF]" />,
@@ -45,7 +45,7 @@ export const PrivacySection: React.FC = () => {
           </EditorialHeading>
 
           <p className="font-sans text-[17px] sm:text-[19px] text-[#FFFFEB]/85 leading-[1.6]">
-            Developer tools should never compromise on privacy. WaitPlay was engineered from day one to operate completely offline on your local machine with zero external network dependencies.
+            Developer tools should never compromise on privacy. WaitPlay has no account, no analytics and no server of its own: everything it knows about your agents stays on your machine. The only outgoing connections are the entertainment site you choose to open and, if you set it up, SMS through Twilio.
           </p>
         </div>
 
@@ -76,18 +76,29 @@ export const PrivacySection: React.FC = () => {
           <div className="flex items-center gap-3.5">
             <span className="w-3 h-3 rounded-full bg-[#00f3ff] animate-pulse" />
             <span className="text-[14.5px] text-[#FFFFEB]/90 font-medium">
-              Read our full Architecture & Security Specification on GitHub
+              Read the privacy policy and our Architecture & Security Specification on GitHub
             </span>
           </div>
-          <a
-            href="https://github.com/ap5911443-jpg/waitplay-website/blob/main/docs/ARCHITECTURE.md"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-[13px] font-semibold bg-[#FFFFEB] text-[#034F46] hover:bg-[#F0D7FF] transition-colors cursor-pointer"
-          >
-            <span>View docs/ARCHITECTURE.md</span>
-            <ArrowUpRight className="w-3.5 h-3.5" />
-          </a>
+          <div className="flex flex-wrap items-center justify-center gap-2.5">
+            <a
+              href="https://github.com/ap5911443-jpg/waitplay-website/blob/main/docs/PRIVACY.md"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-[13px] font-semibold bg-[#FFFFEB] text-[#034F46] hover:bg-[#F0D7FF] transition-colors cursor-pointer"
+            >
+              <span>Privacy policy</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </a>
+            <a
+              href="https://github.com/ap5911443-jpg/waitplay-website/blob/main/docs/ARCHITECTURE.md"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-[13px] font-semibold bg-[#FFFFEB] text-[#034F46] hover:bg-[#F0D7FF] transition-colors cursor-pointer"
+            >
+              <span>View docs/ARCHITECTURE.md</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </a>
+          </div>
         </div>
       </div>
     </SectionContainer>

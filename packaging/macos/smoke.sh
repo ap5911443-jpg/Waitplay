@@ -55,7 +55,13 @@ tool_json() { printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_na
 # a real agent keeps reporting tool use; without it the bridge's 20 s watchdog completes a silent session
 keepalive() { while :; do hook tool "$(tool_json "$1")"; sleep 4; done; }
 no_process() { ! pgrep -f -- "$1" >/dev/null; }
+# The shipped binary has no test switches. For the screenshots (the page must be expanded without a click) CI passes a separate
+# binary built with `--features test-hooks` in WAITPLAY_TESTHOOKS_BIN; without it the shipped binary runs and the widget stays collapsed.
+APP_BIN="${WAITPLAY_TESTHOOKS_BIN:-$BIN/waitplay}"
+[ -x "$APP_BIN" ] || APP_BIN="$BIN/waitplay"
+if strings "$BIN/waitplay" | grep -q "WAITPLAY_TEST_"; then bad "the shipped binary contains a test switch (WAITPLAY_TEST_*)"; else ok "the shipped binary contains no test switches"; fi
 quit_all() {
+  pkill -f "$APP_BIN" 2>/dev/null
   pkill -f "$BIN/waitplay" 2>/dev/null
   pkill -f "waitplay-bridge" 2>/dev/null
   pkill -f "waitplay-hook" 2>/dev/null
@@ -69,7 +75,7 @@ sw_vers 2>/dev/null | sed 's/^/   /'
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 echo "== scenario 1: defaults"
 new_env
-WAITPLAY_TEST_EXPAND_WIDGET=1 "$BIN/waitplay" >"$OUT/app.stdout" 2>&1 &
+WAITPLAY_TEST_EXPAND_WIDGET=1 "$APP_BIN" >"$OUT/app.stdout" 2>&1 &
 APP_PID=$!
 
 wait_for "app logged its start" 30 grep -q "started;" "$LOG"
@@ -146,7 +152,7 @@ new_env
 cat >"$HOME/Library/Application Support/WaitPlay/settings.json" <<'JSON'
 {"appearance":"dark","widgetPosition":"top-right","onFinish":"close","preferredPlatform":"youtube","platforms":{"instagram":true,"x":false,"youtube":true},"watchers":[]}
 JSON
-WAITPLAY_TEST_EXPAND_WIDGET=1 "$BIN/waitplay" >"$OUT/app2.stdout" 2>&1 &
+WAITPLAY_TEST_EXPAND_WIDGET=1 "$APP_BIN" >"$OUT/app2.stdout" 2>&1 &
 APP_PID=$!
 wait_for "widget shown top-right" 30 grep -q "widget shown top-right" "$LOG"
 "$BIN/waitplay" >/dev/null 2>&1 &
