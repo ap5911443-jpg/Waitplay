@@ -401,11 +401,21 @@ impl AccountService {
     /// Deletes the account on the server (Edge Function), then everything local. The caller must have asked the user to re-confirm.
     pub fn delete_account(&self) -> Result<()> {
         let token = self.mgr.access_token()?;
-        cloud::delete_account(self.mgr.client(), &token)?;
+        cloud::delete_account(self.mgr.client(), &token).map_err(delete_failed)?; // nothing local is touched unless the server confirmed
         let result = self.mgr.forget_local();
         self.clear_cache();
         let _ = std::fs::remove_file(self.dir.join("device.json"));
         result
+    }
+}
+
+/// Every refusal of the deletion function becomes an explicit "not deleted" message: a 4xx/5xx must never read like a success.
+fn delete_failed(e: AuthError) -> AuthError {
+    let say = |code: &str, message: &str| AuthError::Rejected { code: code.into(), message: message.into() };
+    match e {
+        AuthError::Rejected { code, .. } if code == "NOT_FOUND" => say("delete_unavailable", "Account deletion is not available right now, so your account was not deleted. Nothing was changed."),
+        AuthError::Rejected { .. } | AuthError::Unavailable => say("delete_failed", "Your account was not deleted. Nothing was changed. Try again in a moment."),
+        other => other, // offline, session expired, rate limited: their own messages already say nothing happened
     }
 }
 

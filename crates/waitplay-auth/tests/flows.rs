@@ -573,3 +573,24 @@ fn a_device_removed_from_the_account_signs_out_locally_on_the_next_heartbeat() {
     assert!(v["reason"].as_str().unwrap().contains("removed from your account"), "{v}");
     assert_eq!(store.load().unwrap(), None);
 }
+
+#[test]
+fn every_refusal_of_the_deletion_function_leaves_the_account_and_the_local_sign_in_untouched() {
+    for status in [400u16, 401, 403, 404, 429, 500, 502] {
+        let mock = Mock::start(move |r| match r.path.split('?').next().unwrap() {
+            "/auth/v1/token" => (200, token_json("u1", "ACCESS-1", "REFRESH-1")),
+            "/functions/v1/delete-account" => (status, if status == 404 { json!({"code": "NOT_FOUND", "message": "Requested function was not found"}) } else { json!({"error": "refused"}) }),
+            "/rest/v1/rpc/register_device" => (200, json!("ok")),
+            _ => (200, json!([])),
+        });
+        let (store, dir) = (SharedStore::default(), scratch("delrefused"));
+        let svc = service(&mock, &store, &dir);
+        svc.sign_in_password("ada@example.com", "correct-horse").unwrap();
+        let err = svc.delete_account().unwrap_err();
+        let text = err.user_message().to_lowercase();
+        assert!(text.contains("not deleted") || text.contains("too many") || text.contains("no connection"), "status {status}: {text}");
+        assert_eq!(svc.view()["state"], "signedIn", "status {status}: a failed deletion must not sign the user out");
+        assert!(store.load().unwrap().unwrap().contains("REFRESH-1"), "status {status}: the stored session must survive");
+        assert!(dir.join("account.json").exists() && dir.join("device.json").exists(), "status {status}: local data must survive");
+    }
+}

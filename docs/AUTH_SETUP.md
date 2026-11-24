@@ -46,7 +46,7 @@ Apple: implemented behind a disabled button; it needs the paid Apple Developer m
 - **Email**: password sign-in; sign-up, sign-in codes and password reset all use 6-digit codes typed into the app.
 - **Session**: the refresh token is stored in Credential Manager / Keychain only (`com.waitplay.app/session`); the access token lives in memory; a small non-secret `account.json` (name, email, plan, devices) is cached for offline display. Refresh happens about a minute before expiry; offline or a 5xx never signs you out; only a refused refresh token does.
 - **Devices**: each installation has a random id (`device.json`); the free plan allows 2 devices (change `entitlements.device_limit`). "Remove" marks a device revoked: that device signs itself out at its next background check (cooperative). **Sign out of other devices** invalidates every other session server-side immediately.
-- **Delete account**: calls the Edge Function; every row cascades; local session and cache are wiped. **The function is not deployed yet** (`/functions/v1/delete-account` answers 404): run `supabase functions deploy delete-account --project-ref gvuqncuejklrsaaphsrq`.
+- **Delete account**: calls the Edge Function `delete-account` (deployed on the project, verified live); the user is identified only from the verified access token; every row cascades; local session and cache are wiped only after the server confirmed. Any failure shows "not deleted" and changes nothing.
 
 ## 4b. Testing email flows with Supabase's built-in mail service (no custom domain yet)
 

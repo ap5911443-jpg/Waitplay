@@ -27,6 +27,9 @@ Written from what was actually executed. Nothing here claims authentication is p
 | Sign out: credential and `account.json` removed. Expired session: an old, already-rotated token restored into Credential Manager is refused by Supabase, the app shows "Your session expired. Please sign in again.", and the dead token is deleted | live |
 | In-app **Cancel** of a Google sign-in: the loopback listener port (opened for the flow) is closed again and the window shows "Sign-in cancelled." | live |
 | The anonymous key can read **nothing** from `profiles`, `entitlements`, `devices`, `user_preferences` on your project (`42501 permission denied`): the migration is applied and row level security is active | live REST check |
+| **`delete-account` deployed** (function `delete-account`, ACTIVE, `verify_jwt` on) and tested live: no token, publishable key as bearer, garbage bearer, wrong auth scheme, bad JSON and client-supplied `user_id` without a token all answered **401**; GET **405**; a valid user token with no/false/string `confirm` answered **400** and deleted nothing | live probes |
+| **Account deletion end to end with a disposable user** (created for testing, email/password): signed in through the app (this also verified email+password sign-in live), the confirm sheet keeps *Delete my account* disabled until the exact email is typed, deletion returned the app to the sign-in screen, the Credential Manager item, `account.json` and `device.json` were removed, and the server then refuses that user (`invalid_credentials`) | live, through the real Windows app |
+| Every refusal of the deletion function (400, 401, 403, 404, 429, 500, 502) shows a "not deleted" style message and leaves the session and local data intact | automated test |
 
 ## Not verified yet
 
@@ -34,7 +37,7 @@ Written from what was actually executed. Nothing here claims authentication is p
 |---|---|
 | **Google login on macOS Intel and macOS Apple Silicon** | not run: needs a real Mac and you signing in. The macOS Keychain round trip and the app compile in CI; nothing has been used by a human on a Mac. |
 | Email flows with real emails (sign-up confirmation code, sign-in code, password reset) | not run. Built-in Supabase mail only reaches the project team's addresses at about 2 emails/hour (see `docs/AUTH_SETUP.md`, "Testing email flows"); the templates must show `{{ .Token }}`. |
-| `delete-account` Edge Function on your project | **not deployed**: `POST /functions/v1/delete-account` answers 404. Account deletion fails with an error until `supabase functions deploy delete-account` is run. |
+| Cross-user deletion proof on the live project | the function never reads a user id from the request (code review + unit test), so it can only delete the token's owner; the live test used one disposable user, so another real account being untouched was not demonstrated against a second live user. |
 | **Offline behaviour on a real disconnected machine** | not run (needs the network adapter switched off, which needs administrator rights I do not have). Covered by tests: signed-in start makes no network call, a dead server keeps the session, local features never touch the auth crate. |
 | Provider-side cancellation (pressing *Cancel* on Google's consent screen) | the in-app Cancel was tested live; the "access_denied" redirect is covered by unit tests only. |
 | Apple sign-in | button disabled; needs the paid Apple Developer membership |
