@@ -138,7 +138,7 @@ new_env
 cat >"$HOME/Library/Application Support/WaitPlay/settings.json" <<'JSON'
 {"appearance":"dark","widgetPosition":"top-right","onFinish":"close","preferredPlatform":"youtube","platforms":{"instagram":true,"x":false,"youtube":true},"watchers":[]}
 JSON
-"$BIN/waitplay" >"$OUT/app2.stdout" 2>&1 &
+WAITPLAY_TEST_EXPAND_WIDGET=1 "$BIN/waitplay" >"$OUT/app2.stdout" 2>&1 &
 APP_PID=$!
 wait_for "widget shown top-right" 30 grep -q "widget shown top-right" "$LOG"
 "$BIN/waitplay" >/dev/null 2>&1 &

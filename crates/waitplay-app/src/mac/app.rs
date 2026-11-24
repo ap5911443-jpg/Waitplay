@@ -227,6 +227,7 @@ impl Supervisor {
 struct WidgetWin {
     // the webview drops before the window that hosts it
     webview: WebView,
+    glass: Option<platform::Glass>,
     window: Window,
     size: Option<(f64, f64)>,
     shown: bool,
@@ -526,10 +527,26 @@ impl App {
 
     fn widget_state(&self, st: Status, title: &str, detail: &str) -> Value {
         let key = self.settings.preferred_platform.as_str();
+        let view = &self.rt.view;
+        let lead = view.agents.iter().find(|a| a.activity == status::Activity::Working).or_else(|| view.agents.iter().find(|a| a.activity != status::Activity::Idle));
+        let status_text = match lead.map(|a| a.activity) {
+            Some(status::Activity::Working) => "Working",
+            Some(status::Activity::Waiting) => "Needs you",
+            _ => title,
+        };
+        let platforms: Vec<Value> = waitplay_core::settings::SITE_KEYS
+            .iter()
+            .map(|k| json!({ "key": k, "label": menu_model::site_label(k), "on": self.settings.platforms.get(k) == Some(true) }))
+            .collect();
         json!({
             "status": st.as_str(),
             "label": title,
             "detail": detail,
+            "agent": lead.map(|a| a.name.as_str()).unwrap_or(""),
+            "terminal": lead.map(|a| a.terminal.as_str()).unwrap_or(""),
+            "sessions": view.active_sessions,
+            "statusText": status_text,
+            "platforms": platforms,
             "platform": key,
             "platformLabel": menu_model::site_label(key),
             "enabled": self.rt.enabled,
@@ -708,7 +725,11 @@ impl App {
             })
             .build(&window)
             .map_err(|e| format!("webview: {}", e))?;
-        Ok(WidgetWin { webview, window, size: None, shown: false, screen_origin: None })
+        let glass = platform::Glass::attach(window.ns_view());
+        if glass.is_none() {
+            wp_warn!("native glass could not be attached; the widget falls back to its flat tint");
+        }
+        Ok(WidgetWin { webview, glass, window, size: None, shown: false, screen_origin: None })
     }
 
     /// The widget stays on the display it was on; a first placement (or a vanished display) uses the display under the pointer.
@@ -976,7 +997,15 @@ impl App {
     fn on_widget_ipc(&mut self, body: &str, target: &EventLoopWindowTarget<Ev>) {
         let Ok(v) = serde_json::from_str::<Value>(body) else { return };
         match v.get("t").and_then(Value::as_str).unwrap_or("") {
-            "ready" => self.last_widget_state = None,
+            "ready" => {
+                self.last_widget_state = None;
+                // test-only: the CI smoke test cannot click, so it asks the page to show its expanded panel
+                if std::env::var_os("WAITPLAY_TEST_EXPAND_WIDGET").is_some() {
+                    if let Some(w) = self.widget.as_ref() {
+                        let _ = w.webview.evaluate_script("setTimeout(function(){window.wpWidget&&wpWidget.expand(true)},3500)");
+                    }
+                }
+            }
             "size" => {
                 let (w, h) = (v.get("w").and_then(Value::as_f64).unwrap_or(0.0), v.get("h").and_then(Value::as_f64).unwrap_or(0.0));
                 if (40.0..=1000.0).contains(&w) && (20.0..=400.0).contains(&h) {
@@ -984,6 +1013,22 @@ impl App {
                         win.size = Some((w.ceil(), h.ceil()));
                     }
                     self.place_widget();
+                }
+            }
+            "shape" => {
+                // the page's live pill rectangle: the native glass follows it frame by frame during expand/collapse
+                let g = |k: &str| v.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+                if let Some(win) = self.widget.as_ref() {
+                    if let Some(glass) = win.glass.as_ref() {
+                        glass.set_shape(g("x"), g("y"), g("w"), g("h"), g("wh"), g("r"));
+                    }
+                }
+            }
+            "platform" => {
+                if let Some(key) = v.get("key").and_then(Value::as_str) {
+                    if self.settings.platforms.get(key) == Some(true) {
+                        self.apply_settings_patch(&json!({ "preferredPlatform": key }), target);
+                    }
                 }
             }
             "toggle" => self.toggle_automation(),

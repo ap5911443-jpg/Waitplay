@@ -45,4 +45,4 @@ libc = "0.2"
 tray-icon = { version = "0.21", default-features = false }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry", "NSArray", "NSString", "NSObject"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSWorkspace", "NSRunningApplication", "NSScreen", "NSEvent", "NSApplication", "NSResponder", "NSWindow"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSWorkspace", "NSRunningApplication", "NSScreen", "NSEvent", "NSApplication", "NSResponder", "NSWindow", "NSView", "NSGraphics", "NSVisualEffectView"] }

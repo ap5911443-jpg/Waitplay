@@ -31,12 +31,17 @@ pub struct AgentRow {
     pub id: String,
     pub name: String,
     pub activity: Activity,
+    /// Terminal label reported by the hook, when there is one.
+    pub terminal: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SessionsView {
     /// One row per agent that has a session on the bridge (the strongest activity of its sessions).
     pub agents: Vec<AgentRow>,
+    /// Sessions (terminals / conversations) that are working right now, and working or waiting for the user.
+    pub working_sessions: usize,
+    pub active_sessions: usize,
 }
 
 impl SessionsView {
@@ -70,6 +75,7 @@ pub fn parse_sessions(json: &str, now_ms: i64) -> Option<SessionsView> {
     let root: Value = serde_json::from_str(json).ok()?;
     let sessions = root.get("sessions")?.as_array()?;
     let mut agents: Vec<AgentRow> = Vec::new();
+    let (mut working_sessions, mut active_sessions) = (0usize, 0usize);
     for s in sessions.iter().filter_map(Value::as_object) {
         let id = s.get("agent").and_then(Value::as_str).unwrap_or("").to_string();
         if id.is_empty() {
@@ -83,18 +89,28 @@ pub fn parse_sessions(json: &str, now_ms: i64) -> Option<SessionsView> {
             "WAITING_FOR_INPUT" if age <= FRESH_WAITING_MS => Activity::Waiting,
             _ => Activity::Idle,
         };
+        let terminal = s.get("terminal").and_then(Value::as_str).unwrap_or("").to_string();
+        if activity == Activity::Working {
+            working_sessions += 1;
+        }
+        if activity != Activity::Idle {
+            active_sessions += 1;
+        }
         match agents.iter_mut().find(|a| a.id == id) {
             Some(row) => {
                 // working beats waiting beats idle
                 if rank(activity) > rank(row.activity) {
                     row.activity = activity;
                 }
+                if row.terminal.is_empty() {
+                    row.terminal = terminal;
+                }
             }
-            None => agents.push(AgentRow { name: agent_name(&id), id, activity }),
+            None => agents.push(AgentRow { name: agent_name(&id), id, activity, terminal }),
         }
     }
     agents.sort_by(|a, b| a.name.cmp(&b.name));
-    Some(SessionsView { agents })
+    Some(SessionsView { agents, working_sessions, active_sessions })
 }
 
 fn rank(a: Activity) -> u8 {
@@ -160,9 +176,10 @@ pub fn describe(status: Status, view: &SessionsView, platform_label: &str) -> (S
         Status::Error => ("Needs attention".into(), "Local bridge is not running".into()),
         Status::Idle => ("Idle".into(), "Waiting for an agent".into()),
         Status::Working | Status::Entertainment => {
-            let (title, detail) = if !working.is_empty() {
-                let verb = if working.len() == 1 { "is working" } else { "are working" };
-                (format!("{} {}", join_names(&working), verb), join_names(&working))
+            let (title, detail) = if view.working_sessions >= 2 {
+                (format!("{} agents working", view.working_sessions), join_names(&working))
+            } else if !working.is_empty() {
+                (format!("{} is working", join_names(&working)), join_names(&working))
             } else if !waiting.is_empty() {
                 (format!("{} needs you", join_names(&waiting)), join_names(&waiting))
             } else {
@@ -227,7 +244,12 @@ mod tests {
         let one = parse_sessions(&body(&[("claude-code", "WORKING", NOW)]), NOW).unwrap();
         assert_eq!(describe(Status::Working, &one, "Instagram"), ("Claude Code is working".into(), "Claude Code \u{b7} Instagram".into()));
         let two = parse_sessions(&body(&[("claude-code", "WORKING", NOW), ("omp", "WORKING", NOW)]), NOW).unwrap();
-        assert_eq!(describe(Status::Entertainment, &two, "X").0, "Claude Code and OMP are working");
+        assert_eq!(describe(Status::Entertainment, &two, "X").0, "2 agents working");
+        assert_eq!(two.working_sessions, 2);
+        // two conversations of the same agent count as two
+        let same = parse_sessions(&body(&[("claude-code", "WORKING", NOW), ("claude-code", "WORKING", NOW)]), NOW).unwrap();
+        assert_eq!((same.working_sessions, same.active_sessions, same.agents.len()), (2, 2, 1));
+        assert_eq!(describe(Status::Working, &same, "X").0, "2 agents working");
         let waiting = parse_sessions(&body(&[("codex", "WAITING_FOR_INPUT", NOW)]), NOW).unwrap();
         assert_eq!(describe(Status::Working, &waiting, "X").0, "Codex needs you");
         assert_eq!(describe(Status::Idle, &SessionsView::default(), "X").0, "Idle");
