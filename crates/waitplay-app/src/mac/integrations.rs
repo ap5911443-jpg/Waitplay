@@ -137,7 +137,8 @@ fn write_settings(path: &Path, root: &Value) -> Result<(), String> {
     if path.exists() {
         let backup = path.with_extension("json.waitplay-backup");
         if !backup.exists() {
-            let _ = std::fs::copy(path, &backup);
+            // never touch the user's file without a copy of it
+            std::fs::copy(path, &backup).map_err(|e| format!("cannot back up {} to {}: {}", path.display(), backup.display(), e))?;
         }
     }
     let body = serde_json::to_vec_pretty(root).map_err(|e| e.to_string())?;
