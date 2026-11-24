@@ -18,6 +18,8 @@ Written from what was actually executed. Nothing here claims authentication is p
 | Real HTTPS (rustls) to the WaitPlay Supabase project: settings, wrong credentials -> "Wrong email or password.", unknown refresh token -> session expired; anonymous REST reads are refused | `cargo test -p waitplay-auth --test live -- --ignored` (found and fixed a real bug: a malformed refresh token returns `validation_failed`, now treated as expired) |
 | Account window inside the real Windows app: Settings > Account... opens it; the email screen sends a wrong password to the **live** project and shows the server's answer; local validation works | driven through WebView2 (CDP) |
 | Database: migration applies twice cleanly; **34 pgTAP assertions pass on Postgres 17** (user B cannot read/update/delete user A's rows, anon sees nothing, plan/status cannot be edited, device limit and revoke rules) | run in a local Docker Postgres with stand-ins for Supabase's `auth` schema (the suite found a real bug in `register_device`, fixed) |
+| The same migration and the 34 pgTAP assertions on a **real local Supabase stack** (`supabase start`, `supabase test db`), and the Edge Function's Deno tests | GitHub Actions workflow `Supabase`, green on the commit that added them |
+| macOS (Intel runner): the whole workspace test suite including the **real Keychain round trip**, the account window code compiling, and the runtime smoke test of the app | GitHub Actions `macOS` x86_64 job, green |
 | No privileged Supabase key or JWT anywhere in the repository; config refuses `sb_secret_`/`service_role` keys; privacy claims match the optional account | repo hygiene tests |
 
 ## Not verified yet
@@ -27,9 +29,9 @@ Written from what was actually executed. Nothing here claims authentication is p
 | **Google login with a real Google account** | needs the Google provider enabled in your dashboard (it is currently disabled: `/auth/v1/settings` shows `google:false`) and you signing in interactively. Not tested on Windows, macOS Intel or Apple Silicon. |
 | Whether Supabase accepts the redirect pattern `http://127.0.0.1:*/auth/callback/*` | not configured yet |
 | Email codes (sign-up, sign-in, reset) with real emails | needs the email templates changed to `{{ .Token }}`; sending real emails also needs a mailbox of yours and, before launch, custom SMTP |
-| The migration and RLS suite **inside Supabase itself** | the migration is not applied to your project yet (REST answers `PGRST205: table not found`); pgTAP ran against stand-ins. `.github/workflows/supabase.yml` runs the suite on a real local Supabase stack in CI |
+| The migration and RLS suite **on your hosted project** | the migration is not applied there yet (REST answers `PGRST205: table not found`). The same suite does pass in CI against a real local Supabase stack (see above). |
 | `delete-account` Edge Function deployed and called | not deployed (needs you); its logic is covered by `deno test` in CI |
-| macOS: Keychain storage and the account window | compiles in CI and the keychain test runs there; no human has used it. No Intel/Apple Silicon real-machine test. |
+| macOS Apple Silicon: Keychain storage and the account window | the arm64 runtime job was still queued (no runner capacity) when this was written; no human has used the macOS UI. |
 | Token refresh against the real server over time (rotation reuse window, expiry after an hour) | needs a real account |
 | Apple sign-in | button disabled; needs the paid Apple Developer membership |
 | Accessibility audit, localisation, a screen-reader pass | not done |
