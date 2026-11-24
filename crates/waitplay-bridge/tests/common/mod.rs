@@ -29,6 +29,13 @@ pub async fn start_bridge(token: &str) -> Bridge {
     bridge::start(listener, token.to_string(), None)
 }
 
+/// A bridge with explicit limits (long windows, so tests do not depend on how fast the machine is).
+pub async fn start_bridge_with_limits(token: &str, limits: waitplay_bridge::limits::Limits) -> Bridge {
+    isolate_env();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    bridge::start_with_limits(listener, token.to_string(), None, limits)
+}
+
 pub struct HttpResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,

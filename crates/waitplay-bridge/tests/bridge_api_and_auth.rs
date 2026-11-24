@@ -311,15 +311,17 @@ async fn unauthenticated_state_change_does_nothing() {
 
 #[tokio::test]
 async fn event_flood_is_limited_with_429() {
-    let bridge = start_bridge("tok").await;
+    use waitplay_bridge::limits::{Limits, RateLimiter};
+    use std::time::Duration;
+    // 50 events per hour-long window: no dependence on how quickly the machine sends them
+    let limits = Limits { events: RateLimiter::new(50, Duration::from_secs(3600)), ..Limits::default() };
+    let bridge = start_bridge_with_limits("tok", limits).await;
     let addr = bridge.addr;
-    let total = waitplay_bridge::limits::EVENTS_PER_SECOND as usize + 150;
-    let sends = (0..total).map(|i| async move { post_auth(addr, "/events", &event(&format!("flood-{}", i % 5), "task_running")).await });
+    let sends = (0..120).map(|i| async move { post_auth(addr, "/events", &event(&format!("flood-{}", i % 5), "task_running")).await });
     let results = futures_util::future::join_all(sends).await;
     let limited = results.iter().filter(|r| r.status == 429).count();
     let ok = results.iter().filter(|r| r.status == 200).count();
-    assert!(limited >= 100, "expected the excess to be refused, got {limited} refusals and {ok} accepted");
-    assert!(ok <= waitplay_bridge::limits::EVENTS_PER_SECOND as usize + 20, "accepted {ok}");
+    assert_eq!((ok, limited), (50, 70), "exactly the cap is accepted");
     let refused = results.iter().find(|r| r.status == 429).unwrap();
     assert_eq!(refused.header("retry-after"), Some("1"));
     bridge.shutdown();

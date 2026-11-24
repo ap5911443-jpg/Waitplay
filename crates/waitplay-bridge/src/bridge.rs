@@ -1,6 +1,7 @@
 //! Wires the pieces together (port of index.ts): token, session manager, HTTP + WebSocket server, notifications,
 //! startup banner and clean shutdown.
 
+use crate::limits::Limits;
 use crate::notifier::{self, CompletedTaskNotification};
 use crate::security;
 use crate::server::{self, BridgeState};
@@ -27,6 +28,11 @@ pub struct Bridge {
 /// Starts serving on `listener`. Session changes (including background transitions such as the launch timer) are
 /// broadcast to WebSocket clients. Needs a Tokio runtime.
 pub fn start(listener: TcpListener, token: String, on_task_completed: Option<SessionCallback>) -> Bridge {
+    start_with_limits(listener, token, on_task_completed, Limits::default())
+}
+
+/// [`start`] with explicit request limits (tests use small, long-window ones so they do not depend on timing).
+pub fn start_with_limits(listener: TcpListener, token: String, on_task_completed: Option<SessionCallback>, limits: Limits) -> Bridge {
     let addr = listener.local_addr().expect("bound listener has an address");
     let start_time = Instant::now();
     let sessions = Arc::new(SessionManager::new(SessionManagerOptions { on_task_completed, ..Default::default() }));
@@ -48,7 +54,7 @@ pub fn start(listener: TcpListener, token: String, on_task_completed: Option<Ses
     let broadcast_hub = hub.clone();
     sessions.on_session_change(Arc::new(move |session: &AgentSessionInfo| broadcast_hub.broadcast_session_update(session)));
 
-    let state = Arc::new(BridgeState::new(sessions, Some(hub.clone()), get_health, token));
+    let state = Arc::new(BridgeState::with_limits(sessions, Some(hub.clone()), get_health, token, limits));
     let accept_loop = tokio::spawn(server::serve(listener, state.clone()));
     Bridge { state, hub, addr, accept_loop }
 }

@@ -38,7 +38,11 @@ pub struct BridgeState {
 
 impl BridgeState {
     pub fn new(sessions: Arc<SessionManager>, ws: Option<Arc<WsHub>>, get_health: HealthFn, token: String) -> BridgeState {
-        BridgeState { sessions, ws, get_health, token, limits: Limits::default() }
+        BridgeState::with_limits(sessions, ws, get_health, token, Limits::default())
+    }
+
+    pub fn with_limits(sessions: Arc<SessionManager>, ws: Option<Arc<WsHub>>, get_health: HealthFn, token: String, limits: Limits) -> BridgeState {
+        BridgeState { sessions, ws, get_health, token, limits }
     }
 }
 
