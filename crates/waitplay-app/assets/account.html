@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>WaitPlay Account</title>
+<style>
+:root {
+  --bg: #f5f5f7; --card: #ffffff; --label: #1d1d1f; --label2: rgba(60,60,67,.62); --label3: rgba(60,60,67,.38);
+  --sep: rgba(0,0,0,.1); --accent: #007aff; --on-accent: #ffffff; --green: #34c759; --orange: #ff9500; --red: #ff3b30;
+  --field: #ffffff; --field-border: rgba(0,0,0,.16); --btn-bg: #ffffff; --btn-border: rgba(0,0,0,.15); --btn-active: #ececee;
+  --chip: rgba(0,0,0,.06); --overlay: rgba(0,0,0,.3); --hover: rgba(0,0,0,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e1e; --card: #2c2c2e; --label: #f5f5f7; --label2: rgba(235,235,245,.62); --label3: rgba(235,235,245,.34);
+    --sep: rgba(255,255,255,.1); --accent: #0a84ff; --green: #30d158; --orange: #ff9f0a; --red: #ff453a;
+    --field: #3a3a3c; --field-border: rgba(255,255,255,.14); --btn-bg: #3a3a3c; --btn-border: rgba(255,255,255,.14); --btn-active: #48484a;
+    --chip: rgba(255,255,255,.1); --overlay: rgba(0,0,0,.5); --hover: rgba(255,255,255,.07);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font: 13px/1.4 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased; color: var(--label); background: var(--bg); cursor: default;
+  display: flex; justify-content: center; overflow-y: auto;
+}
+button, input { font: inherit; color: inherit; }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#app { width: 100%; max-width: 380px; padding: 34px 28px 28px; }
+.logo { width: 56px; height: 56px; border-radius: 14px; margin: 0 auto 18px; display: block;
+  background: linear-gradient(145deg, #7b61ff, #4b3fe0); display: grid; place-items: center; box-shadow: 0 6px 18px rgba(75,63,224,.35); }
+.logo svg { width: 24px; height: 24px; fill: #fff; margin-left: 3px; }
+h1 { font-size: 22px; line-height: 1.2; font-weight: 650; letter-spacing: -.3px; text-align: center; margin: 0 0 6px; }
+.sub { text-align: center; color: var(--label2); margin: 0 0 22px; }
+.stack > * + * { margin-top: 10px; }
+.btn { width: 100%; height: 38px; border-radius: 9px; border: .5px solid var(--btn-border); background: var(--btn-bg); font-weight: 550;
+  display: flex; align-items: center; justify-content: center; gap: 9px; cursor: pointer; }
+.btn:hover { background: var(--btn-active); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.primary { background: var(--accent); border-color: transparent; color: var(--on-accent); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.danger { color: var(--red); }
+.btn.small { height: 30px; width: auto; padding: 0 12px; font-weight: 500; }
+.btn svg { width: 17px; height: 17px; flex: none; }
+.divider { display: flex; align-items: center; gap: 10px; color: var(--label3); font-size: 12px; margin: 16px 0; }
+.divider::before, .divider::after { content: ""; flex: 1; height: .5px; background: var(--sep); }
+label.f { display: block; font-size: 12px; font-weight: 600; color: var(--label2); margin: 0 0 5px 2px; }
+input.t { width: 100%; height: 38px; padding: 0 12px; border-radius: 9px; border: .5px solid var(--field-border); background: var(--field); user-select: text; -webkit-user-select: text; }
+input.t:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); outline: none; }
+input.code { text-align: center; font-size: 24px; letter-spacing: 9px; font-variant-numeric: tabular-nums; height: 52px; }
+.pw { position: relative; }
+.pw button { position: absolute; right: 6px; top: 6px; height: 26px; border: 0; background: none; color: var(--label2); font-size: 12px; cursor: pointer; border-radius: 6px; }
+.pw button:hover { background: var(--hover); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--chip); border-radius: 9px; padding: 2px; }
+.seg button { height: 30px; border: 0; background: none; border-radius: 7px; font-weight: 550; color: var(--label2); cursor: pointer; }
+.seg button[aria-selected="true"] { background: var(--card); color: var(--label); box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+.link { background: none; border: 0; color: var(--accent); cursor: pointer; padding: 2px 0; font-size: 12.5px; }
+.link:hover { text-decoration: underline; }
+.row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.center { text-align: center; }
+.err { color: var(--red); font-size: 12.5px; min-height: 18px; margin: 10px 2px 0; }
+.ok { color: var(--green); font-size: 12.5px; margin: 10px 2px 0; }
+.muted { color: var(--label2); font-size: 12px; }
+.fine { color: var(--label3); font-size: 11.5px; text-align: center; margin-top: 22px; }
+.spin { width: 15px; height: 15px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sp .7s linear infinite; }
+@keyframes sp { to { transform: rotate(360deg); } }
+.back { position: absolute; top: 14px; left: 14px; }
+.card { background: var(--card); border: .5px solid var(--sep); border-radius: 12px; }
+.card > .it { padding: 11px 14px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.card > .it + .it { border-top: .5px solid var(--sep); }
+.avatar { width: 64px; height: 64px; border-radius: 50%; margin: 0 auto 12px; display: grid; place-items: center; font-size: 26px; font-weight: 650; color: #fff;
+  background: linear-gradient(145deg, #7b61ff, #4b3fe0); }
+.badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 99px; background: var(--chip); color: var(--label2); }
+.badge.good { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green); }
+.badge.warn { background: color-mix(in srgb, var(--orange) 20%, transparent); color: var(--orange); }
+.gt { font-size: 12px; font-weight: 600; color: var(--label2); margin: 20px 0 6px 4px; }
+.dev { min-width: 0; } .dev b { font-weight: 550; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.banner { background: color-mix(in srgb, var(--orange) 16%, transparent); color: var(--label); border-radius: 9px; padding: 8px 12px; font-size: 12.5px; margin-bottom: 14px; }
+#sheet { position: fixed; inset: 0; background: var(--overlay); display: none; align-items: center; justify-content: center; padding: 20px; }
+#sheet.on { display: flex; }
+#sheet .box { background: var(--card); border-radius: 14px; padding: 20px; width: 100%; max-width: 340px; border: .5px solid var(--sep); }
+#sheet h3 { margin: 0 0 6px; font-size: 15px; }
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 2s; } }
+</style>
+</head>
+<body>
+<div id="app" role="main"></div>
+<div id="sheet" role="dialog" aria-modal="true"><div class="box" id="box"></div></div>
+<script>
+"use strict";
+const send = (o) => window.ipc.postMessage(JSON.stringify(o));
+const $ = (s, r = document) => r.querySelector(s);
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") e.className = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v === true) e.setAttribute(k, ""); else if (v !== false && v != null) e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null && k !== false) e.append(k.nodeType ? k : document.createTextNode(String(k)));
+  return e;
+}
+const svg = (d, extra) => { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.innerHTML = d; if (extra) s.setAttribute("fill", "none"); return s; };
+const GOOGLE = '<path fill="#4285F4" d="M22.5 12.27c0-.79-.07-1.54-.2-2.27H12v4.3h5.9a5.04 5.04 0 0 1-2.19 3.31v2.75h3.54c2.07-1.91 3.25-4.72 3.25-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.99 7.28-2.67l-3.54-2.75c-.98.66-2.24 1.05-3.74 1.05-2.87 0-5.3-1.94-6.17-4.55H2.17v2.84A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.83 14.08a6.6 6.6 0 0 1 0-4.16V7.08H2.17a11 11 0 0 0 0 9.84z"/><path fill="#EA4335" d="M12 5.37c1.62 0 3.07.56 4.21 1.65l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.17 7.08l3.66 2.84C6.7 7.31 9.13 5.37 12 5.37z"/>';
+const APPLE = '<path fill="currentColor" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/>';
+
+let view = { state: "signedOut", configured: true };
+let screen = "welcome";           // welcome | email | code | forgot | reset | account
+let ctx = { mode: "signin", email: "", kind: "email", sentAt: 0 };
+let busy = null;                  // name of the running operation
+let msg = { err: "", ok: "" };
+let cooldownTimer = null;
+
+function run(op, payload) { busy = op; msg = { err: "", ok: "" }; render(); send(Object.assign({ t: op }, payload || {})); }
+
+window.wpAccount = {
+  set(v) { view = v; if (v.state === "signedIn" && screen !== "account") { screen = "account"; ctx.password = ""; } if (v.state === "signedOut" && screen === "account") screen = "welcome"; render(); },
+  result(r) {
+    busy = null; msg = { err: r.ok ? "" : (r.error || "Something went wrong."), ok: "" };
+    if (r.ok) {
+      switch (r.op) {
+        case "signUp": if (r.outcome === "needsCode") { screen = "code"; ctx.kind = "signup"; ctx.sentAt = Date.now(); msg.ok = "We emailed you a 6-digit code."; } break;
+        case "sendCode": screen = "code"; ctx.kind = "email"; ctx.sentAt = Date.now(); msg.ok = "We emailed you a 6-digit code."; break;
+        case "forgot": screen = "reset"; ctx.sentAt = Date.now(); msg.ok = "If that email has an account, a code is on its way."; break;
+        case "resendConfirm": ctx.sentAt = Date.now(); msg.ok = "We sent a new code."; break;
+        case "setName": msg.ok = "Saved."; break;
+        case "revokeDevice": msg.ok = "Device removed."; break;
+        case "signOutOthers": msg.ok = "Other devices were signed out."; break;
+      }
+    } else if (r.code === "email_not_confirmed") { screen = "code"; ctx.kind = "signup"; }
+    render();
+  },
+};
+
+function logo() { return h("div", { class: "logo", "aria-hidden": "true" }, svg('<path d="M7 4.5v15l12-7.5z"/>')); }
+function spinner() { return h("span", { class: "spin", "aria-hidden": "true" }); }
+function status() { return [msg.err ? h("div", { class: "err", role: "alert" }, msg.err) : null, msg.ok ? h("div", { class: "ok", role: "status" }, msg.ok) : null].filter(Boolean); }
+function field(label, attrs) { const id = "f" + Math.random().toString(36).slice(2, 7); return h("div", {}, h("label", { class: "f", for: id }, label), h("input", Object.assign({ class: "t", id, spellcheck: "false", autocomplete: "off" }, attrs))); }
+function passwordField(label, id) {
+  const input = h("input", { class: "t", id, type: "password", autocomplete: id === "pw-new" ? "new-password" : "current-password", spellcheck: "false" });
+  const toggle = h("button", { type: "button", onclick: () => { const show = input.type === "password"; input.type = show ? "text" : "password"; toggle.textContent = show ? "Hide" : "Show"; } }, "Show");
+  return h("div", {}, h("label", { class: "f", for: id }, label), h("div", { class: "pw" }, input, toggle));
+}
+function btn(text, cls, onclick, opts) { return h("button", Object.assign({ class: "btn " + (cls || ""), type: "button", onclick, disabled: !!busy }, opts), busy && opts && opts.spin === busy ? spinner() : null, text); }
+
+function render() {
+  const app = $("#app"); const focusId = document.activeElement && document.activeElement.id;
+  app.replaceChildren();
+  if (!view.configured) { app.append(logo(), h("h1", {}, "Sign-in is not available"), h("p", { class: "sub" }, "This build of WaitPlay has no account service configured. Everything else works as usual.")); return; }
+  ({ welcome, email: emailScreen, code: codeScreen, forgot: forgotScreen, reset: resetScreen, account: accountScreen }[screen] || welcome)(app);
+  const first = $("input", app); if (first && !focusId) first.focus(); else if (focusId) { const f = document.getElementById(focusId); if (f) f.focus(); }
+}
+
+function welcome(app) {
+  app.append(logo(), h("h1", {}, "Sign in to WaitPlay"), h("p", { class: "sub" }, "Keep your settings and devices in sync. WaitPlay works fully without an account."),
+    h("div", { class: "stack" },
+      btn("Continue with Google", "", () => run("google"), { spin: "google" }),
+      h("button", { class: "btn", type: "button", disabled: true, title: "Coming soon", "aria-label": "Continue with Apple (coming soon)" }, svg(APPLE), "Continue with Apple"),
+    ), h("div", { class: "divider" }, "or"),
+    btn("Continue with email", "primary", () => { screen = "email"; msg = { err: "", ok: "" }; render(); }));
+  const g = app.querySelector(".stack .btn"); g.prepend(svg(GOOGLE));
+  if (busy === "google") app.append(h("div", { class: "center" }, h("p", { class: "muted", style: "margin-top:14px" }, "Finish signing in in your browser, then come back here."), h("button", { class: "link", type: "button", onclick: () => { send({ t: "cancelFlow" }); } }, "Cancel")));
+  app.append(...status(), h("div", { class: "fine" }, view.reason ? view.reason : "Not now? Close this window; nothing changes."));
+}
+
+function emailScreen(app) {
+  const signup = ctx.mode === "signup";
+  const seg = h("div", { class: "seg", role: "tablist" },
+    h("button", { type: "button", role: "tab", "aria-selected": String(!signup), onclick: () => { ctx.mode = "signin"; msg = { err: "", ok: "" }; render(); } }, "Sign in"),
+    h("button", { type: "button", role: "tab", "aria-selected": String(signup), onclick: () => { ctx.mode = "signup"; msg = { err: "", ok: "" }; render(); } }, "Create account"));
+  const email = field("Email", { type: "email", inputmode: "email", value: ctx.email, autocomplete: "email", oninput: (e) => { ctx.email = e.target.value; } });
+  const pw = passwordField(signup ? "Password (8+ characters)" : "Password", signup ? "pw-new" : "pw");
+  const submit = () => {
+    ctx.email = $("input[type=email]").value; const password = $("input[type=password],.pw input").value;
+    run(signup ? "signUp" : "signInPassword", { email: ctx.email, password });
+  };
+  app.append(h("button", { class: "link back", type: "button", onclick: () => { screen = "welcome"; msg = { err: "", ok: "" }; render(); } }, "‹ Back"), logo(), h("h1", {}, signup ? "Create your account" : "Welcome back"),
+    h("p", { class: "sub" }, signup ? "We will email you a code to confirm your address." : "Use your email and password."),
+    seg, h("div", { class: "stack", style: "margin-top:16px" }, email, pw,
+      btn(signup ? "Create account" : "Sign in", "primary", submit, { spin: signup ? "signUp" : "signInPassword" })), ...status(),
+    h("div", { class: "row", style: "margin-top:14px" },
+      h("button", { class: "link", type: "button", onclick: () => { ctx.email = $("input[type=email]").value; run("sendCode", { email: ctx.email, create: false }); } }, "Email me a code instead"),
+      signup ? null : h("button", { class: "link", type: "button", onclick: () => { ctx.email = $("input[type=email]").value; screen = "forgot"; msg = { err: "", ok: "" }; render(); } }, "Forgot password?")));
+  app.addEventListener("keydown", (e) => { if (e.key === "Enter" && !busy) submit(); }, { once: true });
+}
+
+function cooldownLeft() { return Math.max(0, 30 - Math.floor((Date.now() - ctx.sentAt) / 1000)); }
+function resendRow(onresend) {
+  const b = h("button", { class: "link", type: "button", disabled: cooldownLeft() > 0 || !!busy, onclick: onresend }, cooldownLeft() > 0 ? `Resend code (${cooldownLeft()}s)` : "Resend code");
+  clearInterval(cooldownTimer); if (cooldownLeft() > 0) cooldownTimer = setInterval(() => { if (cooldownLeft() <= 0) { clearInterval(cooldownTimer); } if (screen === "code" || screen === "reset") render(); }, 1000);
+  return h("div", { class: "center", style: "margin-top:12px" }, b);
+}
+
+function codeScreen(app) {
+  const code = h("input", { class: "t code", inputmode: "numeric", maxlength: "10", autocomplete: "one-time-code", "aria-label": "6-digit code", placeholder: "••••••", oninput: (e) => { e.target.value = e.target.value.replace(/\D/g, ""); if (e.target.value.length === 6 && !busy) verify(); } });
+  const verify = () => run("verifyCode", { email: ctx.email, code: code.value, kind: ctx.kind });
+  app.append(h("button", { class: "link back", type: "button", onclick: () => { screen = "email"; msg = { err: "", ok: "" }; render(); } }, "‹ Back"), logo(), h("h1", {}, "Check your email"),
+    h("p", { class: "sub" }, `Enter the 6-digit code we sent to ${ctx.email}.`), code,
+    h("div", { class: "stack", style: "margin-top:14px" }, btn("Verify", "primary", verify, { spin: "verifyCode" })), ...status(),
+    resendRow(() => run(ctx.kind === "signup" ? "resendConfirm" : "sendCode", { email: ctx.email, create: false })));
+}
+
+function forgotScreen(app) {
+  const email = field("Email", { type: "email", value: ctx.email, autocomplete: "email" });
+  const go = () => { ctx.email = $("input[type=email]").value; run("forgot", { email: ctx.email }); };
+  app.append(h("button", { class: "link back", type: "button", onclick: () => { screen = "email"; msg = { err: "", ok: "" }; render(); } }, "‹ Back"), logo(), h("h1", {}, "Reset your password"),
+    h("p", { class: "sub" }, "We will email you a 6-digit code."), h("div", { class: "stack" }, email, btn("Send code", "primary", go, { spin: "forgot" })), ...status());
+}
+
+function resetScreen(app) {
+  const code = h("input", { class: "t code", inputmode: "numeric", maxlength: "10", autocomplete: "one-time-code", "aria-label": "6-digit code", placeholder: "••••••", oninput: (e) => { e.target.value = e.target.value.replace(/\D/g, ""); } });
+  const pw = passwordField("New password (8+ characters)", "pw-new");
+  app.append(h("button", { class: "link back", type: "button", onclick: () => { screen = "forgot"; msg = { err: "", ok: "" }; render(); } }, "‹ Back"), logo(), h("h1", {}, "Choose a new password"),
+    h("p", { class: "sub" }, `Enter the code sent to ${ctx.email}.`), code,
+    h("div", { class: "stack", style: "margin-top:12px" }, pw, btn("Set password and sign in", "primary", () => run("reset", { email: ctx.email, code: code.value, password: $("#pw-new").value }), { spin: "reset" })),
+    ...status(), resendRow(() => run("forgot", { email: ctx.email })));
+}
+
+function ago(iso) { const t = Date.parse(iso); if (!t) return ""; const m = Math.round((Date.now() - t) / 60000); return m < 2 ? "just now" : m < 90 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; }
+const PLAT = { windows: "Windows", macos: "macOS", other: "Other" };
+
+function accountScreen(app) {
+  const u = view.user || {}; const name = u.name || (u.email || "?").split("@")[0];
+  const nameInput = h("input", { class: "t", value: name, maxlength: "80", "aria-label": "Display name", style: "height:30px" });
+  const active = (view.devices || []).filter((d) => !d.revoked);
+  app.append(
+    view.offline ? h("div", { class: "banner", role: "status" }, "You are offline. WaitPlay keeps working; account details refresh when you are back online.") : null,
+    h("div", { class: "avatar", "aria-hidden": "true" }, (name[0] || "?").toUpperCase()), h("h1", {}, name), h("p", { class: "sub", style: "margin-bottom:16px" }, u.email || ""),
+    h("div", { class: "card" },
+      h("div", { class: "it" }, "Plan", h("span", { class: "badge" + (view.plan === "pro" ? " good" : "") }, view.plan === "pro" ? "Pro" : "Free")),
+      h("div", { class: "it" }, "Account status", h("span", { class: "badge " + (view.accountStatus === "active" ? "good" : "warn") }, view.accountStatus === "active" ? "Active" : "Suspended")),
+      h("div", { class: "it" }, "Email", h("span", { class: "badge " + (u.verified ? "good" : "warn") }, u.verified ? "Verified" : "Not verified")),
+      h("div", { class: "it" }, "Signed in with", h("span", { class: "muted" }, u.provider === "google" ? "Google" : "Email"))),
+    h("div", { class: "gt" }, "Display name"),
+    h("div", { class: "row" }, h("div", { style: "flex:1" }, nameInput), btn("Save", "small", () => run("setName", { name: nameInput.value }), { spin: "setName" })),
+    h("div", { class: "gt" }, `Connected devices (${active.length} of ${view.deviceLimit || 2})`),
+    view.deviceLimitReached ? h("div", { class: "banner" }, "This device is not registered: your plan's device limit is used up. Remove a device below.") : null,
+    h("div", { class: "card" }, (view.devices || []).length ? view.devices.map((d) => h("div", { class: "it" },
+      h("div", { class: "dev" }, h("b", {}, d.name || "Unnamed device", d.current ? " · This device" : ""), h("span", { class: "muted" }, `${PLAT[d.platform] || ""}${d.lastSeen ? " · " + ago(d.lastSeen) : ""}${d.revoked ? " · removed" : ""}`)),
+      d.revoked || d.current ? null : btn("Remove", "small", () => run("revokeDevice", { id: d.id }), { spin: "revokeDevice" }))) : h("div", { class: "it muted" }, "No devices yet.")),
+    ...status(),
+    h("div", { class: "stack", style: "margin-top:20px" },
+      btn("Sign out", "", () => run("signOut"), { spin: "signOut" }),
+      btn("Sign out of other devices", "", () => run("signOutOthers"), { spin: "signOutOthers" }),
+      btn("Delete account…", "danger", () => confirmDelete(u.email || ""))),
+    h("div", { class: "fine" }, view.syncedAt ? "Last synced " + new Date(view.syncedAt * 1000).toLocaleString() : "Not synced yet"));
+}
+
+function confirmDelete(email) {
+  const input = h("input", { class: "t", placeholder: email, "aria-label": "Type your email to confirm", autocomplete: "off", spellcheck: "false" });
+  const go = h("button", { class: "btn danger", type: "button", disabled: true, onclick: () => { closeSheet(); run("deleteAccount"); } }, "Delete my account");
+  input.addEventListener("input", () => { go.disabled = input.value.trim().toLowerCase() !== email.toLowerCase(); });
+  openSheet(h("h3", {}, "Delete your account?"), h("p", { class: "muted", style: "margin:0 0 12px" }, "This permanently deletes your WaitPlay account, profile, devices and synced preferences. It cannot be undone. Your local WaitPlay settings on this computer are not touched."),
+    h("label", { class: "f" }, "Type your email to confirm"), input, h("div", { class: "stack", style: "margin-top:12px" }, go, h("button", { class: "btn", type: "button", onclick: closeSheet }, "Cancel")));
+  input.focus();
+}
+function openSheet(...kids) { const b = $("#box"); b.replaceChildren(...kids); $("#sheet").classList.add("on"); }
+function closeSheet() { $("#sheet").classList.remove("on"); }
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSheet(); });
+
+render();
+send({ t: "ready" });
+</script>
+</body>
+</html>

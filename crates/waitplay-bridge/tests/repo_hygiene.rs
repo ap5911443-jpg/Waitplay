@@ -236,3 +236,59 @@ fn only_the_smoke_test_build_enables_test_hooks() {
     let uploaded = mac.find("name: binaries-").unwrap();
     assert!(hooks > uploaded, "the test-hooks build must come after the shipped binaries were uploaded for signing");
 }
+
+// ── account sign-in (Supabase): no privileged key anywhere, honest privacy copy ───────────────────────────────────────────────────
+
+#[test]
+fn no_privileged_supabase_key_or_jwt_is_committed() {
+    fn walk(dir: &Path, hits: &mut Vec<String>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if path.is_dir() {
+                if !matches!(name.as_str(), "target" | "node_modules" | ".git" | "dist" | "wp_verify") {
+                    walk(&path, hits);
+                }
+            } else if path.extension().is_some_and(|e| matches!(e.to_str(), Some("rs" | "ts" | "tsx" | "js" | "html" | "md" | "toml" | "yml" | "yaml" | "sql" | "json" | "sh" | "ps1" | "env"))) {
+                let text = fs::read_to_string(&path).unwrap_or_default();
+                let secret_key = text.match_indices("sb_secret_").any(|(i, _)| text[i + 10..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').count() >= 10);
+                let jwt = text.match_indices("eyJ").any(|(i, _)| {
+                    let rest = &text[i..];
+                    let parts: Vec<usize> = rest.split('.').take(3).map(|p| p.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').count()).collect();
+                    parts.len() == 3 && parts.iter().all(|n| *n >= 20)
+                });
+                if secret_key || jwt {
+                    hits.push(path.display().to_string());
+                }
+            }
+        }
+    }
+    let mut hits = Vec::new();
+    walk(&root(), &mut hits);
+    assert!(hits.is_empty(), "a Supabase secret key or JWT-like token is committed in: {hits:?}");
+}
+
+#[test]
+fn the_app_only_ever_gets_the_public_key_and_the_config_refuses_secret_keys() {
+    let cfg = fs::read_to_string(root().join("crates/waitplay-auth/src/config.rs")).unwrap();
+    assert!(cfg.contains("sb_publishable_") && cfg.contains("service_role") && cfg.contains("sb_secret_"), "config.rs must hold the publishable key and refuse privileged keys");
+    for (name, text) in workflows() {
+        assert!(!text.contains("SERVICE_ROLE") && !text.contains("service_role"), "{name}: the service-role key must never be part of a build or test workflow");
+    }
+}
+
+#[test]
+fn account_claims_stay_honest() {
+    let policy = fs::read_to_string(root().join("docs/PRIVACY.md")).unwrap();
+    assert!(policy.contains("Supabase") && policy.contains("Delete account") && policy.contains("Credential Manager"), "the privacy policy must describe the optional account");
+    for (file, claims) in [
+        ("src/components/sections/PrivacySection.tsx", ["has no account", "no account, no analytics"]),
+        ("src/data/faqs.ts", ["has no account", "no account, no analytics"]),
+        ("docs/PRIVACY.md", ["has no account", "no server of its own"]),
+    ] {
+        let text = fs::read_to_string(root().join(file)).unwrap();
+        for c in claims {
+            assert!(!text.contains(c), "{file} still claims \"{c}\" although an optional account exists");
+        }
+    }
+}

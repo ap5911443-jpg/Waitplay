@@ -26,7 +26,7 @@ export const FinalCTA: React.FC = () => {
         </EditorialHeading>
 
         <p className="font-sans text-[17px] sm:text-[20px] text-[#666666] max-w-[620px] mx-auto leading-[1.6] mb-8 font-normal">
-          Join developers around the world reclaiming deep focus. Download WaitPlay free for Windows, macOS, and Linux — 100% local, zero account required.
+          Join developers around the world reclaiming deep focus. Download WaitPlay free for Windows, macOS, and Linux — 100% local, no account required.
         </p>
 
         {/* CTA buttons */}
@@ -72,7 +72,7 @@ export const FinalCTA: React.FC = () => {
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-[#034F46]" />
-            No Account, No Analytics
+            Account Optional, No Analytics
           </span>
         </div>
       </div>

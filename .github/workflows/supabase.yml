@@ -1,0 +1,47 @@
+name: Supabase
+
+on:
+  push:
+    branches: [main]
+    paths: ["supabase/**", ".github/workflows/supabase.yml"]
+  pull_request:
+    paths: ["supabase/**", ".github/workflows/supabase.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  database:
+    name: migrations and row level security tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: supabase/setup-cli@afb1b15109756ea5cf9d8985a359d9095235ca2b # v2.1.2
+        with:
+          version: latest
+
+      # a local Supabase stack in Docker (throw-away data, no project credentials): applies supabase/migrations on start
+      - name: Start local Supabase
+        run: supabase start
+
+      - name: pgTAP (row level security)
+        run: supabase test db
+
+  functions:
+    name: delete-account function
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+
+      - name: deno test
+        run: deno test supabase/functions/delete-account

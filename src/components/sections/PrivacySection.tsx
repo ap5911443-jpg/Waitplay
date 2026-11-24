@@ -45,7 +45,7 @@ export const PrivacySection: React.FC = () => {
           </EditorialHeading>
 
           <p className="font-sans text-[17px] sm:text-[19px] text-[#FFFFEB]/85 leading-[1.6]">
-            Developer tools should never compromise on privacy. WaitPlay has no account, no analytics and no server of its own: everything it knows about your agents stays on your machine. The only outgoing connections are the entertainment site you choose to open and, if you set it up, SMS through Twilio.
+            Developer tools should never compromise on privacy. WaitPlay has no analytics and works fully without an account: everything it knows about your agents stays on your machine. The only outgoing connections are the entertainment site you choose to open, SMS through Twilio if you set it up, and, only if you choose to create an optional account, sign-in with Supabase.
           </p>
         </div>
 

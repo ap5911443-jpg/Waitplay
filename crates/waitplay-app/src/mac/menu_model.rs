@@ -70,6 +70,7 @@ pub fn build(status: Status, title: &str, enabled: bool, view: &SessionsView, de
     m.push(Entry::Submenu { text: format!("Entertainment: {}", site_label(&settings.preferred_platform)), items: sub });
     m.push(check("widget", "Show Floating Widget", settings.show_widget));
     m.push(Entry::Separator);
+    m.push(item("account", "Account\u{2026}"));
     m.push(item("settings", "Settings\u{2026}"));
     m.push(Entry::Separator);
     m.push(item("quit", "Quit WaitPlay"));
@@ -102,7 +103,7 @@ mod tests {
         };
         assert_eq!(text(&on).as_deref(), Some("Disable Automation"));
         assert_eq!(text(&off).as_deref(), Some("Enable Automation"));
-        assert_eq!(ids(&on), ["toggle", "widget", "settings", "quit"]);
+        assert_eq!(ids(&on), ["toggle", "widget", "account", "settings", "quit"]);
     }
 
     #[test]

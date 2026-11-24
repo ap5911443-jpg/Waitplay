@@ -8,6 +8,7 @@
 use super::menu_model::{self, Entry};
 use super::status::{self, SessionsView, Status};
 use super::{icons, integrations, login_item, permissions};
+use crate::account_ui::{AccountUi, Notify};
 use crate::placement::{self, Screen};
 use crate::{platform, wp_error, wp_info, wp_warn};
 use serde_json::{json, Value};
@@ -48,6 +49,7 @@ const BRIDGE_GRACE: u32 = 3;
 enum Target {
     Widget,
     Settings,
+    Account,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -256,6 +258,7 @@ struct App {
     supervisor: Supervisor,
     widget: Option<WidgetWin>,
     settings_win: Option<SettingsWin>,
+    account: AccountUi,
     tray: Option<TrayIcon>,
     menu: Option<Menu>,
     last_menu: Vec<Entry>,
@@ -283,6 +286,7 @@ impl App {
             supervisor: Supervisor::new(),
             widget: None,
             settings_win: None,
+            account: AccountUi::new(waitplay_core::paths::app_support_dir()),
             tray: None,
             menu: None,
             last_menu: Vec::new(),
@@ -414,6 +418,7 @@ impl App {
 
     fn on_tick(&mut self, target: &EventLoopWindowTarget<Ev>) {
         self.ticks += 1;
+        self.account.on_tick(&self.account_notify());
         // a second launch of the app (run from a shell) asks this one to show its settings
         if open_request_pending() {
             self.open_settings(target);
@@ -789,6 +794,39 @@ impl App {
         }
     }
 
+
+    fn account_notify(&self) -> Notify {
+        let proxy = Mutex::new(self.proxy.clone());
+        Arc::new(move |body: String| {
+            if let Ok(p) = proxy.lock() {
+                let _ = p.send_event(Ev::Ipc(Target::Account, body));
+            }
+        })
+    }
+
+    fn on_account_ipc(&mut self, body: &str) {
+        let notify = self.account_notify();
+        self.account.on_message(body, &notify);
+    }
+
+    fn open_account(&mut self, target: &EventLoopWindowTarget<Ev>) {
+        if !self.account.available() {
+            wp_warn!("account window requested but this build has no account service configured");
+            return;
+        }
+        let notify = self.account_notify();
+        let theme = theme_for(self.settings.appearance);
+        let was_open = self.account.is_open();
+        match self.account.open(target, None, notify, theme, |b| b.with_accept_first_mouse(true)) {
+            Ok(()) => {
+                if !was_open {
+                    wp_info!("account window opened");
+                }
+            }
+            Err(e) => wp_error!("account window: {}", e),
+        }
+    }
+
     fn create_settings(&mut self, target: &EventLoopWindowTarget<Ev>) -> Result<SettingsWin, String> {
         let window = WindowBuilder::new()
             .with_title("WaitPlay")
@@ -980,6 +1018,7 @@ impl App {
                 self.push_settings();
             }
             "openEntertainment" => self.open_entertainment(),
+            "openAccount" => self.open_account(target),
             "drag" => {
                 if let Some(w) = self.settings_win.as_ref() {
                     let _ = w.window.drag_window();
@@ -1053,6 +1092,7 @@ impl App {
         match id {
             "toggle" => self.toggle_automation(),
             "settings" => self.open_settings(target),
+            "account" => self.open_account(target),
             "quit" => self.quitting = true,
             "widget" => {
                 let show = !self.settings.show_widget;
@@ -1083,9 +1123,13 @@ impl App {
         wp_info!("quitting");
         signals::write_quit_signal();
         self.supervisor.shutdown();
+        self.account.close();
     }
 
     fn handle_window_event(&mut self, wid: WindowId, event: &WindowEvent) {
+        if self.account.on_window_event(wid, event) {
+            return;
+        }
         if let WindowEvent::CloseRequested = event {
             if self.settings_win.as_ref().map_or(false, |w| w.window.id() == wid) {
                 // closing frees the page; the next "Settings…" builds a fresh one
@@ -1202,6 +1246,7 @@ pub fn run() -> Result<(), String> {
             Event::UserEvent(Ev::Sessions(body)) => app.on_sessions(body),
             Event::UserEvent(Ev::Ipc(Target::Settings, body)) => app.on_settings_ipc(&body, target),
             Event::UserEvent(Ev::Ipc(Target::Widget, body)) => app.on_widget_ipc(&body, target),
+            Event::UserEvent(Ev::Ipc(Target::Account, body)) => app.on_account_ipc(&body),
             Event::UserEvent(Ev::Menu(id)) => app.on_menu(&id, target),
             Event::UserEvent(Ev::Hotkey(id)) => app.on_hotkey(id, target),
             Event::Reopen { .. } => app.open_settings(target),

@@ -1,0 +1,24 @@
+# Local development / CI configuration for `supabase start` and `supabase test db`. The production project is configured in the
+# dashboard (see docs/AUTH_SETUP.md); nothing here contains a secret.
+project_id = "waitplay"
+
+[api]
+enabled = true
+
+[db]
+major_version = 17
+
+[functions.delete-account]
+verify_jwt = true
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = ["http://127.0.0.1:*/auth/callback/*"]
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = true
+otp_length = 6

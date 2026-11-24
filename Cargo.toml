@@ -5,6 +5,7 @@ members = [
     "crates/waitplay-bridge",
     "crates/waitplay-hooks",
     "crates/waitplay-app",
+    "crates/waitplay-auth",
 ]
 
 [workspace.package]

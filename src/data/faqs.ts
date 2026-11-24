@@ -11,7 +11,7 @@ export const FAQS: FAQItem[] = [
     id: "security",
     question: "Does WaitPlay capture or upload my code, prompts, or API keys?",
     answer:
-      "WaitPlay has no account, no analytics and no server of its own. The local bridge listens exclusively on 127.0.0.1 (loopback) and every request needs an auto-generated cryptographic token. Your source code, diffs, file contents and API keys are never read. To show status in your own widget, agent hooks send the bridge the state (idle, working, finished), the model and tool names and the first 100 characters of your prompt or of the agent's question; this stays in the bridge's memory on your computer and is never sent anywhere. Outgoing connections are limited to the entertainment site you choose to open (Instagram, X or YouTube) and, only if you configure it, SMS through Twilio.",
+      "WaitPlay has no analytics and works fully without an account. The local bridge listens exclusively on 127.0.0.1 (loopback) and every request needs an auto-generated cryptographic token. Your source code, diffs, file contents and API keys are never read. To show status in your own widget, agent hooks send the bridge the state (idle, working, finished), the model and tool names and the first 100 characters of your prompt or of the agent's question; this stays in the bridge's memory on your computer and is never sent anywhere. Outgoing connections are limited to the entertainment site you choose to open (Instagram, X or YouTube), SMS through Twilio if you configure it, and, only if you choose to create an optional account, sign-in with Supabase, which receives your email and device name but never your prompts or activity.",
   },
   {
     id: "supported-agents",

@@ -317,6 +317,8 @@ function paneGeneral() {
       switchRow("Start automation automatically", "Turn automation on whenever WaitPlay starts.", "autoStartAutomation"),
       switchRow("Show floating widget", null, "showWidget"),
       switchRow("Show Dock icon", "WaitPlay normally lives in the menu bar.", "showDockIcon")),
+    group(h("div", { class: "row" }, h("div", { class: "grow" }, h("div", { class: "rtitle" }, "Account"), h("div", { class: "rdesc" }, "Sign in to sync your settings and devices. WaitPlay works fully without an account.")),
+      h("button", { class: "btn", type: "button", onclick: () => send({ t: "openAccount" }) }, "Account…"))),
     group(h("div", { class: "row" }, h("div", { class: "grow rtitle" }, "Appearance"), appearance.el)));
 }
 

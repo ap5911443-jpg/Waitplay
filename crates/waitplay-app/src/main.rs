@@ -3,6 +3,8 @@
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+#[cfg(any(target_os = "macos", windows))]
+mod account_ui;
 mod cli;
 mod companion;
 mod logging;
