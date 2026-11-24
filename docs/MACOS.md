@@ -40,6 +40,13 @@ Pages: `assets/settings.html` and `assets/mac_widget.html` are self-contained HT
 reduced-motion aware) that talk to Rust over wry IPC. They are plain HTML like the existing `header.html`/`widget.html`, not a
 React build: the repo's React app (`apps/web`) is the bridge's web dashboard, not part of the desktop shell.
 
+**Liquid Glass bar** (`mac_widget.html` + `platform::Glass`): the glass is a native `NSVisualEffectView` (real behind-window blur,
+follows light/dark, Reduce Transparency, Increase Contrast) under the transparent page and shaped to the page's pill; the page
+reports the pill rectangle on every animation frame, so the glass grows with the capsule into the expanded panel. The page adds the
+edge light, inner highlight and contents. It uses the vibrancy material available on every supported macOS, not the macOS 26
+`NSGlassEffectView`. To preview the look without a Mac, open `crates/waitplay-app/assets/mac_widget.html` in a browser (demo mode
+fakes the blur). `WAITPLAY_TEST_EXPAND_WIDGET=1` makes the app expand the widget after start (used by the CI screenshots).
+
 ## Permissions
 
 None are requested. The frontmost application comes from `NSWorkspace` (no Accessibility), no screen is captured (no Screen
