@@ -1640,7 +1640,6 @@ pub fn run() -> Result<(), String> {
     if settings.watchers.is_empty() && !Settings::path().exists() {
         settings.watchers = integrations::default_watchers();
         settings.appearance = Appearance::Light; // the cream Wispr-Flow look; "System" would turn it dark on a dark Mac
-        settings.launch_at_login = true; // in the background from the first start; Settings > General can switch it off
         let _ = settings.save();
     }
 
