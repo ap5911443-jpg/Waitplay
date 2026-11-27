@@ -321,6 +321,26 @@ pub fn set_window_level(ns_window: *mut std::ffi::c_void, level: isize) {
     }
 }
 
+/// Before macOS 14 WebKit has no per-account data stores (wry then uses the default one), so every account shares the site logins.
+pub fn shared_site_logins() -> bool {
+    logins_are_shared_on(objc2_foundation::NSProcessInfo::processInfo().operatingSystemVersion().majorVersion)
+}
+
+fn logins_are_shared_on(major: isize) -> bool {
+    major < 14
+}
+
+#[cfg(test)]
+mod login_store_tests {
+    #[test]
+    fn only_macos_14_and_later_separate_the_site_logins() {
+        assert!(super::logins_are_shared_on(11));
+        assert!(super::logins_are_shared_on(13));
+        assert!(!super::logins_are_shared_on(14));
+        assert!(!super::logins_are_shared_on(27));
+    }
+}
+
 pub mod memory {
     pub fn park(_browser_pid: u32) {}
     pub fn wake(_browser_pid: u32) {}

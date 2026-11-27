@@ -898,7 +898,9 @@ function paneAccount() {
     if (s === sig) return;
     sig = s; box.replaceChildren(...buildAccount(a));
   });
-  return box;
+  const note = h("div", { class: "sub" }, SHARED_LOGINS_NOTE + ". macOS 14 or later keeps them separate for each account.");
+  reg(() => { note.hidden = !sharedLogins(); });
+  return h("div", { class: "stack" }, box, note);
 }
 
 /* ---------- plans and billing ---------- */
@@ -944,6 +946,10 @@ const onbSites = {};
 const onbEl = h("div", { id: "onb", role: "dialog", "aria-modal": "true", "aria-label": "Set up Vibe Play" });
 document.body.append(onbEl);
 
+/* macOS 13 and earlier have one web data store: never say the site logins belong to the account there */
+const SHARED_LOGINS_NOTE = "On this version of macOS, sites stay signed in for everyone who uses Vibe Play on this Mac";
+const sharedLogins = () => !!(S && S.runtime && S.runtime.sharedSiteLogins);
+
 /* Vibe Play needs an account: until someone is signed in, this is all the window shows (unless the setup guide is on screen) */
 function acctRequired() { const a = acct(); return a.configured !== false && a.state !== "signedIn"; }
 const gateEl = h("div", { id: "gate", role: "dialog", "aria-modal": "true", "aria-label": "Sign in to Vibe Play" });
@@ -955,7 +961,7 @@ function gateRender() {
   if (!on) { gateEl.replaceChildren(); return; }
   gateEl.replaceChildren(h("div", { class: "ob" }, appLogo(), h("h1", {}, "Sign in to Vibe Play"),
     h("div", { class: "sub" }, "Your account keeps everything together, so it is all still there when you sign back in."),
-    h("ul", { class: "steps" }, ["Your preferences follow you to any PC", "Your plan and subscription belong to your account", "Your Instagram, YouTube and X logins are kept for your account on this " + THIS_PC + ""].map((t, i) => h("li", {}, h("b", {}, String(i + 1)), t))),
+    h("ul", { class: "steps" }, ["Your preferences follow you to any " + (IS_MAC ? "computer" : "PC"), "Your plan and subscription belong to your account", sharedLogins() ? SHARED_LOGINS_NOTE : "Your Instagram, YouTube and X logins are kept for your account on this " + THIS_PC].map((t, i) => h("li", {}, h("b", {}, String(i + 1)), t))),
     h("div", { style: "text-align:center" }, h("button", { class: "btn primary big", type: "button", onclick: () => send({ t: "openAccount" }) }, "Sign in or create account")),
     h("div", { style: "text-align:center" }, h("button", { class: "link", type: "button", onclick: () => send({ t: "quit" }) }, "Quit Vibe Play"))));
 }
@@ -1023,7 +1029,7 @@ function onbBody(step) {
         h("div", { class: "grow" }, h("div", { class: "rtitle" }, u.name || u.email || ""), h("div", { class: "rdesc" }, u.email || "")),
         h("button", { class: "btn", type: "button", onclick: () => send({ t: "signOut" }) }, "Sign out")))];
     }
-    return [...heading("Sign in to Vibe Play", "Your account keeps your preferences and plan, and your Instagram, YouTube and X logins stay with it on this " + THIS_PC + ". You need an account to use Vibe Play."),
+    return [...heading("Sign in to Vibe Play", "Your account keeps your preferences and plan" + (sharedLogins() ? ". " + SHARED_LOGINS_NOTE + "." : ", and your Instagram, YouTube and X logins stay with it on this " + THIS_PC + ".") + " You need an account to use Vibe Play."),
       h("div", { style: "text-align:center" }, h("button", { class: "btn primary big", type: "button", onclick: () => send({ t: "openAccount" }) }, "Sign in or create account")),
       h("div", { class: "note", style: "text-align:center" }, "A sign-in window opens. This page moves on by itself when you are signed in.")];
   }
@@ -1050,7 +1056,7 @@ function onbBody(step) {
         signed ? null : h("button", { class: "btn primary", type: "button", onclick: () => { onbSites[k] = "opened"; send({ t: "openSite", key: k }); onbSig = ""; onbRender(); } }, "Sign in"),
         !signed && !lg && opened ? h("button", { class: "btn", type: "button", onclick: () => { onbSites[k] = "done"; onbSig = ""; onbRender(); } }, "I\u2019m signed in") : null);
     });
-    return [...heading("Sign in to your entertainment sites", "Vibe Play opens these in its own browser window. Your logins stay on this PC."),
+    return [...heading("Sign in to your entertainment sites", "Vibe Play opens these in its own browser window. Your logins stay on this " + THIS_PC + "."),
       rows.length ? group(rows) : group(h("div", { class: "row" }, h("div", { class: "rdesc" }, "No site is switched on. Go back and turn on at least one."))),
       h("div", { class: "note", style: "text-align:center" }, "You can skip this and sign in later from the notch.")];
   }

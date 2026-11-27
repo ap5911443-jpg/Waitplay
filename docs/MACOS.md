@@ -60,6 +60,11 @@ Windows-only "typing or scrolling in the terminal steps the window aside" and pe
 | Launch at login, Dock icon, widget on/off and position, appearance (menu-bar app windows), shortcuts | immediately |
 | Preferred platform, enabled platforms (header tabs), Hide/Close on finish, appearance of the entertainment window | next time the entertainment window starts |
 
+## Site logins before macOS 14
+
+The app still runs on macOS 11 and later, but per-account web data stores need macOS 14. On macOS 13 and earlier **every account on
+the Mac shares one set of Instagram / YouTube / X logins**; the sign-in screens and *Settings > Account* say so.
+
 ## Upgrading from `WaitPlay.app`
 
 The app bundle is now `VibePlay.app`. The bundle id (`com.waitplay.app`) and the `WaitPlay` data folders are unchanged, so settings,

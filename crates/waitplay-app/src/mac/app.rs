@@ -828,6 +828,7 @@ impl App {
                 "agents": agents,
                 "logins": self.login_state,
                 "permissions": permissions::list(self.settings.launch_at_login),
+                "sharedSiteLogins": platform::shared_site_logins(),
                 "shortcutErrors": { "toggleAutomation": self.shortcut_errors[0], "toggleWidget": self.shortcut_errors[1] },
                 "version": VERSION,
                 "build": BUILD,
