@@ -128,10 +128,11 @@ jobs:
           if [ -f smoke-run.log ]; then
             msg="$(sed -e 's/%/%25/g' -e 's/\r//g' smoke-run.log | awk '{printf "%s%%0A", $0}')"
             if grep -q "SMOKE TEST PASSED" smoke-run.log; then echo "::notice title=runtime smoke test::${msg}"; else echo "::error title=runtime smoke test::${msg}"; fi
-            if [ -f smoke-out/waitplay.log ]; then
-              msg="$(tail -60 smoke-out/waitplay.log | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{printf "%s%%0A", $0}')"
-              echo "::notice title=app log (tail)::${msg}"
-            fi
+            for f in smoke-out/diag.txt smoke-out/waitplay-1.log smoke-out/waitplay-2.log; do
+              [ -f "$f" ] || continue
+              msg="$(tail -60 "$f" | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{printf "%s%%0A", $0}')"
+              echo "::notice title=${f##*/}::${msg}"
+            done
           fi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -309,6 +310,10 @@ jobs:
           if [ -f smoke-run.log ]; then
             msg="$(sed -e 's/%/%25/g' -e 's/\r//g' smoke-run.log | awk '{printf "%s%%0A", $0}')"
             if grep -q "SMOKE TEST PASSED" smoke-run.log; then echo "::notice title=arm64 runtime smoke test::${msg}"; else echo "::error title=arm64 runtime smoke test::${msg}"; fi
+          fi
+          if [ -f smoke-out/diag.txt ]; then
+            msg="$(tail -60 smoke-out/diag.txt | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{printf "%s%%0A", $0}')"
+            echo "::notice title=arm64 diag.txt::${msg}"
           fi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

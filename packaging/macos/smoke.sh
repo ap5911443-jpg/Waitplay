@@ -20,6 +20,7 @@ APP="${1:?usage: smoke.sh path/to/VibePlay.app [output-dir]}"
 OUT="${2:-smoke-out}"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
+rm -f "$OUT/diag.txt"
 BIN="$APP/Contents/MacOS"
 fail=0
 
@@ -73,6 +74,22 @@ quit_all() {
   pkill -f "waitplay-bridge" 2>/dev/null
   pkill -f "waitplay-hook" 2>/dev/null
   sleep 1
+}
+# What the app knew when a check failed, written to $OUT/diag.txt (CI shows it as its own annotation). Never prints the token.
+diag() {
+  {
+    echo "== diagnostics: $1"
+    echo "-- window state: $(tr -d '\n ' <"$STATE" 2>/dev/null || echo missing)"
+    echo "-- signal files (a close or launch file still here was never read):"
+    ls -A "$SIG" 2>/dev/null | grep -v -e token -e '\.lock$' | sed 's/^/   /'
+    echo "-- bridge sessions:"
+    curl -s -m 3 -H "x-bridge-token: $(cat "$SIG/.bridge-token" 2>/dev/null)" http://127.0.0.1:3150/sessions
+    echo
+    echo "-- app and window log (last 20 lines):"
+    grep -E 'companion| WARN | ERROR ' "$LOG" 2>/dev/null | tail -20 | cut -c1-220
+    echo "-- processes:"
+    ps -axo pid=,command= | grep -E '^ *[0-9]+ [^ ]*(MacOS|testhooks)/waitplay' | sed 's/.*\/waitplay/waitplay/' | cut -c1-160
+  } 2>&1 | tee -a "$OUT/diag.txt"
 }
 total_rss_mb() { ps -axo rss,command | grep -E "waitplay|com.apple.WebKit" | grep -v grep | awk '{s+=$1} END {printf "%.0f", s/1024}'; }
 
@@ -144,7 +161,12 @@ shot 04-one-session-left
 # second finishes: now it hides
 kill "$KA_B" 2>/dev/null
 hook stop "$(stop_json bbbbbbbb-2222)"
-wait_for "window hides when the last session finished" 30 state_visible false
+if ! wait_for "window hides when the last session finished" 30 state_visible false; then
+  diag "30 s after the last stop"
+  # slow, or stuck? this only reports: the check above already failed
+  for i in $(seq 1 60); do state_visible false && break; sleep 1; done
+  if state_visible false; then echo "note: the window did hide, about $((30 + i)) s or more after the last stop" | tee -a "$OUT/diag.txt"; else diag "90 s after the last stop, still visible"; fi
+fi
 sleep 1
 shot 05-after-finish
 curl -s -H "x-bridge-token: $(cat "$SIG/.bridge-token")" http://127.0.0.1:3150/sessions >"$OUT/sessions-3.json" || true

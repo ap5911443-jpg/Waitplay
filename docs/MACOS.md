@@ -205,8 +205,12 @@ screen. **Pass** = checked as written. **Partial** = only what the note says was
 | E4 | Partial | Centred at the top of a notched display. External / no-notch display not run |
 | E5, E6 | Pass (page) | States, pills and expansion; colours not reviewed |
 | E7 | Resolved in code | The native glass view stayed 1x1 point because the page never sent `shape`; it and the handler were removed. Not inspected by eye |
-| F | Pass | A real Claude Code prompt opened the window; `smoke.sh` (25/25) and `simulate` open and hide it |
+| F | Partial | A real Claude Code prompt opened the window; on this Mac `smoke.sh` passed 25/25 and `simulate` opened and hid the window. **On the GitHub runners the smoke test fails** (see below) |
 | G | Partial | Both DMGs verify and the ad-hoc signatures are valid. x86_64 not run; clean install, Gatekeeper, login start, upgrade not run |
 
-Not verified elsewhere: dragging with a real mouse, the older-than-14 note on a real older Mac, and compiling the Windows target
-after the shared-file changes.
+**CI, commit `d43e050`:** the macOS, Windows and dependency-audit workflows finished green, but on both macOS runners (x86_64,
+macOS 15.7.9; arm64, macOS 26.7.2) the smoke step, which may fail without failing the workflow, reported *FAIL: window hides when
+the last session finished*. Cause not yet known. It passes on this Mac, also when started detached from any terminal. On a failure
+`smoke.sh` now writes `diag.txt`.
+
+Not verified: dragging with a real mouse, and the older-than-14 note on a real older Mac.
