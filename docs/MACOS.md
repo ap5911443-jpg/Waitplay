@@ -173,3 +173,41 @@ The settings page (`assets/settings.html`) is now one page for both apps (macOS 
 - **The account keeps** the preferences (`user_preferences`, saved 3 s after every change, restored on sign-in), the plan (server `entitlements`) and the site logins *on this Mac*: each account has its own WebKit data store (`with_data_store_identifier`, macOS 14 and later; the first account to sign in keeps the original store, so nothing is lost; on macOS 13 and earlier every account shares one store). Site logins are never uploaded.
 - **Login detection:** the open entertainment window writes `vibeplay-logins.json` (cookie names only); with no window open, a hidden helper (`waitplay --logins`, `--logout=<site>`) does it. The tray app never opens a web view on the entertainment store itself.
 - **Not tested on a Mac yet:** this was written on Windows and type-checked for `aarch64-apple-darwin`; run it on a real Mac before releasing (sign-in, the guide, the per-account store, the hover peek).
+
+## Real-Mac run of the handoff test plan (macOS 27.2.1, Apple Silicon, notched display)
+
+Run from a terminal without Accessibility or Screen Recording permission, so nothing could be clicked, hovered or captured on
+screen. **Pass** = checked as written. **Partial** = only what the note says was checked. **Not run** = needs a person.
+"Page" means the real HTML was run in an off-screen WKWebView with sample data, not inside the app.
+
+| Row | Result | What was checked |
+|---|---|---|
+| A1 | Pass (after fix) | Isolated fresh start: guide window and widget appear; `--toggle`, `--open`, agent prompt are blocked. Widget title not seen |
+| A2 | Partial | Page: Next disabled while signed out. Opening the window from the guide not clicked |
+| A3 | Partial | Log of a real sign-in: account window opened, "account changed: signed in". Method, window closing, Keychain item not checked |
+| A4 | Not run | |
+| A5 | Partial | Page: name "Not set", Verified, Free, no inputs, duplicate device hidden |
+| A6, A7 | Not run | |
+| A8 | Partial | Signed-in relaunch: no guide or gate window logged. Offline and signed-out relaunch not run |
+| A9 | Not run | |
+| B1 | Pass (page) | All panes, light and dark: no script errors or sideways overflow, `color-mix()` pills tinted. A few screenshots were reviewed by eye |
+| B2 | Partial | Size is 92% of the screen. Traffic lights, drag, zoom not checked |
+| B3, B4 | Pass (page) | |
+| B5 | Partial | Claude Code hooks present and "claude-code connected" logged. Other agents' instructions not checked |
+| B6 | Pass | Real setup: marker, `launchAtLogin`, LaunchAgent, "login item installed". First-start default fixed |
+| B7 | Pass (page) | Buttons as specified |
+| B8 | Not run | |
+| C1-C4, C6, C8 | Not run | Need real site and account sign-ins. Store-id logic is unit tested only |
+| C5 | Partial | `--logout=x` exits and rewrites the file on an empty store; deleting a real cookie not checked |
+| C7 | Partial | Exits by itself and writes the file; never appeared as a running app. Reading a signed-in cookie not proven |
+| D1, D4 | Not run | |
+| D2 | Partial | Real log: "restoring 21 saved preferences" after sign-in |
+| D3 | Pass (unit test) | |
+| E1-E3 | Partial | Page logic passes. **Whether macOS delivers hover to the unfocusable widget window is not tested** |
+| E4 | Partial | Centred at the top of a notched display. External / no-notch display not run |
+| E5, E6 | Pass (page) | States, pills and expansion; colours not reviewed |
+| F | Pass | A real Claude Code prompt opened the window; `smoke.sh` (25/25) and `simulate` open and hide it |
+| G | Partial | Both DMGs verify and the ad-hoc signatures are valid. x86_64 not run; clean install, Gatekeeper, login start, upgrade not run |
+
+Not verified elsewhere: dragging with a real mouse, the older-than-14 note on a real older Mac, and compiling the Windows target
+after the shared-file changes.
