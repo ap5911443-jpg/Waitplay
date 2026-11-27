@@ -13,7 +13,7 @@ window.
 | Bridge | `waitplay-bridge` | loopback event hub (`127.0.0.1:3150`), session state machine |
 | Hooks / watchers | `waitplay-hook` | Claude Code hooks, OpenCode / Codex / OMP / Cline watchers, MCP server |
 
-All four are inside `WaitPlay.app/Contents/MacOS/`. The app is an agent app (`LSUIElement`): no Dock icon unless
+All four are inside `VibePlay.app/Contents/MacOS/`. The app is an agent app (`LSUIElement`): no Dock icon unless
 *Settings > General > Show Dock icon* is on.
 
 Event flow: agent -> `waitplay-hook` -> bridge `POST /events` and, on a prompt, `waitplay --session=<id> --parentPid=<pid>` ->
@@ -60,13 +60,19 @@ Windows-only "typing or scrolling in the terminal steps the window aside" and pe
 | Launch at login, Dock icon, widget on/off and position, appearance (menu-bar app windows), shortcuts | immediately |
 | Preferred platform, enabled platforms (header tabs), Hide/Close on finish, appearance of the entertainment window | next time the entertainment window starts |
 
+## Upgrading from `WaitPlay.app`
+
+The app bundle is now `VibePlay.app`. The bundle id (`com.waitplay.app`) and the `WaitPlay` data folders are unchanged, so settings,
+site logins and the account stay. Quit the old app, delete `WaitPlay.app`, install `VibePlay.app` and open it once (that rewrites
+the login item). Claude Code hooks hold the old path: choose *Install hooks* again under *Settings > AI Agents*.
+
 ## Build
 
 ```sh
 rustup target add aarch64-apple-darwin
 cargo build --release --workspace
 WAITPLAY_BUILD=$(git rev-parse --short HEAD) bash packaging/macos/build_app.sh aarch64-apple-darwin
-# -> dist/aarch64-apple-darwin/WaitPlay.app and WaitPlay-<version>-arm64.dmg
+# -> dist/aarch64-apple-darwin/VibePlay.app and VibePlay-<version>-arm64.dmg
 ```
 
 The script ad-hoc signs by default, so a local build never needs an Apple account. For distribution set
@@ -114,7 +120,7 @@ sync, logging format, per-conversation Claude sessions, watcher idle polling, co
 while the agent asks a question"), macOS process-tree and PID helpers.
 
 **Runtime smoke test on a real macOS session** (`packaging/macos/smoke.sh`, run by CI on macOS 15 / x86_64 against the packaged
-`WaitPlay.app`; screenshots and logs are uploaded as the `smoke-output` artifact of every run). It passed for:
+`VibePlay.app`; screenshots and logs are uploaded as the `smoke-output` artifact of every run). It passed for:
 
 - app starts, menu-bar item created, bridge started by the app, widget shown bottom-right, settings window opened by a second launch
 - idle app: ~0.02 s CPU per 10 s, ~44 MB resident

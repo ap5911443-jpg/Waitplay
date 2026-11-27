@@ -17,7 +17,7 @@
 
 ## What stays working without Apple
 
-`bash packaging/macos/build_app.sh <target>` with no `APPLE_*` variables builds an ad-hoc signed `WaitPlay.app` and DMG. CI does
+`bash packaging/macos/build_app.sh <target>` with no `APPLE_*` variables builds an ad-hoc signed `VibePlay.app` and DMG. CI does
 this on every push. Gatekeeper asks the user to confirm the first launch (right-click, Open).
 
 ## GitHub secrets and settings to create (names only; never commit values)
@@ -50,7 +50,7 @@ This is the switch that turns the `sign` job on; leave it unset until everything
 - `build_app.sh` calls `notarytool submit --keychain-profile`. There is no `--password`, `--apple-id` or app-specific password
   anywhere; `crates/waitplay-bridge/tests/repo_hygiene.rs` fails if one appears.
 - The `release` job (the only one with write access) publishes the signed DMGs with SHA-256 sums and a build-provenance
-  attestation: `gh attestation verify WaitPlay-<version>-arm64.dmg --repo ap5911443-jpg/waitplay-website`.
+  attestation: `gh attestation verify VibePlay-<version>-arm64.dmg --repo ap5911443-jpg/waitplay-website`.
 
 ## Signing on your own Mac (optional)
 
@@ -61,7 +61,7 @@ xcrun notarytool store-credentials "waitplay-notary"
 cargo build --release --workspace --target aarch64-apple-darwin
 APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" APPLE_NOTARY_PROFILE=waitplay-notary \
   bash packaging/macos/build_app.sh aarch64-apple-darwin
-bash packaging/macos/verify_release.sh dist/aarch64-apple-darwin/WaitPlay-*.dmg
+bash packaging/macos/verify_release.sh dist/aarch64-apple-darwin/VibePlay-*.dmg
 ```
 
 Use `WAITPLAY_NOTARIZE=0` to sign without notarizing while testing.

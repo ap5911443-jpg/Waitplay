@@ -4,8 +4,8 @@ Release files (the version comes from `version` in the workspace `Cargo.toml`; e
 
 | Platform | Files | Built by |
 |---|---|---|
-| macOS (Apple Silicon) | `WaitPlay-<version>-arm64.dmg` | `.github/workflows/macos.yml` |
-| macOS (Intel) | `WaitPlay-<version>-x86_64.dmg` | `.github/workflows/macos.yml` |
+| macOS (Apple Silicon) | `VibePlay-<version>-arm64.dmg` | `.github/workflows/macos.yml` |
+| macOS (Intel) | `VibePlay-<version>-x86_64.dmg` | `.github/workflows/macos.yml` |
 | Windows | `VibePlay-<version>-windows-x64-setup.exe` (installer), `VibePlay-<version>-windows-x64.zip` (portable) | `.github/workflows/windows.yml` |
 | Both | `SHA256SUMS-macos.txt`, `SHA256SUMS-windows.txt`, build-provenance attestations | the `release` jobs |
 
@@ -30,7 +30,7 @@ for t in aarch64-apple-darwin x86_64-apple-darwin; do
   cargo build --release --workspace --target $t
   WAITPLAY_BUILD=$(git rev-parse --short HEAD) bash packaging/macos/build_app.sh $t
 done
-# -> dist/<target>/WaitPlay-<version>-<arch>.dmg
+# -> dist/<target>/VibePlay-<version>-<arch>.dmg
 ```
 
 Windows (PowerShell, on Windows):

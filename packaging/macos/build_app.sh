@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds dist/<target>/WaitPlay.app and WaitPlay-<version>-<arch>.dmg from an already built `cargo build --release --target <t>`.
+# Builds dist/<target>/VibePlay.app and VibePlay-<version>-<arch>.dmg from an already built `cargo build --release --target <t>`.
 #
 #   bash packaging/macos/build_app.sh [target-triple]        (default aarch64-apple-darwin)
 #
@@ -19,8 +19,8 @@ BUILD="${WAITPLAY_BUILD:-$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || 
 case "$TARGET" in aarch64-*) ARCH=arm64 ;; x86_64-*) ARCH=x86_64 ;; *) ARCH="$TARGET" ;; esac
 BIN="${WAITPLAY_BIN_DIR:-$ROOT/target/$TARGET/release}"
 OUT="$ROOT/dist/$TARGET"
-APP="$OUT/WaitPlay.app"
-DMG="$OUT/WaitPlay-$VERSION-$ARCH.dmg"
+APP="$OUT/VibePlay.app"
+DMG="$OUT/VibePlay-$VERSION-$ARCH.dmg"
 
 for b in waitplay waitplay-bridge waitplay-hook; do
   [ -f "$BIN/$b" ] || { echo "missing $BIN/$b: run cargo build --release --workspace --target $TARGET first" >&2; exit 1; }

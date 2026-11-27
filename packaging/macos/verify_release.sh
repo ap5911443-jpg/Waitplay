@@ -2,7 +2,7 @@
 # Verifies a release DMG the way a user's Mac will: Developer ID signature, Hardened Runtime on every executable, a stapled
 # notarization ticket and a Gatekeeper "accepted" verdict. Fails (non-zero) on anything less.
 #
-#   bash packaging/macos/verify_release.sh path/to/WaitPlay-<version>-<arch>.dmg
+#   bash packaging/macos/verify_release.sh path/to/VibePlay-<version>-<arch>.dmg
 set -euo pipefail
 
 DMG="${1:?usage: verify_release.sh <dmg>}"
@@ -16,7 +16,7 @@ xcrun stapler validate "$DMG" || fail "no valid notarization ticket is stapled t
 spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG" || fail "Gatekeeper rejects the DMG"
 
 hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$DMG" >/dev/null
-APP="$MNT/WaitPlay.app"
+APP="$MNT/VibePlay.app"
 codesign --verify --deep --strict --verbose=2 "$APP" || fail "the app signature is invalid"
 spctl --assess --type execute --verbose=2 "$APP" || fail "Gatekeeper rejects the app"
 for f in "$APP" "$APP"/Contents/MacOS/*; do

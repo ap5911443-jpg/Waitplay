@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Runtime smoke test for a built WaitPlay.app on a real macOS session (CI, or any Mac).
+# Runtime smoke test for a built VibePlay.app on a real macOS session (CI, or any Mac).
 #
-#   bash packaging/macos/smoke.sh path/to/WaitPlay.app [output-dir]
+#   bash packaging/macos/smoke.sh path/to/VibePlay.app [output-dir]
 #
 # Scenario 1 (defaults): start, menu-bar item, bridge, widget, settings window, a Claude Code prompt through the real hook
 #   (entertainment window opens), a second concurrent session (same window, no second process), finishing them one by one (the
@@ -16,7 +16,7 @@
 # Logs and screenshots go to the output directory. Exit status 1 when any check failed; every check prints "ok:" or "FAIL:".
 set -u
 
-APP="${1:?usage: smoke.sh path/to/WaitPlay.app [output-dir]}"
+APP="${1:?usage: smoke.sh path/to/VibePlay.app [output-dir]}"
 OUT="${2:-smoke-out}"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"

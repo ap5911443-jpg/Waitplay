@@ -53,7 +53,7 @@ and, for Google sign-in, your browser talks to Google and Supabase.
 **macOS**
 1. In Vibe Play, open *Settings*, and under *Integrations* choose *Remove* for every agent (this takes only Vibe Play's hooks out of
    their configuration files and keeps everything else). Turn off *Launch at login*.
-2. Quit Vibe Play from the menu bar item, then drag `WaitPlay.app` from *Applications* to the Trash.
+2. Quit Vibe Play from the menu bar item, then drag `VibePlay.app` from *Applications* to the Trash.
 3. Delete the data you no longer want:
    ```sh
    rm -rf ~/Library/Application\ Support/WaitPlay ~/Library/Logs/WaitPlay \
