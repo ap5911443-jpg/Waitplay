@@ -15,6 +15,10 @@ pub struct Args {
     pub widget: bool,
     pub toggle: bool,
     pub force_open: bool,
+    /// `--logins`: check which sites are signed in, write the answer, exit (Windows helper process).
+    pub check_logins: bool,
+    /// `--logout=<site>`: sign the site out of the browser profile, write the answer, exit (Windows helper process).
+    pub logout: Option<String>,
     pub dock: Option<String>,
     pub site: Option<&'static sites::Site>,
     pub session: String,
@@ -27,7 +31,11 @@ pub struct Args {
 pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Args {
     let mut a = Args::default();
     for arg in args {
-        if arg == "--widget" || arg == "--flow" {
+        if arg == "--logins" {
+            a.check_logins = true;
+        } else if let Some(v) = arg.strip_prefix("--logout=") {
+            a.logout = Some(v.to_string());
+        } else if arg == "--widget" || arg == "--flow" {
             a.widget = true;
         } else if arg == "--toggle" {
             a.toggle = true;

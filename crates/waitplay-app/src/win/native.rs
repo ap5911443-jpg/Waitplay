@@ -11,7 +11,8 @@ use windows::Win32::Graphics::Dwm::{
     DwmEnableBlurBehindWindow, DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWMWCP_DONOTROUND, DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND,
 };
-use windows::Win32::Graphics::Gdi::{CreateRectRgn, CreateRoundRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ};
+use windows::Win32::Foundation::POINT;
+use windows::Win32::Graphics::Gdi::{CombineRgn, CreatePolygonRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject, SetWindowRgn, ALTERNATE, HGDIOBJ, RGN_OR};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -39,13 +40,16 @@ pub fn window_glass(hwnd: isize) {
     }
 }
 
+/// Left, top, right, bottom, corner diameter and the optional shoulder strip, all in device pixels.
+type ShapeKey = (i32, i32, i32, i32, i32, Option<(i32, i32, i32, i32)>);
+
 /// The window shape of the notch. The page draws an opaque black pill on a transparent window; this clips the window itself to
 /// that pill (a hair larger, so the page's antialiased edge is never cut) which is what makes everything around the pill
 /// click-through: a browser tab or a button under the empty corners of the widget window still gets the mouse. The page reports
 /// its live rectangle every frame while it grows or shrinks, so the clip follows the animation.
 pub struct NotchShape {
     hwnd: HWND,
-    last: Option<(i32, i32, i32, i32, i32)>,
+    last: Option<ShapeKey>,
 }
 
 impl NotchShape {
@@ -60,19 +64,38 @@ impl NotchShape {
         NotchShape { hwnd: h, last: None }
     }
 
-    /// `x`,`y`,`w`,`h`: the pill in CSS px relative to the page; `radius`: its corner radius; `scale`: device pixels per CSS px.
-    pub fn set_shape(&mut self, x: f64, y: f64, w: f64, h: f64, radius: f64, scale: f64) {
-        const GROW: f64 = 1.5; // CSS px
-        let (l, t) = (((x - GROW) * scale).floor() as i32, ((y - GROW) * scale).floor() as i32);
-        let (r, b) = (((x + w + GROW) * scale).ceil() as i32, ((y + h + GROW) * scale).ceil() as i32);
-        let d = (((radius + GROW).min((w + 2.0 * GROW) / 2.0).min((h + 2.0 * GROW) / 2.0) * 2.0) * scale).round() as i32;
-        let key = (l, t, r, b, d);
+    /// `x`,`y`,`w`,`h`: the shell in CSS px relative to the page; `radius`: its bottom corner radius; `grow`: how far past the shell
+    /// the window stays opaque to the mouse (the edge light); `flat_top`: the shell hangs from the top edge of the display, so its top
+    /// corners stay square (the rounding is pushed out of the window); `flare`: with `flat_top`, how far the concave shoulders reach
+    /// out along the screen edge on each side; `scale`: device pixels per CSS px.
+    pub fn set_shape(&mut self, x: f64, y: f64, w: f64, h: f64, radius: f64, grow: f64, flat_top: bool, flare: f64, scale: f64) {
+        let (l, mut t) = (((x - grow) * scale).floor() as i32, ((y - grow) * scale).floor() as i32);
+        let (r, b) = (((x + w + grow) * scale).ceil() as i32, ((y + h + grow) * scale).ceil() as i32);
+        let d = (((radius + grow).min((w + 2.0 * grow) / 2.0).min((h + 2.0 * grow) / 2.0) * 2.0) * scale).round() as i32;
+        if flat_top {
+            t -= d;
+        }
+        // the shoulders as the corner point and size they hang from, in device pixels
+        let shoulders = if flat_top && flare > 0.5 {
+            Some(((x * scale).round() as i32, (y * scale).round() as i32, ((x + w) * scale).round() as i32, (flare * scale).round() as i32))
+        } else {
+            None
+        };
+        let key = (l, t, r, b, d, shoulders);
         if self.last == Some(key) || r <= l || b <= t {
             return;
         }
-        // SAFETY: after a successful call the window owns the region (it must not be deleted here)
+        // SAFETY: after a successful call the window owns the region (it must not be deleted here); the helper region is deleted
         unsafe {
             let rgn = CreateRoundRectRgn(l, t, r, b, d, d);
+            if let Some((xl, yt, xr, f)) = shoulders {
+                // only the shoulders' black pixels join the region (see `shoulder_polygon`), never the transparent corner between them and the screen
+                for left in [true, false] {
+                    let poly = CreatePolygonRgn(&shoulder_polygon(xl, yt, xr, f, left), ALTERNATE);
+                    CombineRgn(Some(rgn), Some(rgn), Some(poly), RGN_OR);
+                    let _ = DeleteObject(HGDIOBJ(poly.0));
+                }
+            }
             if SetWindowRgn(self.hwnd, Some(rgn), true) != 0 {
                 self.last = Some(key);
             } else {
@@ -80,6 +103,23 @@ impl NotchShape {
             }
         }
     }
+}
+
+/// The black part of one concave shoulder as a polygon, in device pixels: the area between the screen edge, the shell's side wall and a
+/// quarter circle of radius `f` that curves away from the shell. The arc is taken one pixel further out than the page draws it, so the
+/// region holds only fully black pixels (a window region has no antialiasing and must never show the transparent corner).
+fn shoulder_polygon(xl: i32, yt: i32, xr: i32, f: i32, left: bool) -> Vec<POINT> {
+    let (fx, r) = (f as f64, f as f64 + 1.0);
+    let (cx, wall) = if left { (xl as f64 - fx, xl as f64) } else { (xr as f64 + fx, xr as f64) };
+    let cy = yt as f64 + fx;
+    let mut pts = Vec::with_capacity(14);
+    for i in 0..=11 {
+        let th = std::f64::consts::FRAC_PI_2 * (1.0 - i as f64 / 11.0);
+        let dx = r * th.cos();
+        pts.push(POINT { x: (if left { cx + dx } else { cx - dx }).round() as i32, y: (cy - r * th.sin()).round() as i32 });
+    }
+    pts.push(POINT { x: (if left { wall + 1.0 } else { wall - 1.0 }).round() as i32, y: yt - 1 });
+    pts
 }
 
 /// Raises the window to the top of the always-on-top band without activating it (the widget stays above the entertainment window).
@@ -140,8 +180,8 @@ fn covers_screen_without_title_bar(window: (i32, i32, i32, i32), monitor: (i32, 
 /// Caption bar, border and caption text in the settings page's own colours (Windows 11; older Windows keeps its default frame).
 pub fn style_frame(hwnd: isize, dark: bool) {
     let colorref = |r: u32, g: u32, b: u32| COLORREF(r | (g << 8) | (b << 16));
-    // the page's `--bg` and `--label`
-    let (bg, border, text) = if dark { (colorref(0x1e, 0x1e, 0x1e), colorref(0x28, 0x28, 0x2a), colorref(0xf5, 0xf5, 0xf7)) } else { (colorref(0xf5, 0xf5, 0xf7), colorref(0xeb, 0xeb, 0xed), colorref(0x1d, 0x1d, 0x1f)) };
+    // the page's `--bg` and `--label`: the caption bar is the same cream (or warm dark) as the sidebar, so the window reads as one surface
+    let (bg, border, text) = if dark { (colorref(0x1b, 0x1a, 0x16), colorref(0x1b, 0x1a, 0x16), colorref(0xf4, 0xf2, 0xea)) } else { (colorref(0xf3, 0xf1, 0xec), colorref(0xf3, 0xf1, 0xec), colorref(0x1a, 0x1a, 0x1a)) };
     let h = hwnd_of(hwnd);
     for (attr, value) in [(DWMWA_CAPTION_COLOR, bg), (DWMWA_BORDER_COLOR, border), (DWMWA_TEXT_COLOR, text)] {
         // SAFETY: the pointer is to a live COLORREF
@@ -153,8 +193,7 @@ pub fn style_frame(hwnd: isize, dark: bool) {
 
 // ── opening things ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
-/// Opens `target` with its registered handler. Callers pass only compile-time constants (the two project URLs and the
-/// `ms-settings:` pages of `permissions::pane_url`), never text from a page.
+/// Opens `target` with its registered handler. Callers pass only compile-time constants (the two project URLs).
 pub fn open_constant(target: &'static str) -> Result<(), String> {
     let wide: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
     // SAFETY: both strings are NUL terminated and outlive the call
@@ -229,6 +268,23 @@ impl Drop for KillOnClose {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shoulder_region_never_reaches_into_the_transparent_corner() {
+        let (xl, yt, xr, f) = (200, 0, 700, 20);
+        for left in [true, false] {
+            let pts = shoulder_polygon(xl, yt, xr, f, left);
+            let centre = if left { (xl - f, yt + f) } else { (xr + f, yt + f) };
+            // every point on the arc is at least `f` pixels from the circle's centre, i.e. outside the transparent quarter circle
+            for p in &pts[..pts.len() - 1] {
+                let d = (((p.x - centre.0).pow(2) + (p.y - centre.1).pow(2)) as f64).sqrt();
+                assert!(d >= f as f64 - 0.5, "{:?} is inside the transparent corner (distance {d})", (p.x, p.y));
+            }
+            // and it ends on the side wall of the shell, one pixel inside it
+            let end = pts[pts.len() - 2];
+            assert_eq!((end.x, end.y), if left { (xl + 1, yt + f) } else { (xr - 1, yt + f) });
+        }
+    }
 
     #[test]
     fn only_a_borderless_window_covering_the_monitor_counts_as_fullscreen() {

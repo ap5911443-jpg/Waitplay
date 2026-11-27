@@ -1,5 +1,5 @@
-# Builds dist\windows\WaitPlay-<version>-windows-x64-setup.exe (a self-extracting installer made with the IExpress tool that ships with
-# Windows, so no extra software is needed) and WaitPlay-<version>-windows-x64.zip (the same files, portable) plus SHA256SUMS-windows.txt.
+# Builds dist\windows\VibePlay-<version>-windows-x64-setup.exe (a self-extracting installer made with the IExpress tool that ships with
+# Windows, so no extra software is needed) and VibePlay-<version>-windows-x64.zip (the same files, portable) plus SHA256SUMS-windows.txt.
 #
 #   cargo build --release --workspace
 #   powershell -ExecutionPolicy Bypass -File packaging\windows\build_installer.ps1
@@ -19,7 +19,7 @@ foreach ($f in 'waitplay.exe', 'waitplay-bridge.exe', 'waitplay-hook.exe') {
 foreach ($f in 'install.ps1', 'install.cmd', 'uninstall.ps1', 'uninstall.cmd') { Copy-Item (Join-Path $PSScriptRoot $f) $stage }
 Set-Content -Path (Join-Path $stage 'version.txt') -Value $ver -NoNewline
 
-$name = "WaitPlay-$ver-windows-x64"
+$name = "VibePlay-$ver-windows-x64"
 $setup = Join-Path $out "$name-setup.exe"
 $files = 'waitplay.exe', 'waitplay-bridge.exe', 'waitplay-hook.exe', 'install.ps1', 'install.cmd', 'uninstall.ps1', 'uninstall.cmd', 'version.txt'
 $sed = @"

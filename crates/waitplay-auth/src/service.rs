@@ -328,6 +328,30 @@ impl AccountService {
         changed || before != self.mgr.state()
     }
 
+    /// The signed-in user's id (not a secret: it is the row key in the database), or `None` when signed out.
+    pub fn user_id(&self) -> Option<String> {
+        match self.mgr.state() {
+            AuthState::SignedIn { user_id, .. } => Some(user_id),
+            AuthState::SignedOut { .. } => None,
+        }
+    }
+
+    /// The preferences saved to this account (any PC, any earlier session), or `None` when none were saved yet.
+    pub fn fetch_preferences(&self) -> Result<Option<Value>> {
+        let token = self.mgr.access_token()?;
+        cloud::preferences(self.mgr.client(), &token)
+    }
+
+    /// Saves preferences to this account. The data is app settings only: never a password, a token or a site login.
+    pub fn save_preferences(&self, data: &Value) -> Result<()> {
+        if data.to_string().len() > 32 * 1024 {
+            return Err(AuthError::State("Preferences are too large."));
+        }
+        let token = self.mgr.access_token()?;
+        let AuthState::SignedIn { user_id, .. } = self.mgr.state() else { return Err(AuthError::State("Not signed in.")) };
+        cloud::save_preferences(self.mgr.client(), &token, &user_id, data)
+    }
+
     /// Fetches profile, plan and devices (and registers this device). Stores the result in the local cache.
     pub fn sync_cloud(&self) -> Result<()> {
         self.sync(false)

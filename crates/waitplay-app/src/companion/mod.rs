@@ -5,7 +5,7 @@
 mod logic;
 mod navigation;
 mod poller;
-mod webview2;
+pub(crate) mod webview2;
 
 use crate::platform::{self, InputWatcher, WindowId, NO_WINDOW};
 use crate::single_instance::Guard;
@@ -194,6 +194,9 @@ struct App {
     retrim_at: Option<Instant>,
     retrim_fast: u32,
     idle_quit_at: Option<Instant>,
+    /// Where this window's browser profile lives, and when it last told the tray app which sites are signed in.
+    profile_dir: std::path::PathBuf,
+    last_login_report: Option<Instant>,
 }
 
 impl App {
@@ -430,7 +433,20 @@ impl App {
         self.exit = true;
     }
 
+    /// While the window is open it is the one that knows which sites are signed in: it writes the answer next to the profile every few
+    /// seconds (the tray app only reads it; see `win::logins`).
+    fn report_logins(&mut self) {
+        #[cfg(windows)]
+        if self.last_login_report.map_or(true, |t| t.elapsed() >= Duration::from_secs(3)) {
+            self.last_login_report = Some(Instant::now());
+            crate::win::logins::write_state(&self.profile_dir, &crate::win::logins::detect(&self.content));
+        }
+    }
+
     fn on_tick(&mut self) {
+        if self.visible {
+            self.report_logins();
+        }
         let acts = self.core.tick(&mut self.env, &logic::agent_name_of_session);
         self.run_actions(acts);
         // "Close when the agent finishes": nothing left to wait for after at least one session ran, so leave for real (cookies are
@@ -700,7 +716,8 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
     let rect = |(x, y, w, h): (i32, i32, u32, u32)| wry::Rect { position: wry::dpi::PhysicalPosition::new(x, y).into(), size: wry::dpi::PhysicalSize::new(w, h).into() };
 
     // Every login lives in this profile; both webviews share it, and with it one browser process
-    let mut context = WebContext::new(Some(profile::resolve()));
+    let profile_dir = profile::resolve();
+    let mut context = WebContext::new(Some(profile_dir.clone()));
 
     let ipc_proxy = proxy.clone();
     let header = webview2::tune(WebViewBuilder::new_with_web_context(&mut context));
@@ -798,6 +815,8 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
         retrim_at: None,
         retrim_fast: 0,
         idle_quit_at: None,
+        profile_dir,
+        last_login_report: None,
     };
     app.core.my_hwnd = app.hwnd();
     let _ = app.header.evaluate_script(&format!("wp.setActive({});", serde_json::to_string(opts.start.key).unwrap_or_default()));

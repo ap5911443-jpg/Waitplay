@@ -47,6 +47,24 @@ impl AccountUi {
         self.service.is_some()
     }
 
+    /// The signed-in user's id, `None` when signed out or when this build has no account service.
+    pub fn user_id(&self) -> Option<String> {
+        self.service.as_ref().and_then(|s| s.user_id())
+    }
+
+    /// The service, for work that must not block the UI thread (saving and restoring preferences).
+    pub fn service(&self) -> Option<Arc<AccountService>> {
+        self.service.clone()
+    }
+
+    /// The account as the settings pages show it: no tokens, the same view the account window gets.
+    pub fn view(&self) -> Value {
+        match &self.service {
+            Some(s) => s.view(),
+            None => json!({"configured": false, "state": "signedOut"}),
+        }
+    }
+
     /// Drops the window (and its page) now; used when the app quits.
     pub fn close(&mut self) {
         if let Some(s) = &self.service {
@@ -128,7 +146,17 @@ impl AccountUi {
             "__done" => {
                 self.busy.store(false, Ordering::SeqCst);
                 self.push(&service.view());
-                self.eval(&format!("window.wpAccount&&wpAccount.result({})", msg.get("result").cloned().unwrap_or(Value::Null)));
+                let result = msg.get("result").cloned().unwrap_or(Value::Null);
+                self.eval(&format!("window.wpAccount&&wpAccount.result({})", result));
+                // a sign-in that worked is the end of this window's job: it closes by itself (a sign-up still waiting for its emailed
+                // code, and account management such as sign out or a name change, stay open)
+                let signed_in_now = result.get("ok").and_then(Value::as_bool) == Some(true)
+                    && matches!(result.get("op").and_then(Value::as_str), Some("google" | "signInPassword" | "signUp" | "verifyCode" | "reset"))
+                    && result.get("outcome").and_then(Value::as_str) != Some("needsCode")
+                    && service.is_signed_in();
+                if signed_in_now {
+                    self.win = None;
+                }
             }
             "cancelFlow" => service.cancel_flow(),
             "google" | "signInPassword" | "signUp" | "sendCode" | "verifyCode" | "forgot" | "reset" | "resendConfirm" | "signOut" | "signOutOthers" | "revokeDevice" | "setName" | "deleteAccount" => {

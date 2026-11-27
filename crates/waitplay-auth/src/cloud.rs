@@ -92,3 +92,19 @@ pub fn set_display_name(c: &Client, token: &str, uid: &str, name: &str) -> Resul
 pub fn delete_account(c: &Client, token: &str) -> Result<()> {
     c.call("POST", "/functions/v1/delete-account", Some(token), Some(json!({"confirm": true}))).map(|_| ())
 }
+
+/// The signed-in user's saved preferences (one row, `user_preferences.data`), or `None` when nothing was saved yet.
+pub fn preferences(c: &Client, token: &str) -> Result<Option<Value>> {
+    let v = c.call("GET", "/rest/v1/user_preferences?select=data&limit=1", Some(token), None)?;
+    Ok(v.get(0).and_then(|row| row.get("data")).filter(|d| d.is_object()).cloned())
+}
+
+/// Saves the preferences: updates the user's row, or creates it the first time. Row level security lets a user write only their own.
+pub fn save_preferences(c: &Client, token: &str, uid: &str, data: &Value) -> Result<()> {
+    let exists = c.call("GET", "/rest/v1/user_preferences?select=user_id&limit=1", Some(token), None)?.get(0).is_some();
+    if exists {
+        c.call("PATCH", &format!("/rest/v1/user_preferences?user_id=eq.{}", crate::pkce::urlencode(uid)), Some(token), Some(json!({"data": data}))).map(|_| ())
+    } else {
+        c.call("POST", "/rest/v1/user_preferences", Some(token), Some(json!({"user_id": uid, "data": data}))).map(|_| ())
+    }
+}

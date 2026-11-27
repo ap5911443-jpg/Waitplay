@@ -6,7 +6,7 @@ Release files (the version comes from `version` in the workspace `Cargo.toml`; e
 |---|---|---|
 | macOS (Apple Silicon) | `WaitPlay-<version>-arm64.dmg` | `.github/workflows/macos.yml` |
 | macOS (Intel) | `WaitPlay-<version>-x86_64.dmg` | `.github/workflows/macos.yml` |
-| Windows | `WaitPlay-<version>-windows-x64-setup.exe` (installer), `WaitPlay-<version>-windows-x64.zip` (portable) | `.github/workflows/windows.yml` |
+| Windows | `VibePlay-<version>-windows-x64-setup.exe` (installer), `VibePlay-<version>-windows-x64.zip` (portable) | `.github/workflows/windows.yml` |
 | Both | `SHA256SUMS-macos.txt`, `SHA256SUMS-windows.txt`, build-provenance attestations | the `release` jobs |
 
 Without an Apple Developer ID (current state) the DMGs are ad-hoc signed and published as `*-UNSIGNED.dmg` pre-releases; the Windows
@@ -39,7 +39,7 @@ Windows (PowerShell, on Windows):
 $env:WAITPLAY_BUILD = (git rev-parse --short HEAD)
 cargo build --release --workspace
 powershell -ExecutionPolicy Bypass -File packaging\windows\build_installer.ps1
-# -> dist\windows\WaitPlay-<version>-windows-x64-setup.exe, ...-x64.zip, SHA256SUMS-windows.txt
+# -> dist\windows\VibePlay-<version>-windows-x64-setup.exe, ...-x64.zip, SHA256SUMS-windows.txt
 ```
 
 ## What users see without signing

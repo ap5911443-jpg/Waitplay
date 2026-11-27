@@ -64,8 +64,8 @@ jobs:
           if grep -q "ci-smoke-token" bridge.out; then echo "FAIL: the token was printed"; fail=1; else echo "ok: the token is not printed"; fi
           exit $fail
 
-      # dist\windows\WaitPlay-<version>-windows-x64-setup.exe (self-extracting installer, built with Windows' own IExpress) and
-      # WaitPlay-<version>-windows-x64.zip (portable), versioned from the workspace version
+      # dist\windows\VibePlay-<version>-windows-x64-setup.exe (self-extracting installer, built with Windows' own IExpress) and
+      # VibePlay-<version>-windows-x64.zip (portable), versioned from the workspace version
       - name: Package (installer exe + zip)
         shell: pwsh
         run: powershell -ExecutionPolicy Bypass -File packaging\windows\build_installer.ps1
@@ -78,7 +78,7 @@ jobs:
           $env:WAITPLAY_NO_START = '1'
           $setup = Get-ChildItem dist\windows\*-setup.exe
           $ver = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
-          if ($setup.Name -ne "WaitPlay-$ver-windows-x64-setup.exe") { throw "unexpected installer name $($setup.Name)" }
+          if ($setup.Name -ne "VibePlay-$ver-windows-x64-setup.exe") { throw "unexpected installer name $($setup.Name)" }
           Start-Process $setup.FullName -Wait
           foreach ($f in 'waitplay.exe', 'waitplay-bridge.exe', 'waitplay-hook.exe', 'uninstall.cmd') { if (-not (Test-Path "$dest\$f")) { throw "missing $f after install" } }
           if ((Get-Content "$dest\version.txt").Trim() -ne $ver) { throw 'version.txt does not match Cargo.toml' }

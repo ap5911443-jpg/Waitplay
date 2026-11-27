@@ -34,6 +34,13 @@ use waitplay_core::{now_ms, state, BridgeClient};
 fn main() {
     let args = cli::parse(std::env::args().skip(1));
 
+    // helper processes of the tray app: they open the browser profile the way the entertainment window does, answer and exit
+    #[cfg(windows)]
+    if args.check_logins || args.logout.is_some() {
+        win::logins::run_helper(args.logout);
+        return;
+    }
+
     // The window that was in front when we started: for a hook launch, that is the terminal the prompt was typed in
     let mut initial_fg = platform::foreground_window();
     if platform::window_pid(initial_fg) == platform::current_pid() {
@@ -77,11 +84,20 @@ fn main() {
         return;
     }
 
+    // A watcher (Codex, OMP, OpenCode, Cline) is a child of the Vibe Play app, so walking its ancestry ends at the widget's own
+    // window. That is never the agent's window: drop it and fall back to the agent's process, then to whatever was in front.
+    let own_window = |h: platform::WindowId| h != platform::NO_WINDOW && platform::is_waitplay_window(h);
     let mut parent_hwnd = args.parent_hwnd;
     if parent_hwnd == platform::NO_WINDOW && args.parent_pid > 0 {
         parent_hwnd = platform::find_top_window_for_pid(args.parent_pid);
     }
-    if parent_hwnd == platform::NO_WINDOW && initial_fg != platform::NO_WINDOW {
+    if own_window(parent_hwnd) {
+        parent_hwnd = platform::NO_WINDOW;
+    }
+    if parent_hwnd == platform::NO_WINDOW {
+        parent_hwnd = platform::find_window_for_agent(&args.session);
+    }
+    if parent_hwnd == platform::NO_WINDOW && !own_window(initial_fg) {
         parent_hwnd = initial_fg;
     }
 

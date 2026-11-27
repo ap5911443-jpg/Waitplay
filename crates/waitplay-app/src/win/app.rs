@@ -9,7 +9,7 @@
 use super::menu_model::{self, Entry};
 use super::native::{self, KillOnClose, NotchShape};
 use super::status::{self, SessionsView, Status};
-use super::{icons, integrations, login_item, permissions};
+use super::{icons, integrations, login_item, logins};
 use crate::account_ui::{AccountUi, Notify};
 use crate::placement::{self, Screen};
 use crate::{platform, wp_error, wp_info, wp_warn};
@@ -26,7 +26,7 @@ use tao::platform::run_return::EventLoopExtRunReturn;
 use tao::platform::windows::{WindowBuilderExtWindows, WindowExtWindows};
 use tao::window::{Icon as WindowIcon, Theme, Window, WindowBuilder, WindowId};
 use tray_icon::menu::{CheckMenuItem, ContextMenu, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use waitplay_core::insights;
 use waitplay_core::settings::{Appearance, Settings};
 use waitplay_core::{companion_state, now_ms, paths, process, signals, state, BridgeClient};
@@ -38,7 +38,10 @@ use wry::{NewWindowResponse, WebContext, WebView, WebViewBuilder, WebViewBuilder
 const WEBSITE: &str = "https://github.com/ap5911443-jpg/waitplay-website";
 const SUPPORT: &str = "https://github.com/ap5911443-jpg/waitplay-website/issues";
 const SETTINGS_HTML: &str = include_str!("../../assets/win_settings.html");
-const WIDGET_HTML: &str = include_str!("../../assets/win_widget.html");
+const WIDGET_HTML: &str = include_str!("../../assets/mac_widget.html");
+/// The notch's resting size in points: the shape the page starts from and grows out of, like the camera notch on a MacBook.
+const NOTCH_W: u32 = 200;
+const NOTCH_H: u32 = 34;
 /// The companion character, spliced into the page at its marker.
 const MASCOT_JS: &str = include_str!("../../assets/mascot.js");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -77,6 +80,29 @@ enum Ev {
     Menu(String),
     Hotkey(u32),
     SoundChosen(Option<String>),
+    /// One step of the widget's shape animation (the generation says which animation it belongs to).
+    Morph(u64),
+    /// The account's saved preferences, fetched on a worker thread after a sign-in: (account id, saved data or none, fetch worked).
+    Prefs(String, Option<Value>, bool),
+}
+
+/// The shell's spring (stiffness 200, damping 26) as the step response the page's CSS easing uses: progress at 22 equal steps.
+const SPRING: [f64; 23] = [0.0, 0.0764, 0.2312, 0.4002, 0.5535, 0.6797, 0.7774, 0.8497, 0.9014, 0.9371, 0.9611, 0.9769, 0.9868, 0.993, 0.9966, 0.9986, 0.9997, 1.0002, 1.0004, 1.0005, 1.0004, 1.0003, 1.0];
+
+fn spring(t: f64) -> f64 {
+    let p = t.clamp(0.0, 1.0) * (SPRING.len() - 1) as f64;
+    let i = (p.floor() as usize).min(SPRING.len() - 2);
+    SPRING[i] + (SPRING[i + 1] - SPRING[i]) * (p - i as f64)
+}
+
+/// The widget window's clip shape moving from one rectangle to another: x, y, w, h, radius, shoulder (CSS px, page coordinates).
+#[derive(Clone, Copy)]
+struct Morph {
+    start: Instant,
+    secs: f64,
+    from: [f64; 6],
+    to: [f64; 6],
+    flat_top: bool,
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -127,6 +153,23 @@ fn origin_from_anchor(corner: &str, anchor: (i32, i32), size: (i32, i32), screen
         }
     }
     None
+}
+
+/// First-run marker: the setup guide is shown until the user finishes (or skips) it once.
+fn onboarded_file() -> PathBuf {
+    waitplay_core::paths::app_support_dir().join("onboarded")
+}
+
+fn load_onboarded() -> bool {
+    onboarded_file().exists()
+}
+
+fn save_onboarded(done: bool) {
+    if done {
+        let _ = waitplay_core::paths::write_atomic(&onboarded_file(), b"1");
+    } else {
+        let _ = std::fs::remove_file(onboarded_file());
+    }
 }
 
 fn home() -> PathBuf {
@@ -305,6 +348,9 @@ struct WidgetWin {
     screen_origin: Option<(f64, f64)>,
     /// Last applied (x, y, w, h) in physical pixels.
     last_rect: Option<(i32, i32, u32, u32)>,
+    /// The clip shape animation in progress, and the generation that tells its timer events from older ones.
+    morph: Option<Morph>,
+    morph_gen: u64,
     /// The user is moving the widget (native move loop); placement is paused until it ends.
     dragging: bool,
     moved: bool,
@@ -354,6 +400,18 @@ struct App {
     problems: Vec<(String, String, String, String)>,
     update_detail: &'static str,
     quitting: bool,
+    /// The setup guide has been finished or skipped (see [`onboarded_file`]).
+    onboarded: bool,
+    /// Entertainment sign-in check (see [`logins`]); only polled while the setup guide's sites page is on screen.
+    logins: logins::Logins,
+    watch_logins: bool,
+    login_state: Option<std::collections::BTreeMap<&'static str, bool>>,
+    /// The signed-in account (see [`App::watch_account`]), and the moment preferences last changed and still have to be saved to it.
+    last_account: Option<String>,
+    prefs_dirty: Option<Instant>,
+    prefs_applying: bool,
+    /// The next saved-preferences answer belongs to app startup, not to a sign-in.
+    prefs_startup: bool,
     /// Grouped notifications and sound cues, from the session list.
     tracker: island::Tracker,
     /// Timings of finished work for the Insights page (local only).
@@ -392,6 +450,14 @@ impl App {
             problems: Vec::new(),
             update_detail: "Automatic update checks arrive in a later release. New versions are published on the website.",
             quitting: false,
+            onboarded: load_onboarded(),
+            logins: logins::Logins::default(),
+            watch_logins: false,
+            login_state: None,
+            last_account: None,
+            prefs_dirty: None,
+            prefs_applying: false,
+            prefs_startup: false,
             tracker: island::Tracker::new(),
             recorder: insights::Recorder::new(),
             last_sound_ms: 0,
@@ -409,6 +475,22 @@ impl App {
         self.refresh_widget_window(target);
         self.sync_login_item();
         self.refresh_runtime(true);
+        if self.account.available() {
+            // the browser profile of whoever is signed in, and no automation at all while nobody is
+            self.last_account = self.account.user_id();
+            crate::profile::set_active(self.last_account.as_deref());
+            if let Some(id) = self.last_account.clone() {
+                self.prefs_startup = true;
+                self.fetch_prefs(id);
+            }
+            if self.last_account.is_none() {
+                state::set_enabled(false);
+                self.rt.enabled = false;
+            }
+        }
+        if !self.onboarded || self.account_gate() {
+            self.open_settings(target); // first run: the settings window opens on the setup guide
+        }
         wp_info!("Vibe Play {} ({}) started; {} display(s)", VERSION, BUILD, self.screens.len());
     }
 
@@ -421,7 +503,8 @@ impl App {
                 return;
             }
         };
-        match TrayIconBuilder::new().with_icon(icon).with_tooltip("Vibe Play").build() {
+        // left click opens the interface (the settings window); right click shows the menu
+        match TrayIconBuilder::new().with_icon(icon).with_tooltip("Vibe Play").with_menu_on_left_click(false).build() {
             Ok(t) => {
                 wp_info!("tray icon created");
                 self.tray = Some(t);
@@ -512,10 +595,22 @@ impl App {
     fn on_tick(&mut self, target: &EventLoopWindowTarget<Ev>) {
         self.ticks += 1;
         self.finish_widget_drag();
+        self.watch_account(target);
+        if self.prefs_dirty.is_some_and(|t| t.elapsed() >= Duration::from_secs(3)) {
+            self.prefs_dirty = None;
+            self.save_prefs();
+        }
         self.account.on_tick(&self.account_notify());
         // a second launch of the app (run from a shell, or the Start menu) asks this one to show its settings
         if open_request_pending() {
             self.open_settings(target);
+        }
+        if self.watch_logins && self.settings_win.is_some() && self.ticks % 2 == 0 {
+            let now = self.logins.state();
+            if now != self.login_state {
+                self.login_state = now;
+                self.push_settings();
+            }
         }
         if self.ticks % REFRESH_EVERY == 0 {
             self.refresh_runtime(false);
@@ -673,7 +768,11 @@ impl App {
         self.tracker.tick(now_ms(), self.settings.notification_secs);
         let st = self.status();
         let platform_label = menu_model::site_label(&self.settings.preferred_platform);
-        let (title, detail) = status::describe(st, &self.rt.view, platform_label);
+        let (mut title, mut detail) = status::describe(st, &self.rt.view, platform_label);
+        if self.account_gate() {
+            title = "Sign in to continue".into();
+            detail = "Open Vibe Play and sign in".into();
+        }
         self.render_menu(st, &title);
         self.render_widget(st, &title, &detail);
         self.push_settings();
@@ -753,6 +852,8 @@ impl App {
             "compact": self.settings.widget_compact,
             "showStatus": self.settings.widget_show_status,
             "corner": self.settings.widget_position.as_str(),
+            "clip": true,
+            "notch": (self.settings.widget_position.as_str() == "top-center").then(|| json!({ "w": NOTCH_W, "h": NOTCH_H })),
             "since": view.working_since,
             "sessionList": self.session_rows_json(),
             "ent": { "state": ent.state, "text": ent.text, "hint": ent.hint },
@@ -849,6 +950,8 @@ impl App {
         }
         json!({
             "settings": settings,
+            "account": self.account.view(),
+            "onboarding": !self.onboarded,
             "runtime": {
                 "enabled": self.rt.enabled,
                 "status": st.as_str(),
@@ -858,7 +961,7 @@ impl App {
                 "customSound": self.settings.sound_custom_file,
                 "errors": errors,
                 "agents": agents,
-                "permissions": permissions::list(self.settings.launch_at_login),
+                "logins": self.login_state,
                 "shortcutErrors": { "toggleAutomation": self.shortcut_errors[0], "toggleWidget": self.shortcut_errors[1] },
                 "version": VERSION,
                 "build": BUILD,
@@ -943,7 +1046,7 @@ impl App {
             .build(&window)
             .map_err(|e| format!("webview: {}", e))?;
         let shape = NotchShape::attach(window.hwnd());
-        Ok(WidgetWin { webview, shape, window, size: None, shown: false, screen_origin: None, last_rect: None, dragging: false, moved: false, drag_started: Instant::now(), last_move: Instant::now() })
+        Ok(WidgetWin { webview, shape, window, size: None, shown: false, screen_origin: None, last_rect: None, morph: None, morph_gen: 0, dragging: false, moved: false, drag_started: Instant::now(), last_move: Instant::now() })
     }
 
     /// The widget stays on the display it was on; a first placement (or a vanished display) uses the display under the pointer.
@@ -1006,7 +1109,9 @@ impl App {
             return;
         }
         let Some((cw, ch)) = w.size else { return }; // wait for the page's first size report
-        let (x, y) = placement::corner_origin(screen.work, (cw, ch), pos, 0.0);
+        // Top centre is the notch: flush with the very top edge of the display, centred on it. The other positions are corners.
+        let area = if pos.as_str() == "top-center" { screen.frame } else { screen.work };
+        let (x, y) = placement::corner_origin(area, (cw, ch), pos, 0.0);
         let (mut px, mut py) = platform::to_physical(&screen, x, y);
         if let Some((corner, ax, ay)) = anchor {
             let sf = w.window.scale_factor();
@@ -1069,6 +1174,8 @@ impl App {
     fn on_account_ipc(&mut self, body: &str) {
         let notify = self.account_notify();
         self.account.on_message(body, &notify);
+        // the Account and Plans pages of the settings window show the same account: refresh them when it changes
+        self.push_settings();
     }
 
     fn open_account(&mut self, target: &EventLoopWindowTarget<Ev>) {
@@ -1101,8 +1208,8 @@ impl App {
         let icon = WindowIcon::from_rgba(icons::app_icon_rgba(64), 64, 64).ok();
         let window = WindowBuilder::new()
             .with_title("Vibe Play")
-            .with_inner_size(LogicalSize::new(760.0, 540.0))
-            .with_min_inner_size(LogicalSize::new(680.0, 460.0))
+            .with_inner_size(self.settings_default_size())
+            .with_min_inner_size(LogicalSize::new(760.0, 540.0))
             .with_resizable(true)
             .with_window_icon(icon)
             .with_theme(theme_for(self.settings.appearance))
@@ -1144,7 +1251,135 @@ impl App {
 
     // ── actions ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+    /// Vibe Play needs an account: while this build has an account service and nobody is signed in, nothing runs and the settings
+    /// window shows only the sign-in screen.
+    fn account_gate(&self) -> bool {
+        self.account.available() && self.account.user_id().is_none()
+    }
+
+    /// Notices a sign-in, a sign-out or a switch to another account. The entertainment windows and the sign-in check hold the old
+    /// account's browser profile, so they let go of it first; then the new account's profile and saved preferences take over.
+    fn watch_account(&mut self, target: &EventLoopWindowTarget<Ev>) {
+        if !self.account.available() {
+            return;
+        }
+        let now = self.account.user_id();
+        if now == self.last_account {
+            return;
+        }
+        let previous = std::mem::replace(&mut self.last_account, now.clone());
+        wp_info!("account changed: {}", if now.is_some() { "signed in" } else { "signed out" });
+        signals::write_quit_signal();
+        self.logins = logins::Logins::default();
+        self.login_state = None;
+        self.prefs_dirty = None;
+        crate::profile::set_active(now.as_deref());
+        match now {
+            Some(id) => {
+                state::set_enabled(true);
+                self.rt.enabled = true;
+                let _ = std::thread::Builder::new().name("wp-post-state".into()).spawn(|| BridgeClient::new().post_state(true));
+                self.prefs_startup = false;
+                self.fetch_prefs(id);
+            }
+            None => {
+                state::set_enabled(false);
+                self.rt.enabled = false;
+                let _ = std::thread::Builder::new().name("wp-post-state".into()).spawn(|| BridgeClient::new().post_state(false));
+                if previous.is_some() || !self.onboarded {
+                    self.open_settings(target); // the sign-in screen
+                }
+            }
+        }
+        self.last_settings_state = None;
+        self.last_widget_state = None;
+        self.render();
+    }
+
+    /// Fetches the account's saved preferences on a worker thread; the answer comes back as `Ev::Prefs`.
+    fn fetch_prefs(&self, id: String) {
+        let Some(svc) = self.account.service() else { return };
+        let proxy = self.proxy.clone();
+        let _ = std::thread::Builder::new().name("wp-prefs-restore".into()).spawn(move || {
+            let (data, ok) = match svc.fetch_preferences() {
+                Ok(d) => (d, true),
+                Err(e) => {
+                    wp_warn!("saved preferences could not be fetched: {}", e.user_message());
+                    (None, false)
+                }
+            };
+            let _ = proxy.send_event(Ev::Prefs(id, data, ok));
+        });
+    }
+
+    /// The settings that follow an account from PC to PC. Device-specific ones (start with Windows, the custom sound file, which agent
+    /// watchers run) and anything secret stay out: no password, token or site login is ever saved to the account.
+    fn synced_prefs(&self) -> Value {
+        const KEYS: [&str; 21] = [
+            "appearance", "widgetPosition", "widgetCompact", "widgetShowStatus", "platforms", "preferredPlatform", "onFinish", "shortcuts", "notifications",
+            "notificationSecs", "soundMuted", "soundVolume", "soundName", "soundEvents", "mascot", "mascotIntensity", "mascotIdle", "mascotPointer",
+            "reduceMotion", "autoStartAutomation", "showWidget",
+        ];
+        let all = self.settings.to_json();
+        let mut out = serde_json::Map::new();
+        for k in KEYS {
+            if let Some(v) = all.get(k) {
+                out.insert(k.to_string(), v.clone());
+            }
+        }
+        Value::Object(out)
+    }
+
+    fn save_prefs(&mut self) {
+        let Some(svc) = self.account.service() else { return };
+        if self.last_account.is_none() {
+            return;
+        }
+        let data = self.synced_prefs();
+        let _ = std::thread::Builder::new().name("wp-prefs-save".into()).spawn(move || {
+            if let Err(e) = svc.save_preferences(&data) {
+                wp_warn!("preferences could not be saved to the account: {}", e.user_message());
+            }
+        });
+    }
+
+    /// The saved preferences arrived after a sign-in: they replace this PC's. A brand-new account has none yet, so this PC's are saved.
+    fn on_prefs(&mut self, id: String, data: Option<Value>, ok: bool, target: &EventLoopWindowTarget<Ev>) {
+        if self.last_account.as_deref() != Some(id.as_str()) || !ok {
+            return;
+        }
+        // at startup this PC's settings win over the saved ones (they are saved a moment after every change); the saved ones only
+        // fill in when the account has none yet
+        if std::mem::take(&mut self.prefs_startup) {
+            if let Some(saved) = &data {
+                if *saved != self.synced_prefs() {
+                    self.prefs_dirty = Some(Instant::now()); // this PC's win: save them to the account
+                }
+                return;
+            }
+        }
+        match data {
+            Some(saved) => {
+                let mut patch = serde_json::Map::new();
+                let mine = self.synced_prefs();
+                for (k, v) in saved.as_object().into_iter().flatten() {
+                    if mine.get(k).is_some() {
+                        patch.insert(k.clone(), v.clone());
+                    }
+                }
+                wp_info!("restoring {} saved preferences", patch.len());
+                self.prefs_applying = true;
+                self.apply_settings_patch(&Value::Object(patch), target);
+                self.prefs_applying = false;
+            }
+            None => self.save_prefs(),
+        }
+    }
+
     fn toggle_automation(&mut self) {
+        if self.account_gate() {
+            return;
+        }
         let on = state::toggle();
         self.rt.enabled = on;
         wp_info!("automation {}", if on { "enabled" } else { "disabled" });
@@ -1155,7 +1390,77 @@ impl App {
         self.render();
     }
 
+    /// The widget's clip follows the page's shell while it morphs. The page owns the picture (a CSS transition); this owns the window
+    /// region, on its own 8 ms timer, with the same spring. It starts a frame late and the region is trimmed half a pixel inside the
+    /// shell, so it is never larger than the shell: the window shows only fully drawn black pixels, never its transparent edge.
+    fn start_morph(&mut self, from: [f64; 6], to: [f64; 6], ms: f64, flat_top: bool) {
+        let proxy = self.proxy.clone();
+        let Some(win) = self.widget.as_mut() else { return };
+        win.morph_gen += 1;
+        let gen = win.morph_gen;
+        let scale = win.window.scale_factor();
+        if ms <= 0.0 {
+            win.morph = None;
+            win.shape.set_shape(to[0], to[1], to[2], to[3], to[4], -0.5, flat_top, to[5], scale);
+            return;
+        }
+        win.morph = Some(Morph { start: Instant::now() + Duration::from_millis(12), secs: ms / 1000.0, from, to, flat_top });
+        win.shape.set_shape(from[0], from[1], from[2], from[3], from[4], -0.5, flat_top, from[5], scale);
+        let _ = std::thread::Builder::new().name("wp-morph".into()).spawn(move || {
+            let began = Instant::now();
+            while began.elapsed() < Duration::from_millis(ms as u64 + 80) {
+                std::thread::sleep(Duration::from_millis(8));
+                if proxy.send_event(Ev::Morph(gen)).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    fn on_morph(&mut self, gen: u64) {
+        let Some(win) = self.widget.as_mut() else { return };
+        let Some(m) = win.morph.filter(|_| win.morph_gen == gen) else { return };
+        let t = Instant::now().saturating_duration_since(m.start).as_secs_f64() / m.secs;
+        let e = spring(t);
+        let v: Vec<f64> = (0..6).map(|i| m.from[i] + (m.to[i] - m.from[i]) * e).collect();
+        let scale = win.window.scale_factor();
+        win.shape.set_shape(v[0], v[1], v[2], v[3], v[4].max(0.0), -0.5, m.flat_top, v[5].max(0.0), scale);
+        if t >= 1.0 {
+            win.morph = None;
+            win.shape.set_shape(m.to[0], m.to[1], m.to[2], m.to[3], m.to[4], -0.5, m.flat_top, m.to[5], scale);
+        }
+    }
+
+    /// Opens one entertainment site in its own window (the setup guide uses this so the user can sign in to it).
+    fn open_site(&mut self, key: &str) {
+        if !waitplay_core::settings::SITE_KEYS.contains(&key) {
+            wp_warn!("refused to open unknown site {:?}", key);
+            return;
+        }
+        self.logins.pause();
+        let Ok(exe) = std::env::current_exe() else { return };
+        if let Err(e) = process::spawn_detached(&exe, &["--game".to_string(), format!("--site={}", key)]) {
+            wp_error!("could not open {}: {}", key, e);
+            self.problem("entertainment", "error", "The entertainment window could not be started.", &e.to_string());
+        } else {
+            self.clear_problem("entertainment");
+        }
+    }
+
+    /// The settings window opens large (1380 x 850) so every page fits without scrolling, but never larger than 92% of the display.
+    fn settings_default_size(&self) -> LogicalSize<f64> {
+        let screens = if self.screens.is_empty() { platform::screens() } else { self.screens.clone() };
+        let idx = platform::cursor_logical().and_then(|(x, y)| placement::screen_at(&screens, x, y)).unwrap_or(0);
+        match screens.get(idx) {
+            Some(s) => LogicalSize::new(1380.0_f64.min(s.work.w * 0.92), 850.0_f64.min(s.work.h * 0.92)),
+            None => LogicalSize::new(1380.0, 850.0),
+        }
+    }
+
     fn open_entertainment(&mut self) {
+        if self.account_gate() {
+            return;
+        }
         let Ok(exe) = std::env::current_exe() else { return };
         if let Err(e) = process::spawn_detached(&exe, &["--open".to_string()]) {
             wp_error!("could not open the entertainment window: {}", e);
@@ -1270,6 +1575,9 @@ impl App {
                 self.problem("settings-save", "error", "Settings could not be saved, so they will be lost on quit.", &e.to_string());
             }
         }
+        if !self.prefs_applying && self.last_account.is_some() {
+            self.prefs_dirty = Some(Instant::now());
+        }
         if self.settings.launch_at_login != old.launch_at_login {
             self.sync_login_item();
         }
@@ -1360,14 +1668,18 @@ impl App {
                     None => wp_warn!("refused to open {:?}", url),
                 }
             }
-            "openSystemSettings" => match permissions::pane_url(&str_of("pane")) {
-                Some(url) => {
-                    if let Err(e) = native::open_constant(url) {
-                        wp_warn!("{}", e);
-                    }
+            "watchLogins" => {
+                self.watch_logins = v.get("on").and_then(Value::as_bool).unwrap_or(false);
+                if self.watch_logins {
+                    self.login_state = self.logins.state();
+                    self.push_settings();
                 }
-                None => wp_warn!("unknown settings pane {:?}", str_of("pane")),
-            },
+            }
+            "logoutSite" => {
+                self.logins.log_out(&str_of("key"));
+                self.login_state = self.logins.state();
+                self.push_settings();
+            }
             "installIntegration" => self.install_integration(&str_of("agent"), true),
             "removeIntegration" => self.install_integration(&str_of("agent"), false),
             "revealLogs" => {
@@ -1396,6 +1708,22 @@ impl App {
                 let patch = if self.settings.sound_name == "custom" { json!({ "soundCustomFile": "", "soundName": "gentle" }) } else { json!({ "soundCustomFile": "" }) };
                 self.apply_settings_patch(&patch, target);
             }
+            "setName" | "signOut" | "signOutOthers" | "revokeDevice" => self.on_account_ipc(body),
+            "openSite" => self.open_site(&str_of("key")),
+            "finishOnboarding" => {
+                self.onboarded = true;
+                // Vibe Play runs in the background from the moment Windows starts, so automation never waits for someone to open it
+                self.apply_settings_patch(&json!({ "launchAtLogin": true }), target);
+                save_onboarded(true);
+                self.last_settings_state = None;
+                self.push_settings();
+            }
+            "restartOnboarding" => {
+                self.onboarded = false;
+                save_onboarded(false);
+                self.last_settings_state = None;
+                self.push_settings();
+            }
             "openAccount" => self.open_account(target),
             "quit" => self.quitting = true,
             other => wp_warn!("settings page sent an unknown message {:?}", other),
@@ -1418,7 +1746,7 @@ impl App {
             }
             "size" => {
                 let (w, h) = (v.get("w").and_then(Value::as_f64).unwrap_or(0.0), v.get("h").and_then(Value::as_f64).unwrap_or(0.0));
-                if (40.0..=1000.0).contains(&w) && (20.0..=400.0).contains(&h) {
+                if (40.0..=1000.0).contains(&w) && (20.0..=800.0).contains(&h) {
                     if let Some(win) = self.widget.as_mut() {
                         win.size = Some((w.ceil(), h.ceil()));
                     }
@@ -1439,12 +1767,13 @@ impl App {
                     }
                 }
             }
-            "shape" => {
-                // the page's live pill rectangle: the window clip follows it frame by frame during expand/collapse
-                let g = |k: &str| v.get(k).and_then(Value::as_f64).unwrap_or(0.0);
-                if let Some(win) = self.widget.as_mut() {
-                    let scale = win.window.scale_factor();
-                    win.shape.set_shape(g("x"), g("y"), g("w"), g("h"), g("r"), scale);
+            "morph" => {
+                // the page's shell is about to move from one rectangle to another: the clip follows it on a timer of its own
+                let n = |o: &Value, k: &str| o.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+                let six = |o: &Value| [n(o, "x"), n(o, "y"), n(o, "w"), n(o, "h"), n(o, "r"), n(o, "f")];
+                if let (Some(from), Some(to)) = (v.get("from"), v.get("to")) {
+                    let ms = v.get("ms").and_then(Value::as_f64).unwrap_or(0.0).clamp(0.0, 2000.0);
+                    self.start_morph(six(from), six(to), ms, v.get("ft").and_then(Value::as_bool).unwrap_or(false));
                 }
             }
             "platform" => {
@@ -1632,6 +1961,8 @@ pub fn run() -> Result<(), String> {
     state::set_enabled(settings.auto_start_automation);
     if settings.watchers.is_empty() && !Settings::path().exists() {
         settings.watchers = integrations::default_watchers();
+        settings.appearance = Appearance::Light; // the cream Wispr-Flow look; "System" would turn it dark on a dark Windows
+        settings.launch_at_login = true; // in the background from the first start; Settings > General can switch it off
         let _ = settings.save();
     }
 
@@ -1641,6 +1972,13 @@ pub fn run() -> Result<(), String> {
     let menu_proxy = proxy.clone();
     MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
         let _ = menu_proxy.send_event(Ev::Menu(e.id().0.clone()));
+    }));
+
+    let tray_proxy = proxy.clone();
+    TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {
+        if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
+            let _ = tray_proxy.send_event(Ev::Menu("settings".into()));
+        }
     }));
 
     let ticker = proxy.clone();
@@ -1662,6 +2000,8 @@ pub fn run() -> Result<(), String> {
             Event::UserEvent(Ev::Tick) => app.on_tick(target),
             Event::UserEvent(Ev::Sessions(body)) => app.on_sessions(body),
             Event::UserEvent(Ev::SoundChosen(file)) => app.on_sound_chosen(file, target),
+            Event::UserEvent(Ev::Morph(gen)) => app.on_morph(gen),
+            Event::UserEvent(Ev::Prefs(id, data, ok)) => app.on_prefs(id, data, ok, target),
             Event::UserEvent(Ev::Ipc(Target::Settings, body)) => app.on_settings_ipc(&body, target),
             Event::UserEvent(Ev::Ipc(Target::Widget, body)) => app.on_widget_ipc(&body, target),
             Event::UserEvent(Ev::Ipc(Target::Account, body)) => app.on_account_ipc(&body),

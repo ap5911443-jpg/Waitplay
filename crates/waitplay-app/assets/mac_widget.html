@@ -34,6 +34,27 @@ html,body{margin:0;background:transparent;overflow:hidden;color:var(--fg);
 #shell.hide{opacity:0}
 #shell.pill{border-radius:16px}
 
+/* Windows notch (`.vn`, set when the app clips the window to the shell). Fused to the top edge of the display and flaring outward
+   through two concave shoulders, dark glass with a hairline, a grip when open, a peek on hover, a slide-in on first show. Motion is a
+   spring (stiffness 200, damping 26; stiffer for the small peek): the linear() curves are that spring's step response. */
+#shell.vn{--bg:#08080b;transform-origin:50% 0;
+  --sp:linear(0,.0764,.2312,.4002,.5535,.6797,.7774,.8497,.9014,.9371,.9611,.9769,.9868,.993,.9966,.9986,.9997,1.0002,1.0004,1.0005,1.0004,1.0003,1);
+  transition:width .7s var(--sp),height .7s var(--sp),border-radius .7s var(--sp),--c .6s ease,opacity .25s ease,transform .7s var(--sp)}
+#shell.vn.hide{opacity:1;transform:translateY(calc(-100% - 6px))}
+#shell.vn.nm.peek:not(.open):not(.live){transform:scale(1.05,1.06)}
+#shell.vn #clip{box-shadow:inset 1px 0 0 rgba(255,255,255,.07),inset -1px 0 0 rgba(255,255,255,.07),inset 0 -1px 0 rgba(255,255,255,.1)}
+#shell.vn.nm::before,#shell.vn.nm::after{content:"";position:absolute;top:0;width:var(--f,12px);height:var(--f,12px);pointer-events:none;transition:width .7s var(--sp),height .7s var(--sp)}
+#shell.vn.nm::before{right:100%;background:radial-gradient(circle farthest-side at 0 100%,transparent 97%,var(--bg) 100%)}
+#shell.vn.nm::after{left:100%;background:radial-gradient(circle farthest-side at 100% 100%,transparent 97%,var(--bg) 100%)}
+#shell.vn.nm #clip::after{content:"";position:absolute;left:50%;top:8px;width:36px;height:4px;margin-left:-18px;border-radius:2px;background:rgba(255,255,255,.82);opacity:0;pointer-events:none;transition:opacity .3s ease,top .5s var(--ease),width .5s var(--ease),margin .5s var(--ease)}
+#shell.vn.nm.open #clip::after{opacity:1;transition-delay:.2s,0s,0s,0s}
+#shell.vn.nm:not(.live):not(.open):not(.mcrest) #clip::after{opacity:.9;top:15px;width:26px;margin-left:-13px}
+#shell.vn .inds{display:none}
+#shell.vn #clip{contain:layout paint style}
+#shell.vn{will-change:transform;backface-visibility:hidden}
+/* no halo around the Windows notch: the edge light stays a hairline ring, and the window never shows anything past the shell */
+#shell.vn #glow{display:none}
+
 /* edge light: a thin ring plus a soft glow, both clipped so the top edge (the display's own edge) stays dark */
 #rim,#glow{position:absolute;pointer-events:none;border-radius:inherit;
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);
@@ -247,6 +268,7 @@ body.demo #wrap{margin:0 auto}
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
   let S = {}, expanded = false, lastLabel = null, lastSize = '', shrinkTimer = 0, tickTimer = 0, hoverTimer = 0, dwellTimer = 0, sweepTimer = 0, phaseTimer = 0, relayTimer = 0;
   let prevActive = false, startUntil = 0, doneUntil = 0, lastAgent = '', pointerIn = false, toastId = 0, selId = '';
+  let dragging = false, downAt = null, dragAt = 0;
   const PAD_X = 24, PAD_B = 26, TOAST_H = 46;
   const toastOn = () => !!S.toast;
   const mascotOn = () => !!(S.mascot && S.mascot.on);
@@ -269,7 +291,7 @@ body.demo #wrap{margin:0 auto}
   function sizes(){
     if (hasNotch()){
       const w = Math.max(392, NW() + 2 * 96), nh = NH();
-      return { rest: { w: NW() + (mascotOn() ? 68 : 0), h: nh, r: 11 }, live: { w, h: nh + 56, r: 24 }, hdr: nh + 56, panelW: w, notchMode: true };
+      return { rest: { w: NW() + (mascotOn() ? 68 : 0), h: nh, r: S.clip ? 14 : 11 }, live: { w, h: nh + 56, r: 24 }, hdr: nh + 56, panelW: w, notchMode: true };
     }
     const top = (S.corner || 'top-center') === 'top-center';
     const mini = !!S.compact || S.showStatus === false;
@@ -317,26 +339,57 @@ body.demo #wrap{margin:0 auto}
     const r = wrap.getBoundingClientRect(), w = Math.ceil(r.width), h = Math.ceil(r.height), k = w + 'x' + h;
     if (k !== lastSize){ lastSize = k; send({t:'size', w, h}); }
   }
+  /* Windows only (`S.clip`): the window keeps one fixed size and is clipped to the shell, so everything else is click-through. The shell
+     is drawn here (a CSS transition); the app animates the window's clip with the same spring on a timer of its own. All this does is
+     say where the shell is now and where it is going: nothing is measured or sent per frame. */
+  function shellNow(){
+    const nm = shell.classList.contains('nm'), c = shell.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+    return { x: c.left - w.left, y: c.top - w.top, w: c.width, h: c.height, r: parseFloat(getComputedStyle(shell).borderBottomLeftRadius) || 0,
+             f: nm ? parseFloat(getComputedStyle(shell, '::before').width) || 0 : 0 };
+  }
+  function morphTo(to, ms){ send({t:'morph', from: shellNow(), to, ms: reduce.matches ? 0 : ms, ft: shell.classList.contains('nm')}); }
+  function settleRegion(target, fullW, top){
+    morphTo({ x: (fullW - target.w) / 2, y: top, w: target.w, h: target.h, r: target.r, f: shell.classList.contains('nm') ? (expanded ? 20 : 14) : 0 }, 700);
+  }
+  /* the closed notch grows a touch under a cursor that lingers (the CSS rule for .peek), and its clip grows with it */
+  function setPeek(on){
+    if (!S.clip) return;
+    const nm = shell.classList.contains('nm'), ok = on && nm && !shell.classList.contains('open') && !shell.classList.contains('live');
+    if (shell.classList.contains('peek') === ok) return;
+    shell.classList.toggle('peek', ok);
+    const w = shell.offsetWidth, h = shell.offsetHeight, k = ok ? [1.05, 1.06] : [1, 1];
+    morphTo({ x: (wrap.offsetWidth - w) / 2 - w * (k[0] - 1) / 2, y: nm ? 0 : 8, w: w * k[0], h: h * k[1], r: parseFloat(getComputedStyle(shell).borderBottomLeftRadius) || 0, f: 14 }, 700);
+  }
   function layout(){
     const z = sizes(), isLive = live(), p = phase();
     clearTimeout(shrinkTimer);
     const bodyH = body.scrollHeight;
     const th = toastOn() ? TOAST_H : 0;
-    const target = expanded ? { w: z.panelW, h: z.hdr + th + bodyH, r: z.notchMode ? 28 : 26 } : (isLive ? Object.assign({}, z.live, { h: z.live.h + th }) : z.rest);
+    const target = expanded ? { w: z.panelW, h: z.hdr + th + bodyH, r: z.notchMode ? (S.clip ? 30 : 28) : 26 } : (isLive ? Object.assign({}, z.live, { h: z.live.h + th }) : z.rest);
     shell.style.setProperty('--th', th + 'px'); shell.classList.toggle('hastoast', th > 0);
     shell.classList.toggle('nm', z.notchMode); shell.classList.toggle('pill', !z.notchMode);
     shell.classList.toggle('live', isLive && !expanded); shell.classList.toggle('open', expanded);
     document.body.classList.toggle('mon', mascotOn()); shell.classList.toggle('mcrest', mascotOn() && !isLive && !expanded);
     wrap.classList.toggle('pill', !z.notchMode);
     shell.dataset.phase = p;
+    shell.classList.toggle('vn', !!S.clip); shell.style.setProperty('--f', (expanded ? 20 : 14) + 'px');
     shell.style.setProperty('--nw', NW() + 'px'); shell.style.setProperty('--nh', NH() + 'px'); shell.style.setProperty('--bh', z.hdr + 'px');
-    const maxW = Math.max(target.w, z.live.w, z.rest.w, shell.offsetWidth), maxH = Math.max(target.h, shell.offsetHeight);
-    // the window is always at least as big as the shell is during the transition
-    wrap.style.width = (maxW + 2 * PAD_X) + 'px'; wrap.style.height = (maxH + PAD_B + (z.notchMode ? 0 : 8)) + 'px';
+    let fullW = 0;
+    if (S.clip){
+      // one fixed window big enough for every state; only the region follows the shell
+      fullW = Math.max(z.panelW, z.live.w, z.rest.w) + 2 * PAD_X;
+      const fullH = Math.max(z.hdr + TOAST_H + bodyH, z.live.h + TOAST_H, z.rest.h) + PAD_B + (z.notchMode ? 0 : 8);
+      wrap.style.width = fullW + 'px'; wrap.style.height = fullH + 'px';
+    } else {
+      const maxW = Math.max(target.w, z.live.w, z.rest.w, shell.offsetWidth), maxH = Math.max(target.h, shell.offsetHeight);
+      // the window is always at least as big as the shell is during the transition
+      wrap.style.width = (maxW + 2 * PAD_X) + 'px'; wrap.style.height = (maxH + PAD_B + (z.notchMode ? 0 : 8)) + 'px';
+    }
     shell.style.width = target.w + 'px'; shell.style.height = target.h + 'px';
     shell.style.borderRadius = z.notchMode ? '0 0 ' + target.r + 'px ' + target.r + 'px' : target.r + 'px';
     reportSize();
-    if (!expanded){
+    if (S.clip) settleRegion(target, fullW, z.notchMode ? 0 : 8);
+    else if (!expanded){
       shrinkTimer = setTimeout(() => { wrap.style.width = (target.w + 2 * PAD_X) + 'px'; wrap.style.height = (target.h + PAD_B + (z.notchMode ? 0 : 8)) + 'px'; reportSize(); }, reduce.matches ? 0 : 560);
     }
     syncTimer(); paintMascot();
@@ -473,11 +526,11 @@ body.demo #wrap{margin:0 auto}
   function scheduleCollapse(){
     clearTimeout(hoverTimer);
     if (!expanded) return;
-    hoverTimer = setTimeout(() => { if (expanded && !pointerIn && !shell.contains(document.activeElement) ) setExpanded(false); else if (expanded && !pointerIn) scheduleCollapse(); }, 520);
+    hoverTimer = setTimeout(() => { if (expanded && !dragging && !pointerIn && !shell.contains(document.activeElement) ) setExpanded(false); else if (expanded && !pointerIn) scheduleCollapse(); }, S.clip ? 220 : 520);
   }
   shell.addEventListener('pointerenter', () => {
     pointerIn = true; clearTimeout(hoverTimer); shell.classList.add('hover');
-    clearTimeout(dwellTimer); if (!expanded) dwellTimer = setTimeout(() => { if (pointerIn) setExpanded(true); }, 260);
+    clearTimeout(dwellTimer); if (!expanded) dwellTimer = setTimeout(() => { if (pointerIn) setExpanded(true); }, S.clip ? 200 : 260);
   });
   shell.addEventListener('pointermove', e => {
     if (!mascotOn()) return;
@@ -486,7 +539,24 @@ body.demo #wrap{margin:0 auto}
     mascots().forEach(x => x.look(dx, dy));
   });
   shell.addEventListener('pointerleave', () => { mascots().forEach(x => x.look(null)); });
-  shell.addEventListener('pointerleave', () => { pointerIn = false; clearTimeout(dwellTimer); shell.classList.remove('hover'); scheduleCollapse(); });
+  shell.addEventListener('pointerleave', () => { pointerIn = false; clearTimeout(dwellTimer); clearTimeout(peekTimer); shell.classList.remove('hover'); setPeek(false); scheduleCollapse(); });
+  /* Windows: the closed notch grows a touch under a cursor that lingers, a moment after it arrives (a fast fly-by does nothing) */
+  let peekTimer = 0;
+  shell.addEventListener('pointerenter', () => { clearTimeout(peekTimer); peekTimer = setTimeout(() => { if (pointerIn) setPeek(true); }, 120); });
+
+  /* Windows only: press on the floating pill (not on a control) and move a few pixels, then Windows' own move loop takes over and the
+     app remembers where it lands. The notch at the top centre is fixed. */
+  shell.addEventListener('pointerdown', e => {
+    if (!S.clip || shell.classList.contains('nm') || e.button !== 0 || e.target.closest('button,.srow')) return;
+    downAt = { x: e.screenX, y: e.screenY };
+  });
+  document.addEventListener('pointermove', e => {
+    if (!S.clip) return;
+    if (dragging){ if (performance.now() - dragAt > 400){ dragging = false; scheduleCollapse(); } return; } // the move loop ended: pointer events resume
+    if (!downAt || !(e.buttons & 1)) return;
+    if (Math.abs(e.screenX - downAt.x) + Math.abs(e.screenY - downAt.y) > 5){ downAt = null; dragging = true; dragAt = performance.now(); clearTimeout(hoverTimer); send({t:'drag'}); }
+  });
+  document.addEventListener('pointerup', () => { downAt = null; });
 
   window.wpWidget = { apply, expand: setExpanded, fadeOut(){ shell.classList.add('hide'); } };
   new ResizeObserver(reportSize).observe(wrap);

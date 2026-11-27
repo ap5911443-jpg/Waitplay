@@ -3,6 +3,11 @@
 //! Windows: `%LOCALAPPDATA%\WaitPlay\webview2` (the same folder the C# app used, so existing logins carry over).
 //! macOS: `~/Library/Application Support/WaitPlay/webview2`; elsewhere `$XDG_DATA_HOME` or `~/.local/share`.
 //! `WAITPLAY_PROFILE_DIR` overrides the location (portable installs, tests) and is used exactly as given.
+//!
+//! Each Vibe Play account has its own browser profile, so the Instagram / YouTube / X logins belong to the account, not to the PC: the
+//! first account that signs in keeps the existing profile (so nothing is lost), every other account gets `profiles\<account id>`, and
+//! while nobody is signed in a separate empty profile is used. Signing out and in again returns to the same profile. The site logins
+//! never leave this PC; on another PC the account's preferences and plan follow it, and the sites are signed in again there.
 
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -18,7 +23,65 @@ pub fn resolve() -> PathBuf {
             return p;
         }
     }
-    adopt(&default_dir(), &legacy_dir())
+    let default = default_dir();
+    match account_dir(&default) {
+        Some(dir) => {
+            let _ = fs::create_dir_all(&dir);
+            dir
+        }
+        None => adopt(&default, &legacy_dir()),
+    }
+}
+
+/// The folder that says whose profile is in use (`active-account`) and who owns the default one (`profile-owner`).
+fn account_root(default: &Path) -> PathBuf {
+    default.parent().unwrap_or(default).to_path_buf()
+}
+
+fn read_trim(p: &Path) -> Option<String> {
+    fs::read_to_string(p).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// Account ids are UUIDs: letters, digits and dashes only, so the id can never be a path.
+fn valid_id(id: &str) -> bool {
+    (8..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// `None`: no account was ever recorded, the default profile is used as before.
+fn account_dir(default: &Path) -> Option<PathBuf> {
+    let root = account_root(default);
+    let who = read_trim(&root.join("active-account"))?;
+    if who == "-" {
+        return Some(root.join("profiles").join("signed-out").join("webview2"));
+    }
+    if !valid_id(&who) {
+        return None;
+    }
+    if read_trim(&root.join("profile-owner")).as_deref() == Some(who.as_str()) {
+        return Some(adopt(default, &legacy_dir()));
+    }
+    Some(root.join("profiles").join(&who).join("webview2"))
+}
+
+/// Records whose profile the entertainment windows use from now on: `Some(account id)` after a sign-in, `None` after a sign-out.
+/// The first account ever recorded becomes the owner of the existing default profile.
+pub fn set_active(account: Option<&str>) {
+    set_active_in(&account_root(&default_dir()), account);
+}
+
+fn set_active_in(root: &Path, account: Option<&str>) {
+    let _ = fs::create_dir_all(root);
+    let value = match account {
+        Some(id) if valid_id(id) => {
+            if read_trim(&root.join("profile-owner")).is_none() {
+                let _ = paths::write_atomic(&root.join("profile-owner"), id.as_bytes());
+            }
+            id
+        }
+        Some(_) => return,
+        None => "-",
+    };
+    let _ = paths::write_atomic(&root.join("active-account"), value.as_bytes());
 }
 
 fn default_dir() -> PathBuf {
@@ -106,6 +169,25 @@ mod tests {
 
     fn tag(dir: &Path) -> String {
         fs::read_to_string(dir.join("EBWebView").join("Default").join("Network").join("Cookies")).unwrap_or_default()
+    }
+
+    #[test]
+    fn every_account_gets_its_own_profile_and_signing_back_in_returns_to_it() {
+        let r = scratch("acct");
+        let default = r.join("WaitPlay").join("webview2");
+        let root = account_root(&default);
+        assert_eq!(account_dir(&default), None, "nobody recorded yet: the default profile, as before");
+        set_active_in(&root, Some("aaaaaaaa-1111"));
+        assert_eq!(account_dir(&default), Some(adopt(&default, &legacy_dir())), "the first account owns the existing profile");
+        set_active_in(&root, Some("bbbbbbbb-2222"));
+        assert_eq!(account_dir(&default), Some(root.join("profiles").join("bbbbbbbb-2222").join("webview2")));
+        set_active_in(&root, None);
+        assert_eq!(account_dir(&default), Some(root.join("profiles").join("signed-out").join("webview2")));
+        set_active_in(&root, Some("aaaaaaaa-1111"));
+        assert_eq!(account_dir(&default), Some(adopt(&default, &legacy_dir())), "back to the first account's profile");
+        set_active_in(&root, Some("../evil"));
+        assert_eq!(account_dir(&default), Some(adopt(&default, &legacy_dir())), "an id that is not an id changes nothing");
+        let _ = fs::remove_dir_all(&r);
     }
 
     #[test]
