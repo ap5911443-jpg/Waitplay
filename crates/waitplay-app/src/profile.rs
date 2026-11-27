@@ -84,6 +84,18 @@ fn set_active_in(root: &Path, account: Option<&str>) {
     let _ = paths::write_atomic(&root.join("active-account"), value.as_bytes());
 }
 
+/// The app recorded that nobody is signed in. Only the account-enabled app writes this, so builds without an account service, and
+/// machines where it never ran, are never "signed out".
+#[cfg(any(target_os = "macos", test))]
+pub fn signed_out() -> bool {
+    signed_out_in(&account_root(&default_dir()))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn signed_out_in(root: &Path) -> bool {
+    read_trim(&root.join("active-account")).as_deref() == Some("-")
+}
+
 /// The WebKit data-store identifier of whoever is signed in, for macOS where a profile folder cannot be chosen (wry's
 /// `with_data_store_identifier`, macOS 14 and later). `None`: use the default store (nobody recorded yet, or the account that owns the
 /// original profile, so today's logins carry over). Every other account gets a store of its own; so does "signed out".
@@ -238,6 +250,18 @@ mod tests {
         assert_eq!(store_id_in(&root), Some(*b"vibeplay-signout"));
         set_active_in(&root, Some("aaaaaaaa-1111-2222-3333-444444444444"));
         assert_eq!(store_id_in(&root), None, "signing back in returns to the owner's store");
+        let _ = fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn only_a_recorded_sign_out_counts_as_signed_out() {
+        let r = scratch("gate");
+        let root = r.join("WaitPlay");
+        assert!(!signed_out_in(&root), "never recorded");
+        set_active_in(&root, None);
+        assert!(signed_out_in(&root));
+        set_active_in(&root, Some("aaaaaaaa-1111"));
+        assert!(!signed_out_in(&root));
         let _ = fs::remove_dir_all(&r);
     }
 

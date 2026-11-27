@@ -56,6 +56,13 @@ fn main() {
         return;
     }
 
+    // The account gate covers the command line too: while signed out, `--toggle` cannot switch automation on
+    #[cfg(target_os = "macos")]
+    if args.toggle && profile::signed_out() {
+        println!("Vibe Play enabled: False (sign in to Vibe Play first)");
+        return;
+    }
+
     if args.toggle {
         platform::attach_parent_console();
         let enabled = state::toggle();
@@ -75,6 +82,13 @@ fn main() {
             eprintln!("waitplay: {}", e);
             std::process::exit(1);
         }
+        return;
+    }
+
+    // ...and no entertainment window opens (`--open`, `--game`, agent launches) until somebody signs in
+    #[cfg(target_os = "macos")]
+    if profile::signed_out() {
+        eprintln!("waitplay: sign in to Vibe Play first");
         return;
     }
 
