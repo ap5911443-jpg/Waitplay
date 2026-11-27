@@ -246,49 +246,6 @@ pub fn cursor_logical() -> Option<(f64, f64)> {
 
 pub fn attach_parent_console() {}
 
-/// The native glass behind the widget: an `NSVisualEffectView` (real behind-window blur and vibrancy that follows light/dark,
-/// Reduce Transparency and Increase Contrast by itself) placed under the transparent web page and shaped to the page's pill.
-pub struct Glass {
-    fx: Retained<objc2_app_kit::NSVisualEffectView>,
-}
-
-impl Glass {
-    /// `content_view` is the window's `NSView` (tao's `ns_view()`). Main thread only.
-    pub fn attach(content_view: *mut std::ffi::c_void) -> Option<Glass> {
-        use objc2_app_kit::{NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSView, NSWindowOrderingMode};
-        use objc2_foundation::{NSPoint, NSRect, NSSize};
-        let mtm = MainThreadMarker::new()?;
-        if content_view.is_null() {
-            return None;
-        }
-        // SAFETY: tao hands out the window's live content view
-        let content: &NSView = unsafe { &*(content_view as *const NSView) };
-        let fx = NSVisualEffectView::initWithFrame(mtm.alloc(), NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0)));
-        fx.setMaterial(NSVisualEffectMaterial::Popover);
-        fx.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-        fx.setState(NSVisualEffectState::Active);
-        fx.setWantsLayer(true);
-        content.addSubview_positioned_relativeTo(&fx, NSWindowOrderingMode::Below, None);
-        Some(Glass { fx })
-    }
-
-    /// `x`,`y`,`w`,`h`: the pill inside the page (CSS px, top-left origin); `wh`: the page's height; `radius`: corner radius.
-    pub fn set_shape(&self, x: f64, y: f64, w: f64, h: f64, wh: f64, radius: f64) {
-        use objc2::runtime::{AnyObject, Bool};
-        use objc2_foundation::{NSPoint, NSRect, NSSize};
-        // AppKit measures y upwards from the bottom of the content view
-        self.fx.setFrame(NSRect::new(NSPoint::new(x, wh - (y + h)), NSSize::new(w.max(1.0), h.max(1.0))));
-        // SAFETY: `layer` is a CALayer once wantsLayer is set; both setters take plain scalars
-        unsafe {
-            let layer: *mut AnyObject = objc2::msg_send![&*self.fx, layer];
-            if !layer.is_null() {
-                let _: () = objc2::msg_send![layer, setCornerRadius: radius];
-                let _: () = objc2::msg_send![layer, setMasksToBounds: Bool::YES];
-            }
-        }
-    }
-}
-
 /// Liquid glass behind a whole window: an `NSVisualEffectView` (real behind-window blur and vibrancy, follows light/dark, Reduce
 /// Transparency and Increase Contrast by itself) filling the content view under the transparent header page; the opaque site view
 /// covers the middle. The window itself must be non-opaque (tao's `with_transparent`). Main thread only.

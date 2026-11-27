@@ -266,7 +266,6 @@ impl Supervisor {
 struct WidgetWin {
     // the webview drops before the window that hosts it
     webview: WebView,
-    glass: Option<platform::Glass>,
     window: Window,
     size: Option<(f64, f64)>,
     shown: bool,
@@ -941,11 +940,7 @@ impl App {
             .build(&window)
             .map_err(|e| format!("webview: {}", e))?;
         platform::set_window_level(window.ns_window(), 8);
-        let glass = platform::Glass::attach(window.ns_view());
-        if glass.is_none() {
-            wp_warn!("native glass could not be attached; the widget falls back to its flat tint");
-        }
-        Ok(WidgetWin { webview, glass, window, size: None, shown: false, fullscreen_hidden: false, drag: None, screen_origin: None })
+        Ok(WidgetWin { webview, window, size: None, shown: false, fullscreen_hidden: false, drag: None, screen_origin: None })
     }
 
     /// The widget stays on the display it was on; a first placement (or a vanished display) uses the display under the pointer.
@@ -1565,15 +1560,6 @@ impl App {
                         win.size = Some((w.ceil(), h.ceil()));
                     }
                     self.place_widget();
-                }
-            }
-            "shape" => {
-                // the page's live pill rectangle: the native glass follows it frame by frame during expand/collapse
-                let g = |k: &str| v.get(k).and_then(Value::as_f64).unwrap_or(0.0);
-                if let Some(win) = self.widget.as_ref() {
-                    if let Some(glass) = win.glass.as_ref() {
-                        glass.set_shape(g("x"), g("y"), g("w"), g("h"), g("wh"), g("r"));
-                    }
                 }
             }
             "platform" => {

@@ -40,12 +40,10 @@ Pages: `assets/settings.html` and `assets/mac_widget.html` are self-contained HT
 reduced-motion aware) that talk to Rust over wry IPC. They are plain HTML like the existing `header.html`/`widget.html`, not a
 React build: the repo's React app (`apps/web`) is the bridge's web dashboard, not part of the desktop shell.
 
-**Liquid Glass bar** (`mac_widget.html` + `platform::Glass`): the glass is a native `NSVisualEffectView` (real behind-window blur,
-follows light/dark, Reduce Transparency, Increase Contrast) under the transparent page and shaped to the page's pill; the page
-reports the pill rectangle on every animation frame, so the glass grows with the capsule into the expanded panel. The page adds the
-edge light, inner highlight and contents. It uses the vibrancy material available on every supported macOS, not the macOS 26
-`NSGlassEffectView`. To preview the look without a Mac, open `crates/waitplay-app/assets/mac_widget.html` in a browser (demo mode
-fakes the blur). `WAITPLAY_TEST_EXPAND_WIDGET=1` makes the app expand the widget after start (used by the CI screenshots).
+**Widget look** (`mac_widget.html`): an opaque black shape with a moving edge light, sized to the real camera notch
+(`platform::notch_size`); nothing depends on a macOS blur. To preview it without the app, open
+`crates/waitplay-app/assets/mac_widget.html` in a browser (demo mode). `WAITPLAY_TEST_EXPAND_WIDGET=1` makes a `test-hooks` build
+expand the widget after start (used by the CI screenshots).
 
 ## Permissions
 
@@ -206,6 +204,7 @@ screen. **Pass** = checked as written. **Partial** = only what the note says was
 | E1-E3 | Partial | Page logic passes. **Whether macOS delivers hover to the unfocusable widget window is not tested** |
 | E4 | Partial | Centred at the top of a notched display. External / no-notch display not run |
 | E5, E6 | Pass (page) | States, pills and expansion; colours not reviewed |
+| E7 | Resolved in code | The native glass view stayed 1x1 point because the page never sent `shape`; it and the handler were removed. Not inspected by eye |
 | F | Pass | A real Claude Code prompt opened the window; `smoke.sh` (25/25) and `simulate` open and hide it |
 | G | Partial | Both DMGs verify and the ad-hoc signatures are valid. x86_64 not run; clean install, Gatekeeper, login start, upgrade not run |
 
