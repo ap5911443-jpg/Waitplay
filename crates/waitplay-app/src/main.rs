@@ -4,10 +4,14 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(any(target_os = "macos", windows))]
+mod account_sync;
+#[cfg(any(target_os = "macos", windows))]
 mod account_ui;
 mod cli;
 mod companion;
 mod logging;
+#[cfg(any(target_os = "macos", windows))]
+mod logins;
 #[cfg(any(target_os = "macos", windows, test))]
 mod logo;
 #[cfg(any(target_os = "macos", windows, test))]
@@ -35,9 +39,9 @@ fn main() {
     let args = cli::parse(std::env::args().skip(1));
 
     // helper processes of the tray app: they open the browser profile the way the entertainment window does, answer and exit
-    #[cfg(windows)]
+    #[cfg(any(target_os = "macos", windows))]
     if args.check_logins || args.logout.is_some() {
-        win::logins::run_helper(args.logout);
+        logins::run_helper(args.logout);
         return;
     }
 

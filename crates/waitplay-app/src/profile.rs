@@ -84,6 +84,38 @@ fn set_active_in(root: &Path, account: Option<&str>) {
     let _ = paths::write_atomic(&root.join("active-account"), value.as_bytes());
 }
 
+/// The WebKit data-store identifier of whoever is signed in, for macOS where a profile folder cannot be chosen (wry's
+/// `with_data_store_identifier`, macOS 14 and later). `None`: use the default store (nobody recorded yet, or the account that owns the
+/// original profile, so today's logins carry over). Every other account gets a store of its own; so does "signed out".
+pub fn store_id() -> Option<[u8; 16]> {
+    store_id_in(&account_root(&default_dir()))
+}
+
+fn store_id_in(root: &Path) -> Option<[u8; 16]> {
+    let who = read_trim(&root.join("active-account"))?;
+    if who == "-" {
+        return Some(*b"vibeplay-signout");
+    }
+    if !valid_id(&who) || read_trim(&root.join("profile-owner")).as_deref() == Some(who.as_str()) {
+        return None;
+    }
+    // an account id is a UUID: its 32 hex digits are the 16 bytes; anything else is hashed (FNV-1a, twice, different seeds)
+    let hex: String = who.chars().filter(|c| *c != '-').collect();
+    if hex.len() == 32 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        let mut out = [0u8; 16];
+        for (i, b) in out.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+        }
+        return Some(out);
+    }
+    let fnv = |seed: u64| who.bytes().fold(seed, |h, b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3));
+    let (a, b) = (fnv(0xcbf2_9ce4_8422_2325), fnv(0x8422_2325_cbf2_9ce4));
+    let mut out = [0u8; 16];
+    out[..8].copy_from_slice(&a.to_le_bytes());
+    out[8..].copy_from_slice(&b.to_le_bytes());
+    Some(out)
+}
+
 fn default_dir() -> PathBuf {
     #[cfg(windows)]
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
@@ -187,6 +219,25 @@ mod tests {
         assert_eq!(account_dir(&default), Some(adopt(&default, &legacy_dir())), "back to the first account's profile");
         set_active_in(&root, Some("../evil"));
         assert_eq!(account_dir(&default), Some(adopt(&default, &legacy_dir())), "an id that is not an id changes nothing");
+        let _ = fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn each_account_gets_its_own_webkit_store_and_the_owner_keeps_the_default() {
+        let r = scratch("store");
+        let root = r.join("WaitPlay");
+        assert_eq!(store_id_in(&root), None, "nobody recorded: the default store");
+        set_active_in(&root, Some("aaaaaaaa-1111-2222-3333-444444444444"));
+        assert_eq!(store_id_in(&root), None, "the first account owns the default store");
+        set_active_in(&root, Some("bbbbbbbb-1111-2222-3333-444444444444"));
+        let b = store_id_in(&root).expect("a second account has its own store");
+        assert_eq!(b[0], 0xbb);
+        set_active_in(&root, Some("cccccccc-1111-2222-3333-444444444444"));
+        assert_ne!(store_id_in(&root), Some(b));
+        set_active_in(&root, None);
+        assert_eq!(store_id_in(&root), Some(*b"vibeplay-signout"));
+        set_active_in(&root, Some("aaaaaaaa-1111-2222-3333-444444444444"));
+        assert_eq!(store_id_in(&root), None, "signing back in returns to the owner's store");
         let _ = fs::remove_dir_all(&r);
     }
 

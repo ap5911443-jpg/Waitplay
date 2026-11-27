@@ -61,6 +61,11 @@ mod imp {
         }
     }
 
+    /// Windows keeps each account's logins in its own profile folder (`profile::resolve`), so the builder needs nothing more.
+    pub fn with_store(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuilder<'_> {
+        builder
+    }
+
     /// Trims what the browser does in the background (update checks, telemetry pings, translate, media-router, hint downloads) and keeps
     /// wry's own defaults. Header and site webviews share one browser process, so they MUST get the same string.
     pub fn tune(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuilder<'_> {
@@ -85,6 +90,15 @@ mod imp {
         done(false)
     }
     pub fn resume(_wv: &WebView) {}
+    /// macOS keeps each account's logins in its own WebKit data store (macOS 14 and later; older systems share one store).
+    pub fn with_store(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuilder<'_> {
+        #[cfg(target_os = "macos")]
+        if let Some(id) = crate::profile::store_id() {
+            use wry::WebViewBuilderExtDarwin;
+            return builder.with_data_store_identifier(id);
+        }
+        builder
+    }
     pub fn tune(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuilder<'_> {
         builder
     }

@@ -138,3 +138,12 @@ has capacity (it is allowed to be cancelled); check the latest run for its resul
 - [ ] Terminal.app / iTerm2 / VS Code: the window follows the terminal that ran the prompt
 - [ ] Reduce Motion, VoiceOver, keyboard navigation of the settings window
 - [ ] Gatekeeper behaviour of a Developer ID signed and notarized DMG (the CI build is ad-hoc signed)
+
+## Account-first setup (same as Windows)
+
+The settings page (`assets/settings.html`) is now one page for both apps (macOS adds the Permissions pane, the Dock-icon switch, the title-bar drag area and Mac wording), and the account logic is shared (`account_sync.rs`, `logins.rs`, `profile.rs`):
+
+- **An account is required** (in builds with the account service): while nobody is signed in, automation is off and Settings shows only the sign-in screen. The setup guide (sign in, preferences, Instagram / YouTube / X, your main coding agent, connect it) opens on first run and moves on by itself after sign-in; Launch at login (a LaunchAgent) is switched on when it is finished.
+- **The account keeps** the preferences (`user_preferences`, saved 3 s after every change, restored on sign-in), the plan (server `entitlements`) and the site logins *on this Mac*: each account has its own WebKit data store (`with_data_store_identifier`, macOS 14 and later; the first account to sign in keeps the original store, so nothing is lost; on macOS 13 and earlier every account shares one store). Site logins are never uploaded.
+- **Login detection:** the open entertainment window writes `vibeplay-logins.json` (cookie names only); with no window open, a hidden helper (`waitplay --logins`, `--logout=<site>`) does it. The tray app never opens a web view on the entertainment store itself.
+- **Not tested on a Mac yet:** this was written on Windows and type-checked for `aarch64-apple-darwin`; run it on a real Mac before releasing (sign-in, the guide, the per-account store, the hover peek).

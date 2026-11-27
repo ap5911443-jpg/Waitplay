@@ -4,7 +4,7 @@
 //! The platform-independent logic is shared with macOS and NOT duplicated: status derivation and the tray menu content are the very
 //! same source files (`mac/status.rs`, `mac/menu_model.rs`), pulled in with `#[path]` so both platforms always say the same thing.
 //! Only what differs on Windows lives here: Win32 glass and frame handling, the Run-key login item, the entertainment login check, the
-//! agent folder names and hook command quoting, and the pages (`mac_widget.html` shared with macOS, `win_settings.html`).
+//! agent folder names and hook command quoting, and the pages (`mac_widget.html` and `settings.html`, both shared with macOS).
 #![allow(dead_code)]
 
 pub mod app;
@@ -14,6 +14,5 @@ pub mod login_item;
 pub mod native;
 #[path = "../mac/menu_model.rs"]
 pub mod menu_model;
-pub mod logins;
 #[path = "../mac/status.rs"]
 pub mod status;

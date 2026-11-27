@@ -1,4 +1,4 @@
-//! Which entertainment sites are signed in, and signing out of them.
+//! Which entertainment sites are signed in, and signing out of them (Windows and macOS).
 //!
 //! The logins live in the entertainment window's browser profile (`profile::resolve`), and only processes that run the entertainment
 //! window's own webview setup may touch it: a webview opened by the tray app on the same profile fights the entertainment window's
@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tao::dpi::LogicalSize;
 use tao::event_loop::EventLoop;
-use tao::platform::windows::WindowBuilderExtWindows;
 use tao::window::WindowBuilder;
 use waitplay_core::{now_ms, process};
 use wry::{WebContext, WebView, WebViewBuilder};
@@ -66,17 +65,29 @@ fn forget(webview: &WebView, key: &str) {
 /// The helper process: `waitplay --logins` (check) or `waitplay --logout=<site>` (sign out, then check). Opens the profile exactly the
 /// way the entertainment window does, writes the answer and exits.
 pub fn run_helper(logout: Option<String>) {
-    let event_loop = EventLoop::new();
+    #[allow(unused_mut)]
+    let mut event_loop = EventLoop::new();
+    #[cfg(target_os = "macos")]
+    {
+        use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
+        event_loop.set_activation_policy(ActivationPolicy::Prohibited); // no Dock icon, no menu bar for a helper nobody sees
+    }
     let profile = crate::profile::resolve();
     let mut context = WebContext::new(Some(profile.clone()));
-    let window = match WindowBuilder::new().with_title("Vibe Play session check").with_visible(false).with_decorations(false).with_skip_taskbar(true).with_inner_size(LogicalSize::new(1.0, 1.0)).build(&event_loop) {
+    let builder = WindowBuilder::new().with_title("Vibe Play session check").with_visible(false).with_decorations(false).with_inner_size(LogicalSize::new(1.0, 1.0));
+    #[cfg(windows)]
+    let builder = {
+        use tao::platform::windows::WindowBuilderExtWindows;
+        builder.with_skip_taskbar(true)
+    };
+    let window = match builder.build(&event_loop) {
         Ok(w) => w,
         Err(e) => {
             wp_warn!("login check: window: {e}");
             return;
         }
     };
-    let webview = match webview2::tune(WebViewBuilder::new_with_web_context(&mut context)).with_url("about:blank").build(&window) {
+    let webview = match webview2::tune(webview2::with_store(WebViewBuilder::new_with_web_context(&mut context))).with_url("about:blank").build(&window) {
         Ok(w) => w,
         Err(e) => {
             wp_warn!("login check: webview: {e}");

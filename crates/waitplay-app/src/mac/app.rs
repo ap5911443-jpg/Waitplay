@@ -8,7 +8,9 @@
 use super::menu_model::{self, Entry};
 use super::status::{self, SessionsView, Status};
 use super::{icons, integrations, login_item, permissions};
+use crate::account_sync;
 use crate::account_ui::{AccountUi, Notify};
+use crate::logins;
 use crate::placement::{self, Screen};
 use crate::{platform, wp_error, wp_info, wp_warn};
 use serde_json::{json, Value};
@@ -71,6 +73,8 @@ enum Ev {
     Menu(String),
     Hotkey(u32),
     SoundChosen(Option<String>),
+    /// The account's saved preferences, fetched on a worker thread after a sign-in: (account id, saved data or none, fetch worked).
+    Prefs(String, Option<Value>, bool),
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -282,6 +286,18 @@ struct App {
     problems: Vec<(String, String, String, String)>,
     update_detail: &'static str,
     quitting: bool,
+    /// The setup guide has been finished or skipped on this Mac (see [`account_sync::load_onboarded`]).
+    onboarded: bool,
+    /// Entertainment sign-in check (see [`logins`]); only polled while the setup guide's sites page is on screen.
+    logins: logins::Logins,
+    watch_logins: bool,
+    login_state: Option<std::collections::BTreeMap<&'static str, bool>>,
+    /// The signed-in account, and the moment preferences last changed and still have to be saved to it.
+    last_account: Option<String>,
+    prefs_dirty: Option<Instant>,
+    prefs_applying: bool,
+    /// The next saved-preferences answer belongs to app startup, not to a sign-in.
+    prefs_startup: bool,
     /// Grouped notifications and sound cues, from the session list.
     tracker: island::Tracker,
     /// Timings of finished work for the Insights page (local only).
@@ -314,6 +330,14 @@ impl App {
             problems: Vec::new(),
             update_detail: "Automatic update checks arrive in a later release. New versions are published on the website.",
             quitting: false,
+            onboarded: account_sync::load_onboarded(),
+            logins: logins::Logins::default(),
+            watch_logins: false,
+            login_state: None,
+            last_account: None,
+            prefs_dirty: None,
+            prefs_applying: false,
+            prefs_startup: false,
             tracker: island::Tracker::new(),
             recorder: insights::Recorder::new(),
             last_sound_ms: 0,
@@ -330,6 +354,22 @@ impl App {
         self.refresh_widget_window(target);
         self.sync_login_item();
         self.refresh_runtime(true);
+        if self.account.available() {
+            // the browser data of whoever is signed in, and no automation at all while nobody is
+            self.last_account = self.account.user_id();
+            crate::profile::set_active(self.last_account.as_deref());
+            if let Some(id) = self.last_account.clone() {
+                self.prefs_startup = true;
+                self.fetch_prefs(id);
+            }
+            if self.last_account.is_none() {
+                state::set_enabled(false);
+                self.rt.enabled = false;
+            }
+        }
+        if !self.onboarded || self.account_gate() {
+            self.open_settings(target); // first run: the settings window opens on the setup guide
+        }
         wp_info!("Vibe Play {} ({}) started; {} display(s)", VERSION, BUILD, self.screens.len());
     }
 
@@ -433,6 +473,18 @@ impl App {
 
     fn on_tick(&mut self, target: &EventLoopWindowTarget<Ev>) {
         self.ticks += 1;
+        self.watch_account(target);
+        if self.prefs_dirty.is_some_and(|t| t.elapsed() >= Duration::from_secs(3)) {
+            self.prefs_dirty = None;
+            self.save_prefs();
+        }
+        if self.watch_logins && self.settings_win.is_some() && self.ticks % 2 == 0 {
+            let now = self.logins.state();
+            if now != self.login_state {
+                self.login_state = now;
+                self.push_settings();
+            }
+        }
         self.account.on_tick(&self.account_notify());
         // a second launch of the app (run from a shell) asks this one to show its settings
         if open_request_pending() {
@@ -580,7 +632,11 @@ impl App {
         self.tracker.tick(now_ms(), self.settings.notification_secs);
         let st = self.status();
         let platform_label = menu_model::site_label(&self.settings.preferred_platform);
-        let (title, detail) = status::describe(st, &self.rt.view, platform_label);
+        let (mut title, mut detail) = status::describe(st, &self.rt.view, platform_label);
+        if self.account_gate() {
+            title = "Sign in to continue".into();
+            detail = "Open Vibe Play and sign in".into();
+        }
         self.render_menu(st, &title);
         self.render_widget(st, &title, &detail);
         self.push_settings();
@@ -759,6 +815,8 @@ impl App {
         }
         json!({
             "settings": settings,
+            "account": self.account.view(),
+            "onboarding": !self.onboarded,
             "runtime": {
                 "enabled": self.rt.enabled,
                 "status": st.as_str(),
@@ -768,6 +826,7 @@ impl App {
                 "customSound": self.settings.sound_custom_file,
                 "errors": errors,
                 "agents": agents,
+                "logins": self.login_state,
                 "permissions": permissions::list(self.settings.launch_at_login),
                 "shortcutErrors": { "toggleAutomation": self.shortcut_errors[0], "toggleWidget": self.shortcut_errors[1] },
                 "version": VERSION,
@@ -930,6 +989,8 @@ impl App {
     fn on_account_ipc(&mut self, body: &str) {
         let notify = self.account_notify();
         self.account.on_message(body, &notify);
+        // the Account and Plans pages of the settings window show the same account: refresh them when it changes
+        self.push_settings();
     }
 
     fn open_account(&mut self, target: &EventLoopWindowTarget<Ev>) {
@@ -953,8 +1014,8 @@ impl App {
     fn create_settings(&mut self, target: &EventLoopWindowTarget<Ev>) -> Result<SettingsWin, String> {
         let window = WindowBuilder::new()
             .with_title("Vibe Play")
-            .with_inner_size(LogicalSize::new(760.0, 540.0))
-            .with_min_inner_size(LogicalSize::new(680.0, 460.0))
+            .with_inner_size(self.settings_default_size())
+            .with_min_inner_size(LogicalSize::new(760.0, 540.0))
             .with_resizable(true)
             .with_titlebar_transparent(true)
             .with_title_hidden(true)
@@ -976,7 +1037,137 @@ impl App {
 
     // ── actions ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+    /// Vibe Play needs an account: while this build has an account service and nobody is signed in, nothing runs and the settings
+    /// window shows only the sign-in screen.
+    fn account_gate(&self) -> bool {
+        self.account.available() && self.account.user_id().is_none()
+    }
+
+    /// Notices a sign-in, a sign-out or a switch to another account. The entertainment windows and the sign-in check hold the old
+    /// account's browser data, so they let go of it first; then the new account's data and saved preferences take over.
+    fn watch_account(&mut self, target: &EventLoopWindowTarget<Ev>) {
+        if !self.account.available() {
+            return;
+        }
+        let now = self.account.user_id();
+        if now == self.last_account {
+            return;
+        }
+        let previous = std::mem::replace(&mut self.last_account, now.clone());
+        wp_info!("account changed: {}", if now.is_some() { "signed in" } else { "signed out" });
+        signals::write_quit_signal();
+        self.logins = logins::Logins::default();
+        self.login_state = None;
+        self.prefs_dirty = None;
+        crate::profile::set_active(now.as_deref());
+        match now {
+            Some(id) => {
+                state::set_enabled(true);
+                self.rt.enabled = true;
+                let _ = std::thread::Builder::new().name("wp-post-state".into()).spawn(|| BridgeClient::new().post_state(true));
+                self.prefs_startup = false;
+                self.fetch_prefs(id);
+            }
+            None => {
+                state::set_enabled(false);
+                self.rt.enabled = false;
+                let _ = std::thread::Builder::new().name("wp-post-state".into()).spawn(|| BridgeClient::new().post_state(false));
+                if previous.is_some() || !self.onboarded {
+                    self.open_settings(target); // the sign-in screen
+                }
+            }
+        }
+        self.last_settings_state = None;
+        self.last_widget_state = None;
+        self.render();
+    }
+
+    /// Fetches the account's saved preferences on a worker thread; the answer comes back as `Ev::Prefs`.
+    fn fetch_prefs(&self, id: String) {
+        let Some(svc) = self.account.service() else { return };
+        let proxy = self.proxy.clone();
+        let _ = std::thread::Builder::new().name("wp-prefs-restore".into()).spawn(move || {
+            let (data, ok) = match svc.fetch_preferences() {
+                Ok(d) => (d, true),
+                Err(e) => {
+                    wp_warn!("saved preferences could not be fetched: {}", e.user_message());
+                    (None, false)
+                }
+            };
+            let _ = proxy.send_event(Ev::Prefs(id, data, ok));
+        });
+    }
+
+    fn save_prefs(&mut self) {
+        let Some(svc) = self.account.service() else { return };
+        if self.last_account.is_none() {
+            return;
+        }
+        let data = account_sync::synced_prefs(&self.settings);
+        let _ = std::thread::Builder::new().name("wp-prefs-save".into()).spawn(move || {
+            if let Err(e) = svc.save_preferences(&data) {
+                wp_warn!("preferences could not be saved to the account: {}", e.user_message());
+            }
+        });
+    }
+
+    /// The saved preferences arrived after a sign-in: they replace this Mac's. A brand-new account has none yet, so this Mac's are saved.
+    fn on_prefs(&mut self, id: String, data: Option<Value>, ok: bool, target: &EventLoopWindowTarget<Ev>) {
+        if self.last_account.as_deref() != Some(id.as_str()) || !ok {
+            return;
+        }
+        // at startup this Mac's settings win over the saved ones (they are saved a moment after every change); the saved ones only
+        // fill in when the account has none yet
+        if std::mem::take(&mut self.prefs_startup) {
+            if let Some(saved) = &data {
+                if *saved != account_sync::synced_prefs(&self.settings) {
+                    self.prefs_dirty = Some(Instant::now()); // this Mac's win: save them to the account
+                }
+                return;
+            }
+        }
+        match data {
+            Some(saved) => {
+                let patch = account_sync::restore_patch(&saved);
+                wp_info!("restoring {} saved preferences", patch.len());
+                self.prefs_applying = true;
+                self.apply_settings_patch(&Value::Object(patch), target);
+                self.prefs_applying = false;
+            }
+            None => self.save_prefs(),
+        }
+    }
+
+    /// Opens one entertainment site in its own window (the setup guide uses this so the user can sign in to it).
+    fn open_site(&mut self, key: &str) {
+        if !waitplay_core::settings::SITE_KEYS.contains(&key) {
+            wp_warn!("refused to open unknown site {:?}", key);
+            return;
+        }
+        self.logins.pause();
+        let Ok(exe) = std::env::current_exe() else { return };
+        if let Err(e) = process::spawn_detached(&exe, &["--game".to_string(), format!("--site={}", key)]) {
+            wp_error!("could not open {}: {}", key, e);
+            self.problem("entertainment", "error", "The entertainment window could not be started.", &e.to_string());
+        } else {
+            self.clear_problem("entertainment");
+        }
+    }
+
+    /// The settings window opens large (1380 x 850) so every page fits without scrolling, but never larger than 92% of the display.
+    fn settings_default_size(&self) -> LogicalSize<f64> {
+        let screens = if self.screens.is_empty() { platform::screens() } else { self.screens.clone() };
+        let idx = platform::cursor_logical().and_then(|(x, y)| placement::screen_at(&screens, x, y)).unwrap_or(0);
+        match screens.get(idx) {
+            Some(s) => LogicalSize::new(1380.0_f64.min(s.work.w * 0.92), 850.0_f64.min(s.work.h * 0.92)),
+            None => LogicalSize::new(1380.0, 850.0),
+        }
+    }
+
     fn toggle_automation(&mut self) {
+        if self.account_gate() {
+            return;
+        }
         let on = state::toggle();
         self.rt.enabled = on;
         wp_info!("automation {}", if on { "enabled" } else { "disabled" });
@@ -988,6 +1179,9 @@ impl App {
     }
 
     fn open_entertainment(&mut self) {
+        if self.account_gate() {
+            return;
+        }
         let Ok(exe) = std::env::current_exe() else { return };
         if let Err(e) = process::spawn_detached(&exe, &["--open".to_string()]) {
             wp_error!("could not open the entertainment window: {}", e);
@@ -1075,6 +1269,9 @@ impl App {
             self.last_settings_state = None;
             self.render();
             return;
+        }
+        if !self.prefs_applying && self.last_account.is_some() {
+            self.prefs_dirty = Some(Instant::now());
         }
         match self.settings.save() {
             Ok(()) => self.clear_problem("settings-save"),
@@ -1196,6 +1393,34 @@ impl App {
             }
             "openEntertainment" => self.open_entertainment(),
             "openAccount" => self.open_account(target),
+            "setName" | "signOut" | "signOutOthers" | "revokeDevice" => self.on_account_ipc(body),
+            "openSite" => self.open_site(&str_of("key")),
+            "watchLogins" => {
+                self.watch_logins = v.get("on").and_then(Value::as_bool).unwrap_or(false);
+                if self.watch_logins {
+                    self.login_state = self.logins.state();
+                    self.push_settings();
+                }
+            }
+            "logoutSite" => {
+                self.logins.log_out(&str_of("key"));
+                self.login_state = self.logins.state();
+                self.push_settings();
+            }
+            "finishOnboarding" => {
+                self.onboarded = true;
+                // Vibe Play runs in the background from the moment the Mac starts, so automation never waits for someone to open it
+                self.apply_settings_patch(&json!({ "launchAtLogin": true }), target);
+                account_sync::save_onboarded(true);
+                self.last_settings_state = None;
+                self.push_settings();
+            }
+            "restartOnboarding" => {
+                self.onboarded = false;
+                account_sync::save_onboarded(false);
+                self.last_settings_state = None;
+                self.push_settings();
+            }
             "drag" => {
                 if let Some(w) = self.settings_win.as_ref() {
                     let _ = w.window.drag_window();
@@ -1414,6 +1639,8 @@ pub fn run() -> Result<(), String> {
     state::set_enabled(settings.auto_start_automation);
     if settings.watchers.is_empty() && !Settings::path().exists() {
         settings.watchers = integrations::default_watchers();
+        settings.appearance = Appearance::Light; // the cream Wispr-Flow look; "System" would turn it dark on a dark Mac
+        settings.launch_at_login = true; // in the background from the first start; Settings > General can switch it off
         let _ = settings.save();
     }
 
@@ -1447,6 +1674,7 @@ pub fn run() -> Result<(), String> {
             Event::UserEvent(Ev::Tick) => app.on_tick(target),
             Event::UserEvent(Ev::Sessions(body)) => app.on_sessions(body),
             Event::UserEvent(Ev::SoundChosen(file)) => app.on_sound_chosen(file, target),
+            Event::UserEvent(Ev::Prefs(id, data, ok)) => app.on_prefs(id, data, ok, target),
             Event::UserEvent(Ev::Ipc(Target::Settings, body)) => app.on_settings_ipc(&body, target),
             Event::UserEvent(Ev::Ipc(Target::Widget, body)) => app.on_widget_ipc(&body, target),
             Event::UserEvent(Ev::Ipc(Target::Account, body)) => app.on_account_ipc(&body),

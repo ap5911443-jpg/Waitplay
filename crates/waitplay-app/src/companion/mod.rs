@@ -436,10 +436,10 @@ impl App {
     /// While the window is open it is the one that knows which sites are signed in: it writes the answer next to the profile every few
     /// seconds (the tray app only reads it; see `win::logins`).
     fn report_logins(&mut self) {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         if self.last_login_report.map_or(true, |t| t.elapsed() >= Duration::from_secs(3)) {
             self.last_login_report = Some(Instant::now());
-            crate::win::logins::write_state(&self.profile_dir, &crate::win::logins::detect(&self.content));
+            crate::logins::write_state(&self.profile_dir, &crate::logins::detect(&self.content));
         }
     }
 
@@ -735,7 +735,7 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
         .map_err(|e| format!("header webview: {}", e))?;
 
     let nav_proxy = proxy.clone();
-    let content = webview2::tune(WebViewBuilder::new_with_web_context(&mut context))
+    let content = webview2::tune(webview2::with_store(WebViewBuilder::new_with_web_context(&mut context)))
         .with_url(opts.start.url)
         .with_bounds(rect(l.content))
         .with_background_color((0, 0, 0, 255))

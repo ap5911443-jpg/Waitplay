@@ -9,7 +9,9 @@
 use super::menu_model::{self, Entry};
 use super::native::{self, KillOnClose, NotchShape};
 use super::status::{self, SessionsView, Status};
-use super::{icons, integrations, login_item, logins};
+use super::{icons, integrations, login_item};
+use crate::account_sync;
+use crate::logins;
 use crate::account_ui::{AccountUi, Notify};
 use crate::placement::{self, Screen};
 use crate::{platform, wp_error, wp_info, wp_warn};
@@ -37,7 +39,7 @@ use wry::{NewWindowResponse, WebContext, WebView, WebViewBuilder, WebViewBuilder
 
 const WEBSITE: &str = "https://github.com/ap5911443-jpg/waitplay-website";
 const SUPPORT: &str = "https://github.com/ap5911443-jpg/waitplay-website/issues";
-const SETTINGS_HTML: &str = include_str!("../../assets/win_settings.html");
+const SETTINGS_HTML: &str = include_str!("../../assets/settings.html");
 const WIDGET_HTML: &str = include_str!("../../assets/mac_widget.html");
 /// The notch's resting size in points: the shape the page starts from and grows out of, like the camera notch on a MacBook.
 const NOTCH_W: u32 = 200;
@@ -153,23 +155,6 @@ fn origin_from_anchor(corner: &str, anchor: (i32, i32), size: (i32, i32), screen
         }
     }
     None
-}
-
-/// First-run marker: the setup guide is shown until the user finishes (or skips) it once.
-fn onboarded_file() -> PathBuf {
-    waitplay_core::paths::app_support_dir().join("onboarded")
-}
-
-fn load_onboarded() -> bool {
-    onboarded_file().exists()
-}
-
-fn save_onboarded(done: bool) {
-    if done {
-        let _ = waitplay_core::paths::write_atomic(&onboarded_file(), b"1");
-    } else {
-        let _ = std::fs::remove_file(onboarded_file());
-    }
 }
 
 fn home() -> PathBuf {
@@ -450,7 +435,7 @@ impl App {
             problems: Vec::new(),
             update_detail: "Automatic update checks arrive in a later release. New versions are published on the website.",
             quitting: false,
-            onboarded: load_onboarded(),
+            onboarded: account_sync::load_onboarded(),
             logins: logins::Logins::default(),
             watch_logins: false,
             login_state: None,
@@ -1315,19 +1300,7 @@ impl App {
     /// The settings that follow an account from PC to PC. Device-specific ones (start with Windows, the custom sound file, which agent
     /// watchers run) and anything secret stay out: no password, token or site login is ever saved to the account.
     fn synced_prefs(&self) -> Value {
-        const KEYS: [&str; 21] = [
-            "appearance", "widgetPosition", "widgetCompact", "widgetShowStatus", "platforms", "preferredPlatform", "onFinish", "shortcuts", "notifications",
-            "notificationSecs", "soundMuted", "soundVolume", "soundName", "soundEvents", "mascot", "mascotIntensity", "mascotIdle", "mascotPointer",
-            "reduceMotion", "autoStartAutomation", "showWidget",
-        ];
-        let all = self.settings.to_json();
-        let mut out = serde_json::Map::new();
-        for k in KEYS {
-            if let Some(v) = all.get(k) {
-                out.insert(k.to_string(), v.clone());
-            }
-        }
-        Value::Object(out)
+        account_sync::synced_prefs(&self.settings)
     }
 
     fn save_prefs(&mut self) {
@@ -1360,13 +1333,7 @@ impl App {
         }
         match data {
             Some(saved) => {
-                let mut patch = serde_json::Map::new();
-                let mine = self.synced_prefs();
-                for (k, v) in saved.as_object().into_iter().flatten() {
-                    if mine.get(k).is_some() {
-                        patch.insert(k.clone(), v.clone());
-                    }
-                }
+                let patch = account_sync::restore_patch(&saved);
                 wp_info!("restoring {} saved preferences", patch.len());
                 self.prefs_applying = true;
                 self.apply_settings_patch(&Value::Object(patch), target);
@@ -1714,13 +1681,13 @@ impl App {
                 self.onboarded = true;
                 // Vibe Play runs in the background from the moment Windows starts, so automation never waits for someone to open it
                 self.apply_settings_patch(&json!({ "launchAtLogin": true }), target);
-                save_onboarded(true);
+                account_sync::save_onboarded(true);
                 self.last_settings_state = None;
                 self.push_settings();
             }
             "restartOnboarding" => {
                 self.onboarded = false;
-                save_onboarded(false);
+                account_sync::save_onboarded(false);
                 self.last_settings_state = None;
                 self.push_settings();
             }
