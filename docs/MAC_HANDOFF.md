@@ -90,7 +90,10 @@ widget details listed in section 3.
 
 ## 3. Windows-only on purpose (do not port unless asked)
 - The Venu-style fused notch with concave shoulders, spring easing and the Rust-animated window clip (`S.clip`, `win/native.rs::NotchShape`).
-  macOS keeps its Liquid Glass widget with edge light and the real camera notch (`platform::notch_size`).
+  macOS keeps its own widget: an opaque black shape with the moving edge light, sized to the real camera notch (`platform::notch_size`).
+  Note: `mac/app.rs` still attaches a native `NSVisualEffectView` (`platform::Glass`) and has a `shape` handler for it, but the page never
+  sends `shape` messages (the page header says nothing depends on macOS blur), and `docs/MACOS.md` still describes a "Liquid Glass bar".
+  Verify on the Mac whether the native view shows anything; either feed it the shell rectangle or remove it and fix the doc.
 - Per-account profile *folders* (`profile::account_dir`): macOS uses WebKit data stores instead.
 - Windows Credential Manager, Run-key login item, fullscreen-app hiding, tray left-click = settings.
 
@@ -154,6 +157,7 @@ Needs **macOS 14+** for isolation (check `sw_vers`). On macOS 13 and earlier eve
 | E3 | Click toggles expansion; Escape closes | | |
 | E4 | Camera-notch Mac vs external display / pre-2021 Mac | Camera notch: shape starts exactly the size of the hardware notch (`platform::notch_size`), flush with the display top; no notch: floating capsule under the menu bar | Check the 5% grow does not clip at the screen edge (`PAD_X`/`PAD_B` in the page) |
 | E5 | Status states | Idle / Working (timer, bars) / Waiting / Done / Error colours; toasts; session list; mascot | |
+| E7 | Native glass view | Look closely behind the widget: is there any blur/tint from the attached `NSVisualEffectView`? If not (expected), decide: feed it (`reportShape`-style message from the page) or delete `platform::Glass` and update `docs/MACOS.md` | |
 | E6 | Corner positions | Top right / Bottom right / Bottom left pills render and expand; (drag is Windows-only, see 5.5) | |
 
 ### F. Agent integration end to end (smoke, per agent you have)
