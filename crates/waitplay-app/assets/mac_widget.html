@@ -42,6 +42,10 @@ html,body{margin:0;background:transparent;overflow:hidden;color:var(--fg);
   transition:width .7s var(--sp),height .7s var(--sp),border-radius .7s var(--sp),--c .6s ease,opacity .25s ease,transform .7s var(--sp)}
 #shell.vn.hide{opacity:1;transform:translateY(calc(-100% - 6px))}
 #shell.vn.nm.peek:not(.open):not(.live){transform:scale(1.05,1.06)}
+/* macOS (and the floating pill): the same hover peek, growing from the top edge */
+#shell.nm{transform-origin:50% 0}
+#shell.peek:not(.open):not(.live){transform:scale(1.05,1.06)}
+#shell.pill.peek:not(.open):not(.live){transform:scale(1.04,1.07)}
 #shell.vn #clip{box-shadow:inset 1px 0 0 rgba(255,255,255,.07),inset -1px 0 0 rgba(255,255,255,.07),inset 0 -1px 0 rgba(255,255,255,.1)}
 #shell.vn.nm::before,#shell.vn.nm::after{content:"";position:absolute;top:0;width:var(--f,12px);height:var(--f,12px);pointer-events:none;transition:width .7s var(--sp),height .7s var(--sp)}
 #shell.vn.nm::before{right:100%;background:radial-gradient(circle farthest-side at 0 100%,transparent 97%,var(--bg) 100%)}
@@ -351,12 +355,12 @@ body.demo #wrap{margin:0 auto}
   function settleRegion(target, fullW, top){
     morphTo({ x: (fullW - target.w) / 2, y: top, w: target.w, h: target.h, r: target.r, f: shell.classList.contains('nm') ? (expanded ? 20 : 14) : 0 }, 700);
   }
-  /* the closed notch grows a touch under a cursor that lingers (the CSS rule for .peek), and its clip grows with it */
+  /* the closed shell grows a touch under a cursor that lingers (the CSS rule for .peek); on Windows its clip grows with it */
   function setPeek(on){
-    if (!S.clip) return;
-    const nm = shell.classList.contains('nm'), ok = on && nm && !shell.classList.contains('open') && !shell.classList.contains('live');
+    const nm = shell.classList.contains('nm'), ok = on && !shell.classList.contains('open') && !shell.classList.contains('live');
     if (shell.classList.contains('peek') === ok) return;
     shell.classList.toggle('peek', ok);
+    if (!S.clip) return;
     const w = shell.offsetWidth, h = shell.offsetHeight, k = ok ? [1.05, 1.06] : [1, 1];
     morphTo({ x: (wrap.offsetWidth - w) / 2 - w * (k[0] - 1) / 2, y: nm ? 0 : 8, w: w * k[0], h: h * k[1], r: parseFloat(getComputedStyle(shell).borderBottomLeftRadius) || 0, f: 14 }, 700);
   }
@@ -526,11 +530,11 @@ body.demo #wrap{margin:0 auto}
   function scheduleCollapse(){
     clearTimeout(hoverTimer);
     if (!expanded) return;
-    hoverTimer = setTimeout(() => { if (expanded && !dragging && !pointerIn && !shell.contains(document.activeElement) ) setExpanded(false); else if (expanded && !pointerIn) scheduleCollapse(); }, S.clip ? 220 : 520);
+    hoverTimer = setTimeout(() => { if (expanded && !dragging && !pointerIn && !shell.contains(document.activeElement) ) setExpanded(false); else if (expanded && !pointerIn) scheduleCollapse(); }, 220);
   }
   shell.addEventListener('pointerenter', () => {
     pointerIn = true; clearTimeout(hoverTimer); shell.classList.add('hover');
-    clearTimeout(dwellTimer); if (!expanded) dwellTimer = setTimeout(() => { if (pointerIn) setExpanded(true); }, S.clip ? 200 : 260);
+    clearTimeout(dwellTimer); if (!expanded) dwellTimer = setTimeout(() => { if (pointerIn) setExpanded(true); }, 200);
   });
   shell.addEventListener('pointermove', e => {
     if (!mascotOn()) return;
