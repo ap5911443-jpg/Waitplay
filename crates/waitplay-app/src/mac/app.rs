@@ -244,6 +244,8 @@ struct WidgetWin {
     window: Window,
     size: Option<(f64, f64)>,
     shown: bool,
+    /// A full-screen app is on the widget's display: the widget is ordered out until it ends.
+    fullscreen_hidden: bool,
     /// Frame origin of the display the widget lives on; follows display changes, falls back to the primary display.
     screen_origin: Option<(f64, f64)>,
 }
@@ -473,6 +475,7 @@ impl App {
 
     fn on_tick(&mut self, target: &EventLoopWindowTarget<Ev>) {
         self.ticks += 1;
+        self.watch_fullscreen();
         self.watch_account(target);
         if self.prefs_dirty.is_some_and(|t| t.elapsed() >= Duration::from_secs(3)) {
             self.prefs_dirty = None;
@@ -910,7 +913,7 @@ impl App {
         if glass.is_none() {
             wp_warn!("native glass could not be attached; the widget falls back to its flat tint");
         }
-        Ok(WidgetWin { webview, glass, window, size: None, shown: false, screen_origin: None })
+        Ok(WidgetWin { webview, glass, window, size: None, shown: false, fullscreen_hidden: false, screen_origin: None })
     }
 
     /// The widget stays on the display it was on; a first placement (or a vanished display) uses the display under the pointer.
@@ -950,6 +953,21 @@ impl App {
             w.window.set_visible(true);
             w.shown = true;
             wp_info!("widget shown {} at ({:.0}, {:.0}), {:.0}x{:.0}", pos.as_str(), x, y, cw, ch);
+        }
+    }
+
+    /// The widget stays out of the way of a full-screen app (video, presentation, game) on its display.
+    fn watch_fullscreen(&mut self) {
+        let Some(screen) = self.widget_screen() else { return };
+        let Some(w) = self.widget.as_mut() else { return };
+        if !w.shown {
+            return;
+        }
+        let busy = platform::fullscreen_app_on(screen.frame);
+        if busy != w.fullscreen_hidden {
+            w.fullscreen_hidden = busy;
+            w.window.set_visible(!busy);
+            wp_info!("fullscreen app {}: the widget is {}", if busy { "in front" } else { "gone" }, if busy { "hidden" } else { "shown again" });
         }
     }
 

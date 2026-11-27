@@ -321,6 +321,107 @@ pub fn set_window_level(ns_window: *mut std::ffi::c_void, level: isize) {
     }
 }
 
+/// One on-screen window as the window server lists it (top-left coordinates, front to back).
+#[derive(Clone, Debug, PartialEq)]
+struct ListedWindow {
+    owner: String,
+    layer: i64,
+    alpha: f64,
+    rect: LRect,
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> *mut objc2_foundation::NSArray<objc2::runtime::AnyObject>;
+}
+
+/// Owner names and rectangles only: neither needs the Screen Recording permission (window titles and contents would).
+fn on_screen_windows() -> Vec<ListedWindow> {
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::NSString;
+    const ON_SCREEN_ONLY: u32 = 1;
+    // SAFETY: the function returns a +1 CFArray of CFDictionaries, which are toll-free bridged to NSArray / NSDictionary
+    let Some(list) = (unsafe { Retained::from_raw(CGWindowListCopyWindowInfo(ON_SCREEN_ONLY, 0)) }) else { return Vec::new() };
+    let value = |w: &AnyObject, path: &str| -> Option<Retained<AnyObject>> {
+        let path = NSString::from_str(path);
+        // SAFETY: valueForKeyPath: on a dictionary returns nil for a missing key
+        unsafe { objc2::msg_send![w, valueForKeyPath: &*path] }
+    };
+    // SAFETY: only ever called on the NSNumber values of the window dictionaries
+    let number = |w: &AnyObject, path: &str| -> f64 { value(w, path).map_or(0.0, |v| unsafe { objc2::msg_send![&*v, doubleValue] }) };
+    list.iter()
+        .map(|w| ListedWindow {
+            owner: value(&w, "kCGWindowOwnerName").and_then(|v| v.downcast::<NSString>().ok()).map(|s| s.to_string()).unwrap_or_default(),
+            layer: number(&w, "kCGWindowLayer") as i64,
+            alpha: number(&w, "kCGWindowAlpha"),
+            rect: LRect::new(
+                number(&w, "kCGWindowBounds.X"),
+                number(&w, "kCGWindowBounds.Y"),
+                number(&w, "kCGWindowBounds.Width"),
+                number(&w, "kCGWindowBounds.Height"),
+            ),
+        })
+        .collect()
+}
+
+/// Whether the display with this frame is showing a full-screen app.
+pub fn fullscreen_app_on(frame: LRect) -> bool {
+    shows_fullscreen_app(&on_screen_windows(), frame)
+}
+
+/// The rule behind [`fullscreen_app_on`]. A full-screen space has neither the Dock nor the desktop picture on that display, and an
+/// app window reaches from (just under) the top edge to the bottom edge over the whole width. A merely maximized window has the
+/// desktop behind it, even when the Dock hides itself and the window reaches the bottom.
+fn shows_fullscreen_app(windows: &[ListedWindow], frame: LRect) -> bool {
+    const MENU_BAR_OR_NOTCH: f64 = 40.0;
+    let near = |a: f64, b: f64| (a - b).abs() < 1.5;
+    let spans_width = |w: &ListedWindow| near(w.rect.x, frame.x) && near(w.rect.w, frame.w);
+    let desktop = windows.iter().any(|w| spans_width(w) && (w.owner == "Wallpaper" || (w.owner == "Dock" && w.rect.h >= frame.h - 1.5)));
+    !desktop
+        && windows.iter().any(|w| {
+            w.layer == 0
+                && w.alpha > 0.0
+                && w.owner != "Vibe Play"
+                && spans_width(w)
+                && w.rect.y <= frame.y + MENU_BAR_OR_NOTCH
+                && near(w.rect.bottom(), frame.bottom())
+        })
+}
+
+#[cfg(test)]
+mod fullscreen_tests {
+    use super::*;
+
+    fn w(owner: &str, layer: i64, alpha: f64, y: f64, h: f64) -> ListedWindow {
+        ListedWindow { owner: owner.into(), layer, alpha, rect: LRect::new(0.0, y, 1470.0, h) }
+    }
+    const FRAME: LRect = LRect { x: 0.0, y: 0.0, w: 1470.0, h: 956.0 };
+
+    // the three lists below are what a notched MacBook on macOS 27 reported
+    #[test]
+    fn a_normal_or_maximized_window_is_not_full_screen() {
+        let desktop = [w("Dock", 20, 1.0, 0.0, 956.0), w("Wallpaper", -2147483625, 1.0, 0.0, 956.0)];
+        for app in [w("Safari", 0, 1.0, 33.0, 840.0), w("Safari", 0, 1.0, 33.0, 843.0)] {
+            assert!(!shows_fullscreen_app(&[desktop[0].clone(), app, desktop[1].clone()], FRAME));
+        }
+        // the Dock hides itself and the maximized window reaches the bottom: the desktop picture is still there
+        assert!(!shows_fullscreen_app(&[w("Safari", 0, 1.0, 33.0, 923.0), desktop[1].clone()], FRAME));
+    }
+
+    #[test]
+    fn a_full_screen_space_is_detected_per_display() {
+        let list = [w("MenuBarAgent", 25, 1.0, 0.0, 33.0), w("Safari", 0, 0.0, 33.0, 32.0), w("Safari", 0, 1.0, 33.0, 923.0)];
+        assert!(shows_fullscreen_app(&list, FRAME));
+        assert!(!shows_fullscreen_app(&list, LRect::new(1470.0, 0.0, 1920.0, 1080.0)), "another display");
+    }
+
+    #[test]
+    fn an_empty_list_or_our_own_window_never_counts() {
+        assert!(!shows_fullscreen_app(&[], FRAME));
+        assert!(!shows_fullscreen_app(&[w("Vibe Play", 0, 1.0, 0.0, 956.0)], FRAME));
+    }
+}
+
 /// Before macOS 14 WebKit has no per-account data stores (wry then uses the default one), so every account shares the site logins.
 pub fn shared_site_logins() -> bool {
     logins_are_shared_on(objc2_foundation::NSProcessInfo::processInfo().operatingSystemVersion().majorVersion)

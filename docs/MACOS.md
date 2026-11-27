@@ -60,6 +60,11 @@ Windows-only "typing or scrolling in the terminal steps the window aside" and pe
 | Launch at login, Dock icon, widget on/off and position, appearance (menu-bar app windows), shortcuts | immediately |
 | Preferred platform, enabled platforms (header tabs), Hide/Close on finish, appearance of the entertainment window | next time the entertainment window starts |
 
+## Full-screen apps
+
+While a full-screen app is on the widget's display the widget is hidden, as on Windows (checked about once a second). Detection uses
+the window list's owner names and rectangles, which needs no permission.
+
 ## Site logins before macOS 14
 
 The app still runs on macOS 11 and later, but per-account web data stores need macOS 14. On macOS 13 and earlier **every account on
