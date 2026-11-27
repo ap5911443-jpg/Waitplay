@@ -79,6 +79,32 @@ enum Ev {
 
 // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+/// Where the user dragged the widget: (the position setting it belongs to, anchor x, anchor y) in points.
+type WidgetAnchor = (WidgetPosition, f64, f64);
+
+fn widget_anchor_file() -> PathBuf {
+    paths::app_support_dir().join("widget-position.json")
+}
+
+fn parse_widget_anchor(text: &str) -> Option<WidgetAnchor> {
+    let v: Value = serde_json::from_str(text).ok()?;
+    let corner = v.get("corner")?.as_str()?;
+    let all = [WidgetPosition::TopCenter, WidgetPosition::TopRight, WidgetPosition::BottomRight, WidgetPosition::BottomLeft];
+    let pos = all.into_iter().find(|p| p.as_str() == corner)?;
+    Some((pos, v.get("x")?.as_f64()?, v.get("y")?.as_f64()?))
+}
+
+fn save_widget_anchor(anchor: Option<WidgetAnchor>) {
+    match anchor {
+        Some((pos, x, y)) => {
+            let _ = waitplay_core::paths::write_atomic(&widget_anchor_file(), json!({ "corner": pos.as_str(), "x": x, "y": y }).to_string().as_bytes());
+        }
+        None => {
+            let _ = std::fs::remove_file(widget_anchor_file());
+        }
+    }
+}
+
 fn home() -> PathBuf {
     std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from).unwrap_or_else(std::env::temp_dir)
 }
@@ -246,6 +272,8 @@ struct WidgetWin {
     shown: bool,
     /// A full-screen app is on the widget's display: the widget is ordered out until it ends.
     fullscreen_hidden: bool,
+    /// While the user drags the widget: when the drag began and when the window last moved. Nothing repositions it then.
+    drag: Option<(Instant, Instant, bool)>,
     /// Frame origin of the display the widget lives on; follows display changes, falls back to the primary display.
     screen_origin: Option<(f64, f64)>,
 }
@@ -302,6 +330,7 @@ struct App {
     prefs_startup: bool,
     /// Grouped notifications and sound cues, from the session list.
     tracker: island::Tracker,
+    widget_anchor: Option<WidgetAnchor>,
     /// Timings of finished work for the Insights page (local only).
     recorder: insights::Recorder,
     last_sound_ms: i64,
@@ -341,6 +370,7 @@ impl App {
             prefs_applying: false,
             prefs_startup: false,
             tracker: island::Tracker::new(),
+            widget_anchor: std::fs::read_to_string(widget_anchor_file()).ok().and_then(|t| parse_widget_anchor(&t)),
             recorder: insights::Recorder::new(),
             last_sound_ms: 0,
         }
@@ -475,6 +505,7 @@ impl App {
 
     fn on_tick(&mut self, target: &EventLoopWindowTarget<Ev>) {
         self.ticks += 1;
+        self.finish_widget_drag();
         self.watch_fullscreen();
         self.watch_account(target);
         if self.prefs_dirty.is_some_and(|t| t.elapsed() >= Duration::from_secs(3)) {
@@ -720,6 +751,7 @@ impl App {
             "compact": self.settings.widget_compact,
             "showStatus": self.settings.widget_show_status,
             "corner": self.settings.widget_position.as_str(),
+            "draggable": true,
             // the camera notch of the display the widget is on (points), so the page can start exactly as big as the hardware
             "notch": self.widget_screen().and_then(|s| platform::notch_size(s.frame.x, s.frame.y)).map(|(w, h)| json!({ "w": w, "h": h })),
             "since": view.working_since,
@@ -913,7 +945,7 @@ impl App {
         if glass.is_none() {
             wp_warn!("native glass could not be attached; the widget falls back to its flat tint");
         }
-        Ok(WidgetWin { webview, glass, window, size: None, shown: false, fullscreen_hidden: false, screen_origin: None })
+        Ok(WidgetWin { webview, glass, window, size: None, shown: false, fullscreen_hidden: false, drag: None, screen_origin: None })
     }
 
     /// The widget stays on the display it was on; a first placement (or a vanished display) uses the display under the pointer.
@@ -933,10 +965,44 @@ impl App {
         self.screens.iter().find(|s| (s.frame.x, s.frame.y) == o).copied().or_else(|| self.screens.first().copied())
     }
 
+    /// A drag has ended once the window has stopped moving: remember where the widget now sits.
+    fn finish_widget_drag(&mut self) {
+        let pos = self.settings.widget_position;
+        let Some(w) = self.widget.as_mut() else { return };
+        let Some((started, last_move, moved)) = w.drag else { return };
+        if started.elapsed() < Duration::from_millis(500) || last_move.elapsed() < Duration::from_millis(700) {
+            return;
+        }
+        w.drag = None;
+        if !moved {
+            return; // pressed and released without moving
+        }
+        let Ok(p) = w.window.outer_position() else { return };
+        let scale = w.window.scale_factor();
+        let (p, s) = (p.to_logical::<f64>(scale), w.window.outer_size().to_logical::<f64>(scale));
+        let anchor = placement::anchor_of(pos, (p.x, p.y), (s.width, s.height));
+        // the widget now belongs to the display it was dropped on
+        if let Some(screen) = self.screens.iter().find(|sc| sc.frame.contains(p.x + s.width / 2.0, p.y + s.height / 2.0)) {
+            w.screen_origin = Some((screen.frame.x, screen.frame.y));
+        }
+        self.widget_anchor = Some((pos, anchor.0, anchor.1));
+        save_widget_anchor(self.widget_anchor);
+        self.place_widget();
+    }
+
     fn place_widget(&mut self) {
         let Some(screen) = self.widget_screen() else { return };
         let pos = self.settings.widget_position;
+        if self.widget_anchor.is_some_and(|a| a.0 != pos) {
+            self.widget_anchor = None; // the position setting changed: back to that corner
+            save_widget_anchor(None);
+        }
+        let anchored = self.widget_anchor;
+        let screens = self.screens.clone();
         let Some(w) = self.widget.as_mut() else { return };
+        if w.drag.is_some() {
+            return;
+        }
         let Some((cw, ch)) = w.size else { return }; // wait for the page's first size report
         w.window.set_inner_size(LogicalSize::new(cw, ch));
         // Top centre is the notch: flush with the very top of a display that has one (the window sits over the menu bar, above it),
@@ -946,6 +1012,13 @@ impl App {
             (screen.frame.x + (screen.frame.w - cw) / 2.0, if notch.is_some() { screen.frame.y } else { screen.work.y })
         } else {
             placement::corner_origin(screen.work, (cw, ch), pos, 0.0)
+        };
+        // a dragged pill stays where it was dropped; the camera notch is fixed
+        let (x, y) = match anchored {
+            Some((_, ax, ay)) if !(pos == WidgetPosition::TopCenter && notch.is_some()) => {
+                placement::origin_from_anchor(pos, (ax, ay), (cw, ch), &screens).unwrap_or((x, y))
+            }
+            _ => (x, y),
         };
         platform::set_window_level(w.window.ns_window(), if pos == WidgetPosition::TopCenter { 25 } else { 8 }); // 25 = status window level, above the menu bar
         w.window.set_outer_position(LogicalPosition::new(x, y));
@@ -1510,6 +1583,13 @@ impl App {
                     }
                 }
             }
+            "drag" => {
+                if let Some(w) = self.widget.as_mut() {
+                    if w.window.drag_window().is_ok() {
+                        w.drag = Some((Instant::now(), Instant::now(), false));
+                    }
+                }
+            }
             "toggle" => self.toggle_automation(),
             "openSettings" => self.open_settings(target),
             "menu" => {
@@ -1575,6 +1655,13 @@ impl App {
     fn handle_window_event(&mut self, wid: WindowId, event: &WindowEvent) {
         if self.account.on_window_event(wid, event) {
             return;
+        }
+        if let WindowEvent::Moved(_) = event {
+            if let Some(w) = self.widget.as_mut().filter(|w| w.window.id() == wid) {
+                if let Some(drag) = w.drag.as_mut() {
+                    *drag = (drag.0, Instant::now(), true);
+                }
+            }
         }
         if let WindowEvent::CloseRequested = event {
             if self.settings_win.as_ref().map_or(false, |w| w.window.id() == wid) {

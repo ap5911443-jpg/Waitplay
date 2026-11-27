@@ -65,6 +65,16 @@ Windows-only "typing or scrolling in the terminal steps the window aside" and pe
 While a full-screen app is on the widget's display the widget is hidden, as on Windows (checked about once a second). Detection uses
 the window list's owner names and rectangles, which needs no permission.
 
+## Moving the widget
+
+The corner pills (and the floating capsule on a display without a camera notch) can be dragged; the spot is saved in
+`widget-position.json` and forgotten when the position setting changes. The camera notch is fixed.
+
+## No Permissions step in the setup guide
+
+On purpose: Vibe Play requests no macOS permission (see *Permissions* above), so the guide does not ask anyone to grant
+Accessibility or Screen Recording. *Settings > Permissions* stays as the explanation.
+
 ## Site logins before macOS 14
 
 The app still runs on macOS 11 and later, but per-account web data stores need macOS 14. On macOS 13 and earlier **every account on

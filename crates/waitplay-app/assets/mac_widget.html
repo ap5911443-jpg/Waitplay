@@ -548,14 +548,14 @@ body.demo #wrap{margin:0 auto}
   let peekTimer = 0;
   shell.addEventListener('pointerenter', () => { clearTimeout(peekTimer); peekTimer = setTimeout(() => { if (pointerIn) setPeek(true); }, 120); });
 
-  /* Windows only: press on the floating pill (not on a control) and move a few pixels, then Windows' own move loop takes over and the
-     app remembers where it lands. The notch at the top centre is fixed. */
+  /* Press on the floating pill (not on a control) and move a few pixels, then the system's own window drag takes over and the app
+     remembers where it lands. Windows sets `S.clip`, macOS sets `S.draggable`. The notch at the top centre is fixed. */
   shell.addEventListener('pointerdown', e => {
-    if (!S.clip || shell.classList.contains('nm') || e.button !== 0 || e.target.closest('button,.srow')) return;
+    if (!(S.clip || S.draggable) || shell.classList.contains('nm') || e.button !== 0 || e.target.closest('button,.srow')) return;
     downAt = { x: e.screenX, y: e.screenY };
   });
   document.addEventListener('pointermove', e => {
-    if (!S.clip) return;
+    if (!(S.clip || S.draggable)) return;
     if (dragging){ if (performance.now() - dragAt > 400){ dragging = false; scheduleCollapse(); } return; } // the move loop ended: pointer events resume
     if (!downAt || !(e.buttons & 1)) return;
     if (Math.abs(e.screenX - downAt.x) + Math.abs(e.screenY - downAt.y) > 5){ downAt = null; dragging = true; dragAt = performance.now(); clearTimeout(hoverTimer); send({t:'drag'}); }

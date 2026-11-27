@@ -57,6 +57,27 @@ pub fn corner_origin(work: LRect, size: (f64, f64), pos: WidgetPosition, margin:
     (clamp(x, work.x, work.right() - size.0), clamp(y, work.y, work.bottom() - size.1))
 }
 
+/// The point a dragged widget is remembered by: the corner (or top middle) of its window that stays put while the size changes.
+pub fn anchor_of(pos: WidgetPosition, origin: (f64, f64), size: (f64, f64)) -> (f64, f64) {
+    let x = match pos {
+        WidgetPosition::TopRight | WidgetPosition::BottomRight => origin.0 + size.0,
+        WidgetPosition::TopCenter => origin.0 + size.0 / 2.0,
+        WidgetPosition::BottomLeft => origin.0,
+    };
+    let y = if matches!(pos, WidgetPosition::BottomRight | WidgetPosition::BottomLeft) { origin.1 + size.1 } else { origin.1 };
+    (x, y)
+}
+
+/// The window origin for a widget remembered at `anchor`, kept inside the usable area of the display that contains the anchor.
+/// `None` when no display contains it any more (monitor unplugged): the caller uses the corner.
+pub fn origin_from_anchor(pos: WidgetPosition, anchor: (f64, f64), size: (f64, f64), screens: &[Screen]) -> Option<(f64, f64)> {
+    // the anchor may sit exactly on the far edge of the usable area
+    let work = screens.iter().map(|s| s.work).find(|w| anchor.0 >= w.x && anchor.0 <= w.right() && anchor.1 >= w.y && anchor.1 <= w.bottom())?;
+    let offset = anchor_of(pos, (0.0, 0.0), size);
+    let clamp = |v: f64, lo: f64, hi: f64| if hi < lo { lo } else { v.clamp(lo, hi) };
+    Some((clamp(anchor.0 - offset.0, work.x, work.right() - size.0), clamp(anchor.1 - offset.1, work.y, work.bottom() - size.1)))
+}
+
 /// The entertainment window: centred on the display under the pointer, 70% x 82% of the usable area (at least 480 x 420, at most
 /// 1400 x 950, never larger than the area), the same on macOS and Windows. The widget floats above it.
 pub fn centered_companion_rect(work: LRect) -> LRect {
@@ -93,6 +114,20 @@ mod tests {
         // on a display left of the primary the centre moves with it
         let work = LRect::new(-1920.0, 0.0, 1920.0, 1080.0);
         assert_eq!(corner_origin(work, (400.0, 40.0), WidgetPosition::TopCenter, 0.0), (-1160.0, 0.0));
+    }
+
+    #[test]
+    fn a_dragged_widget_keeps_its_anchor_and_stays_on_screen() {
+        let screens = [Screen { frame: LRect::new(0.0, 0.0, 1440.0, 900.0), work: WORK, scale: 2.0 }];
+        let anchor = anchor_of(WidgetPosition::BottomRight, (636.0, 604.0), (364.0, 96.0));
+        assert_eq!(anchor, (1000.0, 700.0));
+        // expanded: same anchor, the bigger window grows up and to the left
+        assert_eq!(origin_from_anchor(WidgetPosition::BottomRight, anchor, (340.0, 282.0), &screens), Some((660.0, 418.0)));
+        assert_eq!(origin_from_anchor(WidgetPosition::TopRight, (1000.0, 100.0), (340.0, 282.0), &screens), Some((660.0, 100.0)));
+        assert_eq!(origin_from_anchor(WidgetPosition::BottomLeft, (10.0, 700.0), (340.0, 282.0), &screens), Some((10.0, 418.0)));
+        // near an edge it is pushed back inside, and an unplugged display gives up
+        assert_eq!(origin_from_anchor(WidgetPosition::BottomRight, (50.0, 60.0), (340.0, 282.0), &screens), Some((0.0, 25.0)));
+        assert_eq!(origin_from_anchor(WidgetPosition::BottomRight, (4000.0, 700.0), (340.0, 282.0), &screens), None);
     }
 
     #[test]
