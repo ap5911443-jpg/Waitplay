@@ -32,6 +32,12 @@ html,body{margin:0;background:transparent;overflow:hidden;color:var(--fg);
 #shell{position:relative;flex:none;width:200px;height:34px;border-radius:0 0 11px 11px;
   transition:width .5s var(--ease),height .5s var(--ease),border-radius .5s var(--ease),--c .6s ease,opacity .25s ease,transform .5s var(--spring)}
 #shell.hide{opacity:0}
+/* entry / exit: the notch drops in from above the screen edge (and leaves the same way), the floating pill fades and rises into place.
+   The hidden pose is applied at once (no transition into it); only leaving it, or `.out` on the way out, is animated. */
+#shell.hide{transition:none}
+#shell.hide.out{transition:transform .35s var(--ease),opacity .25s ease}
+#shell.nm.hide{opacity:1;transform:translateY(calc(-100% - 6px))}
+#shell.pill.hide{opacity:0;transform:translateY(-10px) scale(.96)}
 #shell.pill{border-radius:16px}
 
 /* Windows notch (`.vn`, set when the app clips the window to the shell). Fused to the top edge of the display and flaring outward
@@ -270,7 +276,7 @@ body.demo #wrap{margin:0 auto}
     youtube: [['rect',{x:1.5,y:3.5,width:13,height:9,rx:3}],['path',{d:'M6.7 6v4l3.5-2z',class:'f'}]]
   };
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
-  let S = {}, expanded = false, lastLabel = null, lastSize = '', shrinkTimer = 0, tickTimer = 0, hoverTimer = 0, dwellTimer = 0, sweepTimer = 0, phaseTimer = 0, relayTimer = 0;
+  let S = {}, expanded = false, lastLabel = null, lastSize = '', shrinkTimer = 0, tickTimer = 0, hoverTimer = 0, dwellTimer = 0, sweepTimer = 0, phaseTimer = 0, relayTimer = 0, entering = false;
   let prevActive = false, startUntil = 0, doneUntil = 0, lastAgent = '', pointerIn = false, toastId = 0, selId = '';
   let dragging = false, downAt = null, dragAt = 0;
   const PAD_X = 24, PAD_B = 26, TOAST_H = 46;
@@ -431,7 +437,8 @@ body.demo #wrap{margin:0 auto}
     $('sw').setAttribute('aria-checked', S.enabled ? 'true' : 'false');
     if (label !== lastLabel){ lastLabel = label; }
     buildPlatforms();
-    if (shell.classList.contains('hide')) requestAnimationFrame(() => shell.classList.remove('hide'));
+    // two frames: the first one paints the shell in its start position (above the edge / faded), the second starts the entry animation
+    if (shell.classList.contains('hide') && !entering){ entering = true; requestAnimationFrame(() => requestAnimationFrame(() => { shell.classList.remove('hide', 'out'); entering = false; })); }
     layout();
   }
   function relayout(){ layout(); }
@@ -532,21 +539,48 @@ body.demo #wrap{margin:0 auto}
     if (!expanded) return;
     hoverTimer = setTimeout(() => { if (expanded && !dragging && !pointerIn && !shell.contains(document.activeElement) ) setExpanded(false); else if (expanded && !pointerIn) scheduleCollapse(); }, 220);
   }
-  shell.addEventListener('pointerenter', () => {
+  /* hover in/out: one code path for the DOM events and for the native pointer feed (macOS delivers the mouse position from Rust,
+     because the non-focusable widget window does not always get pointer events from WebKit). Both are idempotent. */
+  let peekTimer = 0;
+  function hoverIn(){
+    if (pointerIn) return;
     pointerIn = true; clearTimeout(hoverTimer); shell.classList.add('hover');
     clearTimeout(dwellTimer); if (!expanded) dwellTimer = setTimeout(() => { if (pointerIn) setExpanded(true); }, 200);
-  });
+    clearTimeout(peekTimer); peekTimer = setTimeout(() => { if (pointerIn) setPeek(true); }, 120);
+  }
+  function hoverOut(){
+    if (!pointerIn) return;
+    pointerIn = false; clearTimeout(dwellTimer); clearTimeout(peekTimer); shell.classList.remove('hover'); setPeek(false);
+    mascots().forEach(x => x.look(null));
+    // a control the mouse clicked keeps focus and would keep the panel open for ever: let go of it (keyboard focus stays)
+    const a = document.activeElement;
+    if (a && a !== document.body && shell.contains(a) && !a.matches(':focus-visible')) a.blur();
+    scheduleCollapse();
+  }
+  /* once the app feeds the pointer (macOS and Windows both do), only that feed decides: DOM enter/leave events are unreliable for a
+     non-focusable window and for one whose clip region keeps changing, and a stray 'leave' must not collapse a panel the pointer is on */
+  let nativeFeed = false;
+  shell.addEventListener('pointerenter', () => { if (!nativeFeed) hoverIn(); });
+  shell.addEventListener('pointerleave', () => { if (!nativeFeed) hoverOut(); });
   shell.addEventListener('pointermove', e => {
     if (!mascotOn()) return;
     const host = $(shell.classList.contains('nm') ? 'logo' : 'plogo'), r = host.getBoundingClientRect();
     const dx = (e.clientX - (r.left + r.width / 2)) / 160, dy = (e.clientY - (r.top + r.height / 2)) / 120;
     mascots().forEach(x => x.look(dx, dy));
   });
-  shell.addEventListener('pointerleave', () => { mascots().forEach(x => x.look(null)); });
-  shell.addEventListener('pointerleave', () => { pointerIn = false; clearTimeout(dwellTimer); clearTimeout(peekTimer); shell.classList.remove('hover'); setPeek(false); scheduleCollapse(); });
-  /* Windows: the closed notch grows a touch under a cursor that lingers, a moment after it arrives (a fast fly-by does nothing) */
-  let peekTimer = 0;
-  shell.addEventListener('pointerenter', () => { clearTimeout(peekTimer); peekTimer = setTimeout(() => { if (pointerIn) setPeek(true); }, 120); });
+  /* the native feed: the pointer in window coordinates (CSS px from the window's top-left), or (-1, -1) once it left the window */
+  function pointer(x, y){
+    nativeFeed = true;
+    const r = shell.getBoundingClientRect();
+    const inside = x >= r.left - 2 && x <= r.right + 2 && y >= Math.min(r.top, 0) - 4 && y <= r.bottom + 2;
+    if (inside){
+      hoverIn();
+      if (mascotOn()){
+        const host = $(shell.classList.contains('nm') ? 'logo' : 'plogo'), h = host.getBoundingClientRect();
+        mascots().forEach(m => m.look((x - (h.left + h.width / 2)) / 160, (y - (h.top + h.height / 2)) / 120));
+      }
+    } else hoverOut();
+  }
 
   /* Press on the floating pill (not on a control) and move a few pixels, then the system's own window drag takes over and the app
      remembers where it lands. Windows sets `S.clip`, macOS sets `S.draggable`. The notch at the top centre is fixed. */
@@ -562,7 +596,7 @@ body.demo #wrap{margin:0 auto}
   });
   document.addEventListener('pointerup', () => { downAt = null; });
 
-  window.wpWidget = { apply, expand: setExpanded, fadeOut(){ shell.classList.add('hide'); } };
+  window.wpWidget = { apply, expand: setExpanded, pointer, fadeOut(){ shell.classList.add('out', 'hide'); } };
   new ResizeObserver(reportSize).observe(wrap);
   send({t:'ready'});
 

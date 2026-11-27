@@ -75,6 +75,8 @@ enum Ev {
     SoundChosen(Option<String>),
     /// The account's saved preferences, fetched on a worker thread after a sign-in: (account id, saved data or none, fetch worked).
     Prefs(String, Option<Value>, bool),
+    /// The pointer feed: time to look at where the mouse is relative to the widget (see `on_pointer`).
+    Pointer,
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -327,6 +329,9 @@ struct App {
     prefs_applying: bool,
     /// The next saved-preferences answer belongs to app startup, not to a sign-in.
     prefs_startup: bool,
+    /// Where the pointer was at the last look, and whether it was inside the widget window then (see `on_pointer`).
+    last_pointer: (f64, f64),
+    pointer_in_window: bool,
     /// Grouped notifications and sound cues, from the session list.
     tracker: island::Tracker,
     widget_anchor: Option<WidgetAnchor>,
@@ -368,6 +373,8 @@ impl App {
             prefs_dirty: None,
             prefs_applying: false,
             prefs_startup: false,
+            last_pointer: (f64::NAN, f64::NAN),
+            pointer_in_window: false,
             tracker: island::Tracker::new(),
             widget_anchor: std::fs::read_to_string(widget_anchor_file()).ok().and_then(|t| parse_widget_anchor(&t)),
             recorder: insights::Recorder::new(),
@@ -1225,6 +1232,30 @@ impl App {
         }
     }
 
+    /// Hover without WebKit's help. The widget window is non-focusable and the app is an accessory app, so WKWebView does not reliably get
+    /// `pointerenter` / `pointerleave` for it. Every 50 ms (`Ev::Pointer`) this reads the global mouse position and, while the pointer is
+    /// over the widget window (and once when it leaves), hands it to the page as window coordinates (`wpWidget.pointer(x, y)`); the page
+    /// decides what is the shell and runs the same peek / expand / collapse code as for DOM events. Nothing runs while the pointer is
+    /// away from the widget, so an idle Mac does no page work.
+    fn on_pointer(&mut self) {
+        let Some(w) = self.widget.as_ref().filter(|w| w.shown) else { return };
+        let Some((cx, cy)) = platform::cursor_logical() else { return };
+        if (cx, cy) == self.last_pointer {
+            return;
+        }
+        self.last_pointer = (cx, cy);
+        let scale = w.window.scale_factor();
+        let (Ok(pos), size) = (w.window.outer_position(), w.window.outer_size()) else { return };
+        let (pos, size) = (pos.to_logical::<f64>(scale), size.to_logical::<f64>(scale));
+        let (inside, rx, ry) = placement::pointer_in_window((cx, cy), (pos.x, pos.y), (size.width, size.height), 1.0);
+        if inside {
+            let _ = w.webview.evaluate_script(&format!("window.wpWidget&&wpWidget.pointer({:.1},{:.1})", rx, ry));
+        } else if self.pointer_in_window {
+            let _ = w.webview.evaluate_script("window.wpWidget&&wpWidget.pointer(-1,-1)");
+        }
+        self.pointer_in_window = inside;
+    }
+
     /// Opens one entertainment site in its own window (the setup guide uses this so the user can sign in to it).
     fn open_site(&mut self, key: &str) {
         if !waitplay_core::settings::SITE_KEYS.contains(&key) {
@@ -1757,6 +1788,18 @@ pub fn run() -> Result<(), String> {
         })
         .map_err(|e| e.to_string())?;
 
+    // the pointer feed for the widget's hover (see `App::on_pointer`): a cheap wake-up every 50 ms; the work is done only when the mouse moved
+    let pointer = proxy.clone();
+    std::thread::Builder::new()
+        .name("wp-pointer".into())
+        .spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(50));
+            if pointer.send_event(Ev::Pointer).is_err() {
+                break;
+            }
+        })
+        .map_err(|e| e.to_string())?;
+
     let mut app = App::new(proxy, settings);
     event_loop.run(move |event, target, flow| {
         *flow = ControlFlow::Wait;
@@ -1766,6 +1809,7 @@ pub fn run() -> Result<(), String> {
             Event::UserEvent(Ev::Sessions(body)) => app.on_sessions(body),
             Event::UserEvent(Ev::SoundChosen(file)) => app.on_sound_chosen(file, target),
             Event::UserEvent(Ev::Prefs(id, data, ok)) => app.on_prefs(id, data, ok, target),
+            Event::UserEvent(Ev::Pointer) => app.on_pointer(),
             Event::UserEvent(Ev::Ipc(Target::Settings, body)) => app.on_settings_ipc(&body, target),
             Event::UserEvent(Ev::Ipc(Target::Widget, body)) => app.on_widget_ipc(&body, target),
             Event::UserEvent(Ev::Ipc(Target::Account, body)) => app.on_account_ipc(&body),

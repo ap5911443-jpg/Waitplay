@@ -78,6 +78,16 @@ pub fn origin_from_anchor(pos: WidgetPosition, anchor: (f64, f64), size: (f64, f
     Some((clamp(anchor.0 - offset.0, work.x, work.right() - size.0), clamp(anchor.1 - offset.1, work.y, work.bottom() - size.1)))
 }
 
+/// Where a global pointer is relative to a window, for the widget's hover feed: `cursor`, the window's top-left `origin` and its `size` are
+/// in the same units (physical pixels on Windows, logical points on macOS), `scale` converts them to the page's CSS pixels. Returns
+/// whether the pointer is over the window (with a 4 px margin, so a pointer on the very top edge of the screen still counts) and its
+/// position in CSS pixels from the window's top-left.
+pub fn pointer_in_window(cursor: (f64, f64), origin: (f64, f64), size: (f64, f64), scale: f64) -> (bool, f64, f64) {
+    let (rx, ry) = ((cursor.0 - origin.0) / scale, (cursor.1 - origin.1) / scale);
+    let (w, h) = (size.0 / scale, size.1 / scale);
+    (rx >= -4.0 && ry >= -4.0 && rx <= w + 4.0 && ry <= h + 4.0, rx, ry)
+}
+
 /// The entertainment window: centred on the display under the pointer, 70% x 82% of the usable area (at least 480 x 420, at most
 /// 1400 x 950, never larger than the area), the same on macOS and Windows. The widget floats above it.
 pub fn centered_companion_rect(work: LRect) -> LRect {
@@ -94,6 +104,20 @@ pub fn screen_at(screens: &[Screen], px: f64, py: f64) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hover_feed_finds_the_pointer_in_css_pixels_on_any_scale() {
+        // 150% scaling on Windows: a 546 x 90 px window at (1167, 0); the pointer 450 px in and 9 px down
+        let (inside, x, y) = pointer_in_window((1617.0, 9.0), (1167.0, 0.0), (546.0, 90.0), 1.5);
+        assert!(inside && (x - 300.0).abs() < 1e-9 && (y - 6.0).abs() < 1e-9);
+        // a Mac at scale 1: the pointer on the very top edge of the display counts as inside
+        assert!(pointer_in_window((700.0, 0.0), (600.0, 0.0), (400.0, 120.0), 1.0).0);
+        // just beyond the margin on every side is outside
+        assert!(!pointer_in_window((595.0, 50.0), (600.0, 0.0), (400.0, 120.0), 1.0).0);
+        assert!(!pointer_in_window((1005.0, 50.0), (600.0, 0.0), (400.0, 120.0), 1.0).0);
+        assert!(!pointer_in_window((700.0, 125.0), (600.0, 0.0), (400.0, 120.0), 1.0).0);
+        assert!(!pointer_in_window((700.0, -5.0), (600.0, 0.0), (400.0, 120.0), 1.0).0);
+    }
 
     const WORK: LRect = LRect { x: 0.0, y: 25.0, w: 1440.0, h: 800.0 };
 

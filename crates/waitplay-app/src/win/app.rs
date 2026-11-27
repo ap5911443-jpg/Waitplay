@@ -84,6 +84,8 @@ enum Ev {
     SoundChosen(Option<String>),
     /// One step of the widget's shape animation (the generation says which animation it belongs to).
     Morph(u64),
+    /// The pointer feed: time to look at where the mouse is relative to the widget (see `on_pointer`).
+    Pointer,
     /// The account's saved preferences, fetched on a worker thread after a sign-in: (account id, saved data or none, fetch worked).
     Prefs(String, Option<Value>, bool),
 }
@@ -397,6 +399,9 @@ struct App {
     prefs_applying: bool,
     /// The next saved-preferences answer belongs to app startup, not to a sign-in.
     prefs_startup: bool,
+    /// Where the pointer was at the last look (physical px), and whether it was inside the widget window then (see `on_pointer`).
+    last_pointer: (i32, i32),
+    pointer_in_window: bool,
     /// Grouped notifications and sound cues, from the session list.
     tracker: island::Tracker,
     /// Timings of finished work for the Insights page (local only).
@@ -443,6 +448,8 @@ impl App {
             prefs_dirty: None,
             prefs_applying: false,
             prefs_startup: false,
+            last_pointer: (i32::MIN, i32::MIN),
+            pointer_in_window: false,
             tracker: island::Tracker::new(),
             recorder: insights::Recorder::new(),
             last_sound_ms: 0,
@@ -1398,6 +1405,35 @@ impl App {
         }
     }
 
+    /// Hover without relying on the page's own pointer events. The widget window is clipped to a region that Rust keeps resizing, and when
+    /// that region changes under a stationary mouse the browser can report a stray "leave" that would collapse a panel the pointer is
+    /// still on. Every 50 ms (`Ev::Pointer`) this reads the global mouse position and, while the pointer is over the widget window (and
+    /// once when it leaves), hands it to the page as window coordinates (`wpWidget.pointer(x, y)`); the page decides what is the shell.
+    fn on_pointer(&mut self) {
+        if self.fullscreen_busy {
+            return;
+        }
+        let Some(w) = self.widget.as_ref().filter(|w| w.shown) else { return };
+        let (px, py) = platform::cursor_position();
+        if (px, py) == self.last_pointer {
+            return;
+        }
+        self.last_pointer = (px, py);
+        let scale = w.window.scale_factor();
+        let (Ok(pos), size) = (w.window.outer_position(), w.window.outer_size()) else { return };
+        let (inside, rx, ry) = placement::pointer_in_window((px as f64, py as f64), (pos.x as f64, pos.y as f64), (size.width as f64, size.height as f64), scale);
+        let (ww, wh) = (size.width as f64 / scale, size.height as f64 / scale);
+        if inside != self.pointer_in_window {
+            wp_info!("widget pointer {} at ({:.0}, {:.0}) in a {:.0}x{:.0} window", if inside { "entered" } else { "left" }, rx, ry, ww, wh);
+        }
+        if inside {
+            let _ = w.webview.evaluate_script(&format!("window.wpWidget&&wpWidget.pointer({:.1},{:.1})", rx, ry));
+        } else if self.pointer_in_window {
+            let _ = w.webview.evaluate_script("window.wpWidget&&wpWidget.pointer(-1,-1)");
+        }
+        self.pointer_in_window = inside;
+    }
+
     /// Opens one entertainment site in its own window (the setup guide uses this so the user can sign in to it).
     fn open_site(&mut self, key: &str) {
         if !waitplay_core::settings::SITE_KEYS.contains(&key) {
@@ -1959,6 +1995,18 @@ pub fn run() -> Result<(), String> {
         })
         .map_err(|e| e.to_string())?;
 
+    // the pointer feed for the widget's hover (see `App::on_pointer`): a cheap wake-up every 50 ms; the work is done only when the mouse moved
+    let pointer = proxy.clone();
+    std::thread::Builder::new()
+        .name("wp-pointer".into())
+        .spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(50));
+            if pointer.send_event(Ev::Pointer).is_err() {
+                break;
+            }
+        })
+        .map_err(|e| e.to_string())?;
+
     let mut app = App::new(proxy, settings);
     event_loop.run_return(move |event, target, flow| {
         *flow = ControlFlow::Wait;
@@ -1968,6 +2016,7 @@ pub fn run() -> Result<(), String> {
             Event::UserEvent(Ev::Sessions(body)) => app.on_sessions(body),
             Event::UserEvent(Ev::SoundChosen(file)) => app.on_sound_chosen(file, target),
             Event::UserEvent(Ev::Morph(gen)) => app.on_morph(gen),
+            Event::UserEvent(Ev::Pointer) => app.on_pointer(),
             Event::UserEvent(Ev::Prefs(id, data, ok)) => app.on_prefs(id, data, ok, target),
             Event::UserEvent(Ev::Ipc(Target::Settings, body)) => app.on_settings_ipc(&body, target),
             Event::UserEvent(Ev::Ipc(Target::Widget, body)) => app.on_widget_ipc(&body, target),
