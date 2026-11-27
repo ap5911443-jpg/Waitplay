@@ -9,6 +9,10 @@
 # Scenario 2 (custom settings): dark appearance, widget top-right, YouTube preferred, X disabled, "close when the agent finishes":
 #   the window opens on YouTube below the widget and the companion process exits when the agent is done; the web login store
 #   persists to disk.
+# Vibe Play needs an account and the test cannot sign in, so WAITPLAY_TESTHOOKS_BIN is required: a separate build with
+# `--features test-hooks`, which alone honours WAITPLAY_TEST_SKIP_ACCOUNT=1. Build it with
+#   cargo build --release --workspace --target <t> && cargo build --release -p waitplay-app --features test-hooks --target <t>
+# and copy waitplay, waitplay-bridge and waitplay-hook into one folder (see .github/workflows/macos.yml).
 # Logs and screenshots go to the output directory. Exit status 1 when any check failed; every check prints "ok:" or "FAIL:".
 set -u
 
@@ -44,6 +48,8 @@ new_env() {
   LOG="$HOME/Library/Logs/WaitPlay/waitplay.log"
   SIG="${TMPDIR}waitplay"
   STATE="$SIG/.waitplay-companion-instagram.json"
+  # the setup guide was already finished, so the app starts straight into the menu bar
+  : >"$HOME/Library/Application Support/WaitPlay/onboarded"
 }
 
 shot() { screencapture -x "$OUT/$1.png" 2>/dev/null || echo "note: screencapture unavailable for $1"; }
@@ -55,10 +61,11 @@ tool_json() { printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_na
 # a real agent keeps reporting tool use; without it the bridge's 20 s watchdog completes a silent session
 keepalive() { while :; do hook tool "$(tool_json "$1")"; sleep 4; done; }
 no_process() { ! pgrep -f -- "$1" >/dev/null; }
-# The shipped binary has no test switches. For the screenshots (the page must be expanded without a click) CI passes a separate
-# binary built with `--features test-hooks` in WAITPLAY_TESTHOOKS_BIN; without it the shipped binary runs and the widget stays collapsed.
-APP_BIN="${WAITPLAY_TESTHOOKS_BIN:-$BIN/waitplay}"
-[ -x "$APP_BIN" ] || APP_BIN="$BIN/waitplay"
+# The shipped binary has no test switches and cannot skip the sign-in gate. The app under test is therefore the test-hooks build
+# in WAITPLAY_TESTHOOKS_BIN; the hooks and the entertainment windows still come from the packaged bundle.
+APP_BIN="${WAITPLAY_TESTHOOKS_BIN:-}"
+[ -x "$APP_BIN" ] || { echo "FAIL: set WAITPLAY_TESTHOOKS_BIN to a waitplay built with --features test-hooks"; exit 1; }
+export WAITPLAY_TEST_SKIP_ACCOUNT=1
 if strings "$BIN/waitplay" | grep -q "WAITPLAY_TEST_"; then bad "the shipped binary contains a test switch (WAITPLAY_TEST_*)"; else ok "the shipped binary contains no test switches"; fi
 quit_all() {
   pkill -f "$APP_BIN" 2>/dev/null
@@ -89,7 +96,7 @@ code() { curl -s -o /dev/null -w "%{http_code}" "$@"; }
 [ "$(code http://127.0.0.1:3150/auth/token)" = "404" ] && ok "the bridge hands out no token" || bad "/auth/token still exists"
 [ "$(code -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H 'Origin: http://evil.example' http://127.0.0.1:3150/ws)" = "403" ] && ok "a foreign-origin WebSocket is refused" || bad "a foreign-origin WebSocket was not refused"
 [ "$(code -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' http://127.0.0.1:3150/ws)" = "401" ] && ok "a WebSocket without the token is refused" || bad "a tokenless WebSocket was not refused"
-wait_for "widget shown" 20 grep -q "widget shown bottom-right" "$LOG"
+wait_for "widget shown at the notch" 20 grep -q "widget shown top-center" "$LOG"
 kill -0 "$APP_PID" 2>/dev/null && ok "app still running" || bad "app exited early"
 sleep 2
 shot 01-widget
@@ -174,8 +181,11 @@ wait_for "entertainment process exits when the agent finishes (close mode)" 40 n
 sleep 1
 shot 08-after-close
 
-# the web login store must be on disk after a clean exit
-cookie_files="$(find "$HOME/Library" "/Users/$(id -un)/Library" -name '*.binarycookies' 2>/dev/null)"
+# the web login store must be on disk after a clean exit. WebKit ignores $HOME, so CI also looks in the runner's real Library; on
+# somebody's own Mac the test never reads their cookie files
+cookie_dirs=("$HOME/Library")
+[ "${CI:-}" != "true" ] || cookie_dirs+=("/Users/$(id -un)/Library")
+cookie_files="$(find "${cookie_dirs[@]}" -name '*.binarycookies' 2>/dev/null)"
 echo "note: cookie stores: ${cookie_files:-none}"
 if [ -n "$cookie_files" ] && echo "$cookie_files" | xargs grep -l -a -i -E 'youtube|google|instagram' >/dev/null 2>&1; then
   ok "web cookies were persisted to disk"

@@ -354,7 +354,7 @@ impl App {
         self.refresh_widget_window(target);
         self.sync_login_item();
         self.refresh_runtime(true);
-        if self.account.available() {
+        if self.account.available() && !account_sync::skip_account_gate() {
             // the browser data of whoever is signed in, and no automation at all while nobody is
             self.last_account = self.account.user_id();
             crate::profile::set_active(self.last_account.as_deref());
@@ -1040,7 +1040,7 @@ impl App {
     /// Vibe Play needs an account: while this build has an account service and nobody is signed in, nothing runs and the settings
     /// window shows only the sign-in screen.
     fn account_gate(&self) -> bool {
-        self.account.available() && self.account.user_id().is_none()
+        self.account.available() && self.account.user_id().is_none() && !account_sync::skip_account_gate()
     }
 
     /// Notices a sign-in, a sign-out or a switch to another account. The entertainment windows and the sign-in check hold the old

@@ -9,6 +9,19 @@ use serde_json::{Map, Value};
 use std::path::PathBuf;
 use waitplay_core::settings::Settings;
 
+/// Whether this run may use the app without an account. Only the separate `--features test-hooks` build can ever say yes (the smoke
+/// test cannot sign in); the shipped binary does not even contain the variable's name.
+pub fn skip_account_gate() -> bool {
+    #[cfg(feature = "test-hooks")]
+    {
+        std::env::var("WAITPLAY_TEST_SKIP_ACCOUNT").is_ok_and(|v| v == "1")
+    }
+    #[cfg(not(feature = "test-hooks"))]
+    {
+        false
+    }
+}
+
 fn onboarded_file() -> PathBuf {
     waitplay_core::paths::app_support_dir().join("onboarded")
 }

@@ -79,13 +79,21 @@ jobs:
       # A SEPARATE binary with the `test-hooks` feature, used only by the screenshot scenario of the smoke test. It is built after
       # the shipped binaries were packaged and uploaded, is never packaged or published, and the shipped app has no test switches.
       - name: Build the smoke-test-only binary (test hooks)
-        if: matrix.target == 'x86_64-apple-darwin'
         shell: bash
         run: |
           cargo build --release -p waitplay-app --features test-hooks --target ${{ matrix.target }}
           # the app starts the bridge and the hooks from the folder it runs from, so they sit next to it
           mkdir -p testhooks
           cp target/${{ matrix.target }}/release/waitplay target/${{ matrix.target }}/release/waitplay-bridge target/${{ matrix.target }}/release/waitplay-hook testhooks/
+
+      # for the Apple Silicon smoke job only. The name matches neither download pattern of the release job, so it is never published
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.target == 'aarch64-apple-darwin'
+        with:
+          name: testhooks-aarch64
+          path: testhooks
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Smoke test the bundle
         if: matrix.target == 'x86_64-apple-darwin'
@@ -280,13 +288,19 @@ jobs:
           hdiutil detach "$RUNNER_TEMP/wp-dmg"
           file WaitPlay.app/Contents/MacOS/waitplay
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: testhooks-aarch64
+          path: testhooks
+
       - name: Runtime smoke test on Apple Silicon
         id: runtime
         continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
-          bash packaging/macos/smoke.sh WaitPlay.app smoke-out 2>&1 | tee smoke-run.log
+          chmod +x testhooks/*
+          WAITPLAY_TESTHOOKS_BIN="$PWD/testhooks/waitplay" bash packaging/macos/smoke.sh WaitPlay.app smoke-out 2>&1 | tee smoke-run.log
 
       - name: Annotate result
         if: always()
