@@ -155,7 +155,7 @@ async fn session_reset_broadcasts_session_list() {
     bridge.shutdown();
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn launch_timer_transition_is_broadcast_without_any_http_request() {
     let bridge = start_bridge("tok").await;
     let mut ws = connect(bridge.addr).await;
@@ -164,17 +164,20 @@ async fn launch_timer_transition_is_broadcast_without_any_http_request() {
     // WORKING (transition), agent_event, WORKING (ingest)
     next_of_type(&mut ws, "agent_event").await;
     next_of_type(&mut ws, "session_updated").await;
-    // 4s later (virtual time) the launch timer fires on its own
+    // 4s later the launch timer fires on its own (real clock, see the ping test below)
     let launched = next_of_type(&mut ws, "session_updated").await;
     assert_eq!(launched["session"]["status"], "GAME_ACTIVE");
     bridge.shutdown();
 }
 
-#[tokio::test(start_paused = true)]
+// Real clock on purpose: with a paused clock Tokio jumps ahead whenever the runtime waits on a real socket, so the measured time
+// was anything from milliseconds to 30 s.
+#[tokio::test]
 async fn server_sends_protocol_ping_every_fifteen_seconds() {
+    // taken before the bridge starts its heartbeat, so the first ping can never look early
+    let started = tokio::time::Instant::now();
     let bridge = start_bridge("tok").await;
     let mut ws = connect(bridge.addr).await;
-    let started = tokio::time::Instant::now();
     loop {
         match tokio::time::timeout(Duration::from_secs(60), ws.next()).await.expect("no ping within 60s") {
             Some(Ok(Message::Ping(_))) => break,
@@ -183,7 +186,7 @@ async fn server_sends_protocol_ping_every_fifteen_seconds() {
         }
     }
     let waited = started.elapsed();
-    assert!(waited >= Duration::from_secs(14) && waited <= Duration::from_secs(16), "ping after {waited:?}");
+    assert!(waited >= Duration::from_secs(15) && waited <= Duration::from_secs(20), "ping after {waited:?}");
     bridge.shutdown();
 }
 
