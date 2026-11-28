@@ -51,12 +51,14 @@ pub fn default_watchers() -> Vec<String> {
 // ── Claude Code hooks ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 /// (hook event, `waitplay-hook claude-code` argument, tool matcher)
-const CLAUDE_EVENTS: [(&str, &str, Option<&str>); 6] = [
+const CLAUDE_EVENTS: [(&str, &str, Option<&str>); 7] = [
     ("UserPromptSubmit", "start", None),
     ("PreToolUse", "tool", Some("*")),
     ("PostToolUse", "tool_done", Some("*")),
     ("Stop", "stop", None),
     ("Notification", "notify", None),
+    // answered from the widget: the hook waits up to 55 s for the user, so Claude Code is told to allow it 70 s
+    ("PermissionRequest", "permission", None),
     ("SessionEnd", "end", None),
 ];
 
@@ -146,7 +148,7 @@ fn write_settings(path: &Path, root: &Value) -> Result<(), String> {
     waitplay_core::paths::write_atomic(path, &body).map_err(|e| format!("cannot write {}: {}", path.display(), e))
 }
 
-/// Adds (or refreshes) the five hooks. Everything else in the file is kept. An unreadable file is never overwritten.
+/// Adds (or refreshes) Vibe Play's hooks. Everything else in the file is kept. An unreadable file is never overwritten.
 pub fn claude_install(settings: &Path, hook_exe: &Path) -> Result<(), String> {
     let mut root = read_settings(settings)?;
     let obj = root.as_object_mut().ok_or_else(|| format!("{} is not a JSON object", settings.display()))?;
@@ -160,7 +162,11 @@ pub fn claude_install(settings: &Path, hook_exe: &Path) -> Result<(), String> {
         if let Some(m) = matcher {
             entry.insert("matcher".into(), json!(m));
         }
-        entry.insert("hooks".into(), json!([{ "type": "command", "command": claude_command(hook_exe, arg) }]));
+        let mut command = json!({ "type": "command", "command": claude_command(hook_exe, arg) });
+        if event == "PermissionRequest" {
+            command["timeout"] = json!(70);
+        }
+        entry.insert("hooks".into(), json!([command]));
         list.push(Value::Object(entry));
     }
     write_settings(settings, &root)
@@ -209,7 +215,7 @@ mod tests {
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         // next to the test binary, not in TMPDIR: another test in this process rewrites TMPDIR and deletes that folder
         let base = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
-        let p = base.join(format!("wp-integ-{}-{}-{}", tag, std::process::id(), n));
+        let p = base.join(format!("wp-integ-mac-{}-{}-{}", tag, std::process::id(), n));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p

@@ -109,6 +109,32 @@ pub fn agent_name(id: &str) -> String {
     .to_string()
 }
 
+/// One request waiting for the user's answer (see the bridge's `permissions`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PermRequest {
+    pub id: String,
+    pub agent: String,
+    pub tool: String,
+    pub summary: String,
+}
+
+/// The pending requests of `GET /permissions`; empty when the body is anything else.
+pub fn parse_permissions(json: &str) -> Vec<PermRequest> {
+    let Ok(root) = serde_json::from_str::<Value>(json) else { return Vec::new() };
+    let text = |v: &Value, k: &str, max: usize| v.get(k).and_then(Value::as_str).unwrap_or("").chars().take(max).collect::<String>();
+    root.get("permissions")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|p| {
+                    let id = text(p, "id", 80);
+                    (!id.is_empty()).then(|| PermRequest { id, agent: agent_name(&text(p, "agent", 40)), tool: text(p, "tool", 40), summary: text(p, "summary", 300) })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// `None` when the body is not a session list.
 pub fn parse_sessions(json: &str, now_ms: i64) -> Option<SessionsView> {
     let root: Value = serde_json::from_str(json).ok()?;
@@ -335,6 +361,13 @@ mod tests {
         assert_eq!(overall(true, true, &busy, true), Status::Entertainment);
         assert_eq!(overall(true, true, &busy, false), Status::Working);
         assert_eq!(overall(true, true, &idle, false), Status::Idle);
+    }
+
+    #[test]
+    fn pending_permission_requests_are_read_with_the_agent_named() {
+        let list = parse_permissions(r#"{"permissions":[{"id":"p1-1","sessionId":"s","agent":"claude-code","tool":"Bash","summary":"rm -rf build","createdAt":1},{"agent":"codex"}]}"#);
+        assert_eq!(list, vec![PermRequest { id: "p1-1".into(), agent: "Claude Code".into(), tool: "Bash".into(), summary: "rm -rf build".into() }]);
+        assert!(parse_permissions("nope").is_empty());
     }
 
     #[test]

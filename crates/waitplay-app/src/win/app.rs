@@ -78,6 +78,8 @@ enum HotkeyAction {
 enum Ev {
     Tick,
     Sessions(Option<String>),
+    /// The pending permission requests (`GET /permissions`), polled every second while approving from the island is on.
+    Permissions(Option<String>),
     Ipc(Target, String),
     Menu(String),
     Hotkey(u32),
@@ -357,6 +359,7 @@ struct Runtime {
     bridge_misses: u32,
     view: SessionsView,
     entertainment: Option<String>,
+    perms: Vec<status::PermRequest>,
 }
 
 struct App {
@@ -379,6 +382,7 @@ struct App {
     screens: Vec<Screen>,
     ticks: u64,
     polling: bool,
+    polling_perms: bool,
     /// A fullscreen game, video or presentation is in front: the notch stays out of its way until it ends.
     fullscreen_busy: bool,
     last_widget_state: Option<Value>,
@@ -434,6 +438,7 @@ impl App {
             screens: Vec::new(),
             ticks: 0,
             polling: false,
+            polling_perms: false,
             fullscreen_busy: false,
             last_widget_state: None,
             last_settings_state: None,
@@ -604,6 +609,7 @@ impl App {
                 self.push_settings();
             }
         }
+        self.poll_permissions();
         if self.ticks % REFRESH_EVERY == 0 {
             self.refresh_runtime(false);
             let busy = native::fullscreen_app_active();
@@ -671,6 +677,55 @@ impl App {
             self.supervise();
         }
         self.render();
+    }
+
+    /// Polls the bridge for permission requests (one loopback request a second). Asking is also what tells the agent's hook that the
+    /// island is there to answer, so it only runs while "Approve from the island" is on.
+    fn poll_permissions(&mut self) {
+        if !self.settings.approve_from_notch {
+            if !self.rt.perms.is_empty() {
+                self.rt.perms.clear();
+                self.render();
+            }
+            return;
+        }
+        if self.polling_perms {
+            return;
+        }
+        self.polling_perms = true;
+        let proxy = self.proxy.clone();
+        let spawned = std::thread::Builder::new().name("wp-perms".into()).spawn(move || {
+            let body = BridgeClient::new().get_permissions(Duration::from_millis(500));
+            let _ = proxy.send_event(Ev::Permissions(body));
+        });
+        if spawned.is_err() {
+            self.polling_perms = false;
+        }
+    }
+
+    fn on_permissions(&mut self, body: Option<String>) {
+        self.polling_perms = false;
+        let list = body.as_deref().map(status::parse_permissions).unwrap_or_default();
+        if list != self.rt.perms {
+            let new = list.iter().any(|p| !self.rt.perms.iter().any(|q| q.id == p.id));
+            self.rt.perms = list;
+            self.render();
+            if new {
+                wp_info!("permission request from the agent: showing it in the island");
+            }
+        }
+    }
+
+    /// Allow / Deny / Ask in terminal, from the island's card. Off the UI thread; the card goes at once.
+    fn answer_permission(&mut self, id: &str, behavior: &str) {
+        self.rt.perms.retain(|p| p.id != id);
+        self.render();
+        let (id, behavior) = (id.to_string(), behavior.to_string());
+        let _ = std::thread::Builder::new().name("wp-answer".into()).spawn(move || {
+            if let Err(e) = BridgeClient::new().post_permission_decision(&id, &behavior) {
+                wp_warn!("permission answer: {}", e);
+            }
+        });
     }
 
     fn on_sessions(&mut self, body: Option<String>) {
@@ -847,6 +902,7 @@ impl App {
             "clip": true,
             "notch": (self.settings.widget_position.as_str() == "top-center").then(|| json!({ "w": NOTCH_W, "h": NOTCH_H })),
             "since": view.working_since,
+            "perm": self.rt.perms.first().map(|p| json!({ "id": p.id, "agent": p.agent, "tool": p.tool, "summary": p.summary, "more": self.rt.perms.len() - 1 })),
             "sessionList": self.session_rows_json(),
             "ent": { "state": ent.state, "text": ent.text, "hint": ent.hint },
             "entOpen": self.rt.entertainment.is_some(),
@@ -1726,7 +1782,6 @@ impl App {
             }
             "setName" | "signOut" | "signOutOthers" | "revokeDevice" => self.on_account_ipc(body),
             "openSite" => self.open_site(&str_of("key")),
-            "focusSession" => self.focus_session(&str_of("id")),
             "finishOnboarding" => {
                 self.onboarded = true;
                 // Vibe Play runs in the background from the moment Windows starts, so automation never waits for someone to open it
@@ -1817,6 +1872,14 @@ impl App {
                 self.apply_settings_patch(&json!({ "soundMuted": muted }), target);
             }
             "dismissToast" => self.tracker.dismiss_toast(),
+            "permission" => {
+                let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+                self.answer_permission(&text("id"), &text("behavior"));
+            }
+            "focusSession" => {
+                let id = v.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                self.focus_session(&id);
+            }
             other => wp_warn!("widget page sent an unknown message {:?}", other),
         }
         self.render();
@@ -2028,6 +2091,7 @@ pub fn run() -> Result<(), String> {
             Event::NewEvents(StartCause::Init) => app.init(target),
             Event::UserEvent(Ev::Tick) => app.on_tick(target),
             Event::UserEvent(Ev::Sessions(body)) => app.on_sessions(body),
+            Event::UserEvent(Ev::Permissions(body)) => app.on_permissions(body),
             Event::UserEvent(Ev::SoundChosen(file)) => app.on_sound_chosen(file, target),
             Event::UserEvent(Ev::Morph(gen)) => app.on_morph(gen),
             Event::UserEvent(Ev::Pointer) => app.on_pointer(),

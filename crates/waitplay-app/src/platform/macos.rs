@@ -329,6 +329,33 @@ pub fn set_window_level(ns_window: *mut std::ffi::c_void, level: isize) {
     }
 }
 
+/// Lets the window appear over another app's full-screen space (a full-screen terminal or editor) and on every desktop, instead of
+/// pulling the user back to the desktop it was opened on. tao's "visible on all workspaces" only sets the first of these.
+pub fn allow_over_fullscreen(ns_window: *mut std::ffi::c_void) {
+    if ns_window.is_null() {
+        return;
+    }
+    const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+    const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+    // SAFETY: tao hands out the window's live NSWindow; collectionBehavior is an NSUInteger bit set
+    unsafe {
+        let w = ns_window as *mut objc2::runtime::AnyObject;
+        let current: usize = objc2::msg_send![w, collectionBehavior];
+        let _: () = objc2::msg_send![w, setCollectionBehavior: current | CAN_JOIN_ALL_SPACES | FULL_SCREEN_AUXILIARY];
+    }
+}
+
+/// Apps the user works in with an agent: when one of these is full screen, Vibe Play's windows stay (that is exactly when the
+/// entertainment window should open over it); a full-screen video, game or presentation still hides the widget.
+fn is_work_app(owner: &str) -> bool {
+    const NAMES: [&str; 20] = [
+        "terminal", "iterm", "ghostty", "warp", "wezterm", "alacritty", "kitty", "hyper", "tabby", "tmux", "code", "cursor", "windsurf", "zed", "xcode", "intellij", "pycharm",
+        "webstorm", "rustrover", "android studio",
+    ];
+    let lower = owner.to_lowercase();
+    NAMES.iter().any(|n| lower.contains(n))
+}
+
 /// One on-screen window as the window server lists it (top-left coordinates, front to back).
 #[derive(Clone, Debug, PartialEq)]
 struct ListedWindow {
@@ -390,6 +417,7 @@ fn shows_fullscreen_app(windows: &[ListedWindow], frame: LRect) -> bool {
             w.layer == 0
                 && w.alpha > 0.0
                 && w.owner != "Vibe Play"
+                && !is_work_app(&w.owner)
                 && spans_width(w)
                 && w.rect.y <= frame.y + MENU_BAR_OR_NOTCH
                 && near(w.rect.bottom(), frame.bottom())
@@ -421,6 +449,15 @@ mod fullscreen_tests {
         let list = [w("MenuBarAgent", 25, 1.0, 0.0, 33.0), w("Safari", 0, 0.0, 33.0, 32.0), w("Safari", 0, 1.0, 33.0, 923.0)];
         assert!(shows_fullscreen_app(&list, FRAME));
         assert!(!shows_fullscreen_app(&list, LRect::new(1470.0, 0.0, 1920.0, 1080.0)), "another display");
+    }
+
+    #[test]
+    fn a_full_screen_terminal_or_editor_does_not_hide_the_widget_but_a_video_does() {
+        for owner in ["Terminal", "iTerm2", "Ghostty", "Code", "Cursor", "Xcode"] {
+            let list = [w("MenuBarAgent", 25, 1.0, 0.0, 33.0), w(owner, 0, 1.0, 33.0, 923.0)];
+            assert!(!shows_fullscreen_app(&list, FRAME), "{owner}");
+        }
+        assert!(shows_fullscreen_app(&[w("QuickTime Player", 0, 1.0, 33.0, 923.0)], FRAME));
     }
 
     #[test]

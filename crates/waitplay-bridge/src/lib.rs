@@ -5,6 +5,7 @@ pub mod event_validator;
 pub mod js;
 pub mod limits;
 pub mod notifier;
+pub mod permissions;
 pub mod security;
 pub mod server;
 pub mod session_manager;

@@ -53,12 +53,14 @@ pub fn default_watchers() -> Vec<String> {
 // ── Claude Code hooks ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 /// (hook event, `waitplay-hook claude-code` argument, tool matcher)
-const CLAUDE_EVENTS: [(&str, &str, Option<&str>); 6] = [
+const CLAUDE_EVENTS: [(&str, &str, Option<&str>); 7] = [
     ("UserPromptSubmit", "start", None),
     ("PreToolUse", "tool", Some("*")),
     ("PostToolUse", "tool_done", Some("*")),
     ("Stop", "stop", None),
     ("Notification", "notify", None),
+    // answered from the widget: the hook waits up to 55 s for the user, so Claude Code is told to allow it 70 s
+    ("PermissionRequest", "permission", None),
     ("SessionEnd", "end", None),
 ];
 
@@ -160,7 +162,7 @@ fn write_settings(path: &Path, root: &Value) -> Result<(), String> {
     waitplay_core::paths::write_atomic(path, &body).map_err(|e| format!("cannot write {}: {}", path.display(), e))
 }
 
-/// Adds (or refreshes) the five hooks. Everything else in the file is kept. An unreadable file is never overwritten.
+/// Adds (or refreshes) Vibe Play's hooks. Everything else in the file is kept. An unreadable file is never overwritten.
 pub fn claude_install(settings: &Path, hook_exe: &Path) -> Result<(), String> {
     quotable(hook_exe)?;
     let mut root = read_settings(settings)?;
@@ -175,7 +177,11 @@ pub fn claude_install(settings: &Path, hook_exe: &Path) -> Result<(), String> {
         if let Some(m) = matcher {
             entry.insert("matcher".into(), json!(m));
         }
-        entry.insert("hooks".into(), json!([{ "type": "command", "command": claude_command(hook_exe, arg) }]));
+        let mut command = json!({ "type": "command", "command": claude_command(hook_exe, arg) });
+        if event == "PermissionRequest" {
+            command["timeout"] = json!(70);
+        }
+        entry.insert("hooks".into(), json!([command]));
         list.push(Value::Object(entry));
     }
     write_settings(settings, &root)

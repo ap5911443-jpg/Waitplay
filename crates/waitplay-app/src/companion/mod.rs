@@ -693,6 +693,8 @@ pub fn run(opts: Options, _guard: Guard) -> Result<(), String> {
     {
         use tao::platform::macos::WindowExtMacOS;
         platform::fill_with_glass(window.ns_view());
+        // open over a full-screen terminal or editor too, on whichever desktop the user is on
+        platform::allow_over_fullscreen(window.ns_window());
     }
     let scale = window.scale_factor();
     window.set_min_inner_size(Some(PhysicalSize::new((MIN_WIDTH_DIP * scale) as u32, (MIN_HEIGHT_DIP * scale) as u32)));

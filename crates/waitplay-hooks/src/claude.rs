@@ -270,6 +270,77 @@ pub fn run_beat(args: &[String]) {
     }
 }
 
+// ── approve from the widget ─────────────────────────────────────────────
+// Claude Code runs the `PermissionRequest` hook when it is about to ask the user. If this hook prints a decision, Claude uses it and
+// does not ask; if it prints nothing, Claude asks as usual. So: post the request to the bridge, wait for the widget's answer, and
+// fall through (print nothing) whenever there is no widget listening, the bridge is down, the user chose "ask in the terminal", or
+// nobody answered in time. Waiting costs the user nothing they would not have paid anyway, and it never lasts longer than WAIT.
+
+const PERMISSION_WAIT: Duration = Duration::from_secs(55);
+const PERMISSION_POLL: Duration = Duration::from_millis(250);
+
+/// What the agent wants to do, in a few words for the widget: the shell command, the file, the address.
+pub fn summarize_tool(tool: &str, input: &Value) -> String {
+    let str_of = |k: &str| input.get(k).and_then(Value::as_str).map(str::to_string);
+    let text = match tool {
+        "Bash" => str_of("command"),
+        "Edit" | "Write" | "MultiEdit" | "Read" | "NotebookEdit" => str_of("file_path").or_else(|| str_of("notebook_path")),
+        "WebFetch" => str_of("url"),
+        "WebSearch" => str_of("query"),
+        "Glob" | "Grep" => str_of("pattern"),
+        _ => None,
+    };
+    let text = text.unwrap_or_else(|| if input.is_null() || input.as_object().is_some_and(|o| o.is_empty()) { String::new() } else { input.to_string() });
+    text.chars().take(300).collect()
+}
+
+/// The line Claude Code reads on stdout for an answer; `None` for "ask in the terminal" and anything unknown.
+pub fn decision_output(decision: &str) -> Option<String> {
+    let decision = match decision {
+        "allow" => serde_json::json!({ "behavior": "allow" }),
+        "deny" => serde_json::json!({ "behavior": "deny", "message": "Denied from Vibe Play." }),
+        _ => return None,
+    };
+    Some(serde_json::json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": decision } }).to_string())
+}
+
+fn run_permission(data: &Value) {
+    if !state::is_enabled() {
+        return;
+    }
+    let session = session_for(data);
+    let tool = data.get("tool_name").and_then(Value::as_str).unwrap_or("Tool").to_string();
+    let summary = summarize_tool(&tool, data.get("tool_input").unwrap_or(&Value::Null));
+    let client = waitplay_core::BridgeClient::new();
+    let body = serde_json::json!({ "sessionId": session, "agent": AGENT, "tool": tool, "summary": summary });
+    // a short probe first: a bridge that is not running must not stall Claude Code
+    let port = waitplay_core::paths::bridge_port();
+    if std::net::TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], port)), Duration::from_millis(150)).is_err() {
+        return;
+    }
+    let Ok((id, listening)) = client.create_permission(&body) else { return };
+    if !listening {
+        return; // no widget is asking for requests: Claude shows its own prompt at once
+    }
+    // the agent is now waiting for the user: say so (the sound, the notch's "needs you")
+    post(&session, "waiting_for_input", Value::String(DEFAULT_MODEL.into()), Some(obj(vec![("prompt", Value::String(format!("Claude needs your permission to use {}", tool)))])));
+    let began = std::time::Instant::now();
+    while began.elapsed() < PERMISSION_WAIT {
+        match client.permission_decision(&id).as_deref() {
+            Some("pending") => std::thread::sleep(PERMISSION_POLL),
+            Some(d) => {
+                if let Some(out) = decision_output(d) {
+                    println!("{}", out);
+                    // the agent goes on: the notch should say "working" again right away
+                    post(&session, "task_running", Value::String(DEFAULT_MODEL.into()), Some(obj(vec![("tool", Value::String(tool))])));
+                }
+                return;
+            }
+            None => return,
+        }
+    }
+}
+
 pub fn run(args: &[String]) {
     if args.first().map(String::as_str) == Some("beat") {
         return run_beat(&args[1..]);
@@ -277,6 +348,9 @@ pub fn run(args: &[String]) {
     let event_type = args.first().map(String::as_str).unwrap_or("unknown");
     let Some(input) = read_stdin_with_timeout(Duration::from_millis(1000)) else { return };
     let data = parse_stdin(&input);
+    if event_type == "permission" || data.get("hook_event_name").and_then(Value::as_str) == Some("PermissionRequest") {
+        return run_permission(&data);
+    }
     execute(classify(event_type, &data), &session_for(&data));
 }
 
@@ -288,6 +362,21 @@ mod tests {
 
     fn c(arg: &str, data: Value) -> Action {
         classify(arg, &data)
+    }
+
+    #[test]
+    fn the_request_is_summarized_and_the_answer_is_what_claude_reads() {
+        assert_eq!(summarize_tool("Bash", &json!({"command": "rm -rf build", "description": "x"})), "rm -rf build");
+        assert_eq!(summarize_tool("Edit", &json!({"file_path": "/a/b.rs", "old_string": "x"})), "/a/b.rs");
+        assert_eq!(summarize_tool("Other", &json!({"k": 1})), r#"{"k":1}"#);
+        assert_eq!(summarize_tool("Bash", &Value::Null), "");
+        assert_eq!(summarize_tool("Bash", &json!({"command": "x".repeat(500)})).chars().count(), 300);
+        let allow: Value = serde_json::from_str(&decision_output("allow").unwrap()).unwrap();
+        assert_eq!(allow["hookSpecificOutput"]["decision"]["behavior"], "allow");
+        assert_eq!(allow["hookSpecificOutput"]["hookEventName"], "PermissionRequest");
+        let deny: Value = serde_json::from_str(&decision_output("deny").unwrap()).unwrap();
+        assert_eq!(deny["hookSpecificOutput"]["decision"]["behavior"], "deny");
+        assert!(decision_output("ask").is_none() && decision_output("gone").is_none());
     }
 
     #[test]

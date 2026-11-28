@@ -90,6 +90,8 @@ pub struct Settings {
     /// Island notifications (toasts) on/off and how long one stays, in seconds.
     pub notifications: bool,
     pub notification_secs: u32,
+    /// Answer an agent's permission questions (allow / deny) from the widget instead of its terminal. Needs the agent's permission hook.
+    pub approve_from_notch: bool,
     /// Sounds: a global mute, volume 0 to 100, which sound plays, and which events play it.
     pub sound_muted: bool,
     pub sound_volume: u32,
@@ -144,6 +146,7 @@ impl Default for Settings {
             watchers: Vec::new(),
             notifications: true,
             notification_secs: 5,
+            approve_from_notch: true,
             sound_muted: false,
             sound_volume: 70,
             sound_name: "gentle".into(),
@@ -218,6 +221,7 @@ impl Settings {
         boolean!("widgetCompact", self.widget_compact);
         boolean!("widgetShowStatus", self.widget_show_status);
         boolean!("notifications", self.notifications);
+        boolean!("approveFromNotch", self.approve_from_notch);
         boolean!("soundMuted", self.sound_muted);
         boolean!("mascot", self.mascot);
         boolean!("mascotIdle", self.mascot_idle);

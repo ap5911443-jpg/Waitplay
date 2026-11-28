@@ -3,6 +3,7 @@
 
 use crate::event_validator::validate_event_input;
 use crate::limits::{self, Limits};
+use crate::permissions::{Decision, Permissions};
 use crate::security::{self, LoopbackVerdict};
 use crate::session_manager::SessionManager;
 use crate::ws::{self, WsHub};
@@ -34,6 +35,7 @@ pub struct BridgeState {
     pub get_health: HealthFn,
     pub token: String,
     pub limits: Limits,
+    pub permissions: Permissions,
 }
 
 impl BridgeState {
@@ -42,7 +44,7 @@ impl BridgeState {
     }
 
     pub fn with_limits(sessions: Arc<SessionManager>, ws: Option<Arc<WsHub>>, get_health: HealthFn, token: String, limits: Limits) -> BridgeState {
-        BridgeState { sessions, ws, get_health, token, limits }
+        BridgeState { sessions, ws, get_health, token, limits, permissions: Permissions::default() }
     }
 }
 
@@ -349,6 +351,39 @@ fn route(state: &BridgeState, parts: &hyper::http::request::Parts, body: Value) 
             }
             json_response(200, &json!({ "status": "reset", "sessionId": id }))
         }
+        (["permissions"], true, _) => {
+            auth!("GET /permissions");
+            json_response(200, &json!({ "permissions": state.permissions.pending() }))
+        }
+        (["permissions"], _, true) => {
+            auth!("POST /permissions");
+            let text = |k: &str| body.get(k).and_then(Value::as_str).unwrap_or("");
+            // `responder` tells the hook whether a widget is listening; if not it must not wait
+            match state.permissions.create(text("sessionId"), text("agent"), text("tool"), text("summary")) {
+                Some(id) => json_response(200, &json!({ "id": id, "responder": state.permissions.responder_present() })),
+                None => too_many("Too many permission requests are waiting."),
+            }
+        }
+        (["permissions", _], true, _) => {
+            auth!("GET /permissions/:id");
+            let Some(id) = percent_decode(segs[1]) else { return error_json(400, "Bad Request", "Failed to decode param") };
+            let decision = match state.permissions.take_decision(&id) {
+                Decision::Pending => "pending".to_string(),
+                Decision::Decided(d) => d,
+                Decision::Gone => "gone".to_string(),
+            };
+            json_response(200, &json!({ "decision": decision }))
+        }
+        (["permissions", _, "decision"], _, true) => {
+            auth!("POST /permissions/:id/decision");
+            let Some(id) = percent_decode(segs[1]) else { return error_json(400, "Bad Request", "Failed to decode param") };
+            let behavior = body.get("behavior").and_then(Value::as_str).unwrap_or("");
+            if state.permissions.decide(&id, behavior) {
+                json_response(200, &json!({ "status": "decided" }))
+            } else {
+                error_json(404, "NotFound", "No such pending request, or the choice is not allow, deny or ask")
+            }
+        }
         (["events"], _, true) => {
             auth!("POST /events");
             if !state.limits.events.allow() {
@@ -359,6 +394,19 @@ fn route(state: &BridgeState, parts: &hyper::http::request::Parts, body: Value) 
                 Ok(p) => p,
                 Err(message) => return error_json(400, "ValidationError", &message),
             };
+            // the agent moved on: a question it asked can no longer be waiting
+            match payload.event {
+                waitplay_core::AgentEvent::TaskRunning => {
+                    let tool = payload.data.as_ref().and_then(|d| d.get("tool")).and_then(Value::as_str).unwrap_or("");
+                    if !tool.is_empty() {
+                        state.permissions.cancel_tool(&payload.session_id, tool);
+                    }
+                }
+                waitplay_core::AgentEvent::TaskStarted | waitplay_core::AgentEvent::TaskCompleted | waitplay_core::AgentEvent::TaskFailed | waitplay_core::AgentEvent::SessionEnded => {
+                    state.permissions.cancel_session(&payload.session_id)
+                }
+                _ => {}
+            }
             let (session, status) = state.sessions.process_event(&payload);
             if let Some(ws) = &state.ws {
                 ws.broadcast_event(&payload, &session);

@@ -653,6 +653,7 @@ function paneSounds() {
     banners(),
     section("Notifications", group(
       switchRow("Show notifications", "Short messages under the island when agents start, finish or fail.", "notifications"),
+      switchRow("Approve from the island", "When Claude Code asks permission, answer Allow or Deny in the island. Choose Ask in terminal to use its own prompt. Reconnect Claude Code in AI Agents once to turn this on.", "approveFromNotch"),
       h("div", { class: "row" }, h("div", { class: "grow rtitle" }, "Stay on screen for"), secs.el))),
     section("Sounds", group(
       switchRow("Mute all sounds", "Nothing plays while this is on. You can also mute from the island.", "soundMuted"),
@@ -1218,7 +1219,7 @@ if (!window.ipc) {
     settings: {
       launchAtLogin: true, autoStartAutomation: false, showWidget: true, showDockIcon: false, appearance: "system",
       widgetPosition: "bottom-right", widgetCompact: false, widgetShowStatus: true,
-      notifications: true, notificationSecs: 5, soundMuted: false, soundVolume: 70, soundName: "gentle", soundCustomFile: "",
+      notifications: true, notificationSecs: 5, approveFromNotch: true, soundMuted: false, soundVolume: 70, soundName: "gentle", soundCustomFile: "",
       soundEvents: { started: false, completed: true, allDone: false, error: false, opened: false },
       mascot: true, mascotIntensity: "subtle", mascotIdle: true, mascotPointer: true, reduceMotion: false,
       platforms: { instagram: true, x: true, youtube: false }, preferredPlatform: "instagram", onFinish: "hide",
