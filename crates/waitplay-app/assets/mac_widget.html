@@ -159,10 +159,6 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #tClose svg{width:9px;height:9px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}
 
 /* panel pieces */
-#entline{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;min-height:22px;margin-bottom:6px}
-.ed{width:8px;height:8px;border-radius:50%;background:#4a4a4f;align-self:center;flex:none}
-#entline[data-state=active] .ed,#entline[data-state=open] .ed{background:#2fd28b} #entline[data-state=opening] .ed,#entline[data-state=closing] .ed{background:#ffb02e} #entline[data-state=paused] .ed{background:#a58b45}
-.et{font-size:12.5px;font-weight:600} .eh{font-size:11.5px;color:var(--fg2)} .eh:empty{display:none}
 .shead{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--fg2);margin:6px 0 4px;text-transform:uppercase}
 #sess{display:flex;flex-direction:column;gap:2px;margin-bottom:6px}
 .srow{border-radius:10px;padding:5px 8px;cursor:pointer;transition:background .18s}
@@ -248,7 +244,6 @@ body.demo #wrap{margin:0 auto}
       <div id="toast" role="status" aria-live="polite"><span class="td"></span><span class="tx"><b id="tTitle"></b><span id="tBody"></span></span><button id="tClose" type="button" aria-label="Dismiss notification"><svg viewBox="0 0 10 10"><path d="M2 2l6 6M8 2L2 8"/></svg></button></div>
       <div id="body">
         <div class="sep"></div>
-        <div id="entline"><span class="ed" id="entDot"></span><span class="et" id="entText"></span><span class="eh" id="entHint"></span></div>
         <div class="shead"><span id="sHead">No active sessions</span></div>
         <div id="sess" role="list"></div>
         <div id="ctl"><button class="cbtn" id="cOpen" type="button"></button><button class="cbtn" id="cMute" type="button"></button></div>
@@ -480,7 +475,9 @@ body.demo #wrap{margin:0 auto}
     const active = list.filter(r => r.act === 'working' || r.act === 'waiting').length;
     $('sHead').textContent = active === 0 ? 'No active sessions' : active === 1 ? '1 active session' : active + ' active sessions';
     box.textContent = '';
-    if (!list.length){ const n = document.createElement('div'); n.className = 'snone'; n.textContent = 'Nothing is running right now.'; box.appendChild(n); return; }
+    // nothing running: no heading and no list at all, the panel is just the controls
+    $('sHead').parentNode.style.display = list.length ? '' : 'none'; box.style.display = list.length ? '' : 'none';
+    if (!list.length) return;
     list.slice(0, 5).forEach(r => {
       const row = document.createElement('div'); row.className = 'srow' + (r.id === selId ? ' sel' : ''); row.dataset.act = r.act; row.setAttribute('role', 'listitem');
       const l1 = document.createElement('div'); l1.className = 'l1';
@@ -502,7 +499,6 @@ body.demo #wrap{margin:0 auto}
   }
   function renderControls(){
     const ent = S.ent || {};
-    $('entline').dataset.state = ent.state || ''; $('entText').textContent = ent.text || ''; $('entHint').textContent = ent.hint || '';
     const o = $('cOpen'); o.innerHTML = (S.entOpen ? ICON.hide : ICON.open) + '<span></span>';
     o.lastChild.textContent = S.entOpen ? 'Hide' : 'Open ' + (S.platformLabel || ''); o.dataset.a = S.entOpen ? 'hideEntertainment' : 'openEntertainment';
     o.setAttribute('aria-label', S.entOpen ? 'Hide the entertainment window' : 'Open entertainment');

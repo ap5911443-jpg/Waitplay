@@ -321,6 +321,17 @@ mod tests {
     }
 
     #[test]
+    fn only_the_working_sessions_are_counted_among_many_open_ones() {
+        // ten sessions known to the bridge: two are working, one is silent for a minute, four finished long ago, two are idle, one waits
+        let mut items = vec![("claude-code", "WORKING", NOW - 500), ("codex", "WORKING", NOW - 2_000), ("cline", "WORKING", NOW - 60_000), ("opencode", "WAITING_FOR_INPUT", NOW - 1_000)];
+        items.extend([("omp", "COMPLETED", NOW - 600_000); 4]);
+        items.extend([("cursor", "IDLE", NOW - 3_600_000); 2]);
+        let v = parse_sessions(&body(&items), NOW).unwrap();
+        assert_eq!((v.working_sessions, v.active_sessions), (2, 3));
+        assert_eq!(describe(Status::Working, &v, "X").0, "2 agents working");
+    }
+
+    #[test]
     fn descriptions_name_the_agents() {
         let one = parse_sessions(&body(&[("claude-code", "WORKING", NOW)]), NOW).unwrap();
         assert_eq!(describe(Status::Working, &one, "Instagram"), ("Claude Code is working".into(), "Claude Code \u{b7} Instagram".into()));
