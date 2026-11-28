@@ -114,7 +114,7 @@ html,body{margin:0;background:transparent;overflow:hidden;color:var(--fg);
 #nbar .gap{display:flex;align-items:center;justify-content:center;min-width:0}
 #ncenter{display:none;font-size:13px;font-weight:600;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 #shell.calm #nbar .ear{opacity:1;transition-delay:.18s}
-#shell.calm.vn #nbar .ear.r{opacity:0} /* a drawn notch keeps the closed size: mascot left, the text in the middle, nothing else */
+#nterm{display:none;width:15px;height:15px;flex:none;fill:none;stroke:var(--fg2);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round} #shell.calm #nterm{display:block}
 #shell.calm.vn #ncenter{display:block} #shell.calm.vn #nbrand{display:none}
 #shell.calm:not(.vn) #nbrand{overflow:hidden;text-overflow:ellipsis}
 #shell.nm.mcrest #nbrand{display:none} #shell.nm.mcrest .ear.l{opacity:1} #shell.nm.mcrest .ear.r{opacity:0}
@@ -237,7 +237,7 @@ body.demo #wrap{margin:0 auto}
         <div class="r1 row">
           <div class="ear l"><span id="logo"><i class="lg"></i><span class="mch"></span><span class="dot"><svg viewBox="0 0 8 8"><path d="M1.5 4.2 3.3 6 6.5 2"/></svg></span></span><span class="t" id="nbrand">Vibe Play</span></div>
           <div class="gap"><span id="ncenter"></span></div>
-          <div class="ear r"><span class="t" id="ntimer"></span><span class="bars" id="nbars" aria-hidden="true"><i></i><i></i><i></i></span></div>
+          <div class="ear r"><svg id="nterm" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2.5"/><path d="M4.6 6.2 6.9 8l-2.3 1.8M8.6 10h3"/></svg><span class="t" id="ntimer"></span><span class="bars" id="nbars" aria-hidden="true"><i></i><i></i><i></i></span></div>
         </div>
         <div class="r2 row" id="nr2" role="button" tabindex="0" aria-label="Expand Vibe Play">
           <div class="txt"><span class="ttl" id="ntitle"></span><span class="sub" id="nsub"></span></div>
@@ -310,8 +310,8 @@ body.demo #wrap{margin:0 auto}
   function sizes(){
     if (hasNotch()){
       const w = Math.max(392, NW() + 2 * 96), nh = NH();
-      const ear = S.clip ? 96 : 180;
-      return { rest: { w: NW() + (mascotOn() ? 68 : 0), h: nh, r: S.clip ? 14 : 11 }, calm: { w: S.clip ? NW() + (mascotOn() ? 68 : 0) : NW() + 2 * ear, h: nh, r: S.clip ? 14 : 11 }, live: { w, h: nh + 56, r: 24 }, hdr: nh + 56, panelW: w, notchMode: true };
+      const ear = S.clip ? 104 : 180;
+      return { rest: { w: NW() + (mascotOn() ? 68 : 0), h: nh, r: S.clip ? 14 : 11 }, calm: { w: NW() + 2 * ear, h: nh, r: S.clip ? 14 : 11 }, live: { w, h: nh + 56, r: 24 }, hdr: nh + 56, panelW: w, notchMode: true };
     }
     const top = (S.corner || 'top-center') === 'top-center';
     const mini = !!S.compact || S.showStatus === false;
