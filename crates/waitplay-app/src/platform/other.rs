@@ -43,6 +43,9 @@ pub fn process_tree(root: u32) -> Vec<u32> {
 pub fn find_top_window_for_pid(_pid: u32) -> WindowId {
     NO_WINDOW
 }
+pub fn jump_to_session(_pid: u32, _cwd: &str, _tty: &str) -> bool {
+    false
+}
 pub fn find_window_for_agent(_agent_name: &str) -> WindowId {
     NO_WINDOW
 }

@@ -81,7 +81,22 @@ pub fn classify(event_type: &str, data: &Value) -> Action {
 }
 
 fn post(session: &str, event: &str, model: Value, data: Option<Map<String, Value>>) {
-    common::post_event_quiet(&common::event_payload(AGENT, session, event, Some(model), None, data));
+    // Claude Code runs its hooks in the project folder: that tells the widget which project this session is
+    let mut data = data.unwrap_or_default();
+    if !data.contains_key("cwd") {
+        if let Ok(dir) = std::env::current_dir() {
+            data.insert("cwd".into(), Value::String(dir.to_string_lossy().into_owned()));
+        }
+    }
+    // and which process (and terminal tab) it runs in, so a click in the widget can jump straight back to it
+    if !data.contains_key("pid") {
+        let pid = common::parent_pid_or_self();
+        data.insert("pid".into(), Value::from(pid));
+        if let Some(tty) = common::tty_of(pid) {
+            data.insert("tty".into(), Value::String(tty));
+        }
+    }
+    common::post_event_quiet(&common::event_payload(AGENT, session, event, Some(model), None, Some(data)));
 }
 
 /// One session per Claude Code conversation (the hook JSON carries its `session_id`), so two terminals running Claude Code are

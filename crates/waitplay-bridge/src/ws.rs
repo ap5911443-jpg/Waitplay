@@ -56,6 +56,9 @@ pub fn sanitize_session(session: &AgentSessionInfo) -> AgentSessionInfo {
     out.intent = None;
     out.waiting_for_input_prompt = None;
     out.last_error = None;
+    out.cwd = None; // a path says where the user works
+    out.pid = None;
+    out.tty = None;
     out
 }
 

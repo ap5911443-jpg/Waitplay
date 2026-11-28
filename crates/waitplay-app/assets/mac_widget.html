@@ -163,6 +163,9 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #sess{display:flex;flex-direction:column;gap:2px;margin-bottom:6px}
 .srow{border-radius:10px;padding:5px 8px;cursor:pointer;transition:background .18s}
 .srow:hover{background:var(--chip)}
+.sp{margin-left:6px;font-weight:500;color:var(--fg2)}
+.jump{all:unset;display:none;box-sizing:border-box;margin:4px 0 2px 16px;padding:4px 10px;border-radius:12px;font-size:11.5px;font-weight:600;background:var(--chip);color:var(--fg);cursor:pointer}
+.jump:hover{background:var(--chip-hover)} .srow.sel .jump{display:inline-block}
 .srow .l1{display:flex;align-items:center;gap:8px;min-height:20px}
 .sd{width:8px;height:8px;border-radius:50%;flex:none;background:#4a4a4f}
 .srow[data-act=working] .sd{background:#2fd28b} .srow[data-act=waiting] .sd{background:#ffb02e} .srow[data-act=done] .sd{background:#8dffb8;opacity:.7} .srow[data-act=failed] .sd{background:#ff6159}
@@ -483,6 +486,7 @@ body.demo #wrap{margin:0 auto}
       const l1 = document.createElement('div'); l1.className = 'l1';
       const d = document.createElement('span'); d.className = 'sd';
       const n = document.createElement('span'); n.className = 'sn'; n.textContent = r.name;
+      if (r.project){ const pj = document.createElement('span'); pj.className = 'sp'; pj.textContent = r.project; n.append(pj); }
       const st = document.createElement('span'); st.className = 'ss'; st.textContent = (r.act === 'working' && r.since && Date.now() - r.since < 4000) ? 'Starting' : (ACT[r.act] || '');
       const t = document.createElement('span'); t.className = 'st';
       if (r.since && (r.act === 'working' || r.act === 'waiting')){ t.dataset.since = String(r.since); t.textContent = fmt(Date.now() - r.since); }
@@ -490,8 +494,11 @@ body.demo #wrap{margin:0 auto}
       l1.append(d, n, st, t);
       const det = document.createElement('div'); det.className = 'sdet';
       const when = r.since ? 'Started ' + new Date(r.since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-      det.textContent = [r.prompt || '', r.terminal ? 'Terminal: ' + r.terminal : '', when].filter(Boolean).join(' · ') || 'No more detail from this agent.';
-      row.append(l1, det);
+      const ago = r.at ? Math.max(0, Math.round((Date.now() - r.at) / 1000)) : -1;
+      det.textContent = [r.prompt || '', r.tool ? 'Using ' + r.tool : '', r.terminal ? 'Terminal: ' + r.terminal : '', when, ago >= 0 ? 'Last activity ' + (ago < 5 ? 'just now' : ago < 90 ? ago + ' s ago' : Math.round(ago / 60) + ' min ago') : ''].filter(Boolean).join(' \u00b7 ') || 'No more detail from this agent.';
+      const jump = document.createElement('button'); jump.type = 'button'; jump.className = 'jump'; jump.textContent = 'Jump to this session';
+      jump.addEventListener('click', e => { e.stopPropagation(); send({t:'focusSession', id:r.id}); });
+      row.append(l1, det, jump);
       row.addEventListener('click', e => { e.stopPropagation(); selId = selId === r.id ? '' : r.id; renderSessions(); requestAnimationFrame(layout); });
       box.appendChild(row);
     });

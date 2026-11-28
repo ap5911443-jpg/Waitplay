@@ -114,6 +114,9 @@ impl AgentStateMachine {
                     intent: None,
                     agent_display_name: None,
                     terminal: None,
+                    cwd: None,
+                    pid: None,
+                    tty: None,
                 },
                 start_delay_ms: options.start_delay_ms.unwrap_or(DEFAULT_START_DELAY_MS),
                 auto_launch: options.auto_launch.unwrap_or(true),
@@ -233,6 +236,15 @@ impl AgentStateMachine {
             }
             if js::truthy(d.get("terminal")) {
                 g.session.terminal = d.get("terminal").map(js::to_js_string);
+            }
+            if let Some(pid) = d.get("pid").and_then(Value::as_u64).filter(|p| *p > 0 && *p <= u32::MAX as u64) {
+                g.session.pid = Some(pid as u32);
+            }
+            if let Some(tty) = d.get("tty").and_then(Value::as_str).filter(|t| !t.is_empty() && t.len() <= 40 && t.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '.'))) {
+                g.session.tty = Some(tty.to_string());
+            }
+            if js::truthy(d.get("cwd")) {
+                g.session.cwd = d.get("cwd").map(js::to_js_string).map(|c| c.chars().take(400).collect());
             }
         }
 

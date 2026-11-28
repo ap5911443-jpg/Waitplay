@@ -282,6 +282,17 @@ pub(crate) fn agent_process_names(lower_agent: &str) -> Option<&'static [&'stati
     }
 }
 
+/// Brings the window that hosts the agent running as `pid` to the front (a terminal's tabs share one window, so this is the window,
+/// not the tab). `false` when no window is found.
+pub fn jump_to_session(pid: u32, _cwd: &str, _tty: &str) -> bool {
+    let w = find_top_window_for_pid(pid);
+    if w == NO_WINDOW {
+        return false;
+    }
+    focus_window(w);
+    true
+}
+
 pub fn find_window_for_agent(agent_name: &str) -> WindowId {
     if agent_name.is_empty() {
         return NO_WINDOW;

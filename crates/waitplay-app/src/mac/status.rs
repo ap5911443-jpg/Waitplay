@@ -67,8 +67,20 @@ pub struct SessionRow {
     pub terminal: String,
     /// What a waiting agent asked ("Claude needs your permission to use Bash"), shortened; empty otherwise.
     pub prompt: String,
-    /// Time of the last event, for ordering only.
+    /// Time of the last event: orders the rows and says "last activity" in the detail.
     pub at: i64,
+    /// The agent's working directory (local only, for jumping back to its window) and the folder's name, which is what the widget shows.
+    pub cwd: String,
+    pub project: String,
+    pub pid: u32,
+    pub tty: String,
+    /// What a working agent is doing right now ("Bash", "Edit"), empty when unknown or not working.
+    pub tool: String,
+}
+
+/// The last folder of a path, either separator; empty for an empty path.
+pub fn project_name(cwd: &str) -> String {
+    cwd.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or("").chars().take(40).collect()
 }
 
 impl SessionsView {
@@ -139,6 +151,11 @@ pub fn parse_sessions(json: &str, now_ms: i64) -> Option<SessionsView> {
                 terminal: s.get("terminal").and_then(Value::as_str).unwrap_or("").to_string(),
                 prompt: if act == Act::Waiting { s.get("waitingForInputPrompt").and_then(Value::as_str).unwrap_or("").chars().take(120).collect() } else { String::new() },
                 at,
+                cwd: s.get("cwd").and_then(Value::as_str).unwrap_or("").chars().take(400).collect(),
+                project: project_name(s.get("cwd").and_then(Value::as_str).unwrap_or("")),
+                pid: s.get("pid").and_then(Value::as_u64).unwrap_or(0).min(u32::MAX as u64) as u32,
+                tty: s.get("tty").and_then(Value::as_str).unwrap_or("").chars().take(40).collect(),
+                tool: if act == Act::Working { s.get("tool").and_then(Value::as_str).unwrap_or("").chars().take(30).collect() } else { String::new() },
             });
         }
         let terminal = s.get("terminal").and_then(Value::as_str).unwrap_or("").to_string();

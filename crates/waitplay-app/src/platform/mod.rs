@@ -59,6 +59,7 @@ pub use self::other::*;
 //   pub fn process_tree(root: u32) -> Vec<u32>                // root plus every descendant (parent-pid walk over a snapshot)
 //   pub fn find_top_window_for_pid(pid: u32) -> WindowId      // port of ParentWindowTracker.FindTopWindowForPid
 //   pub fn find_window_for_agent(agent_name: &str) -> WindowId// port of ParentWindowTracker.FindWindowForAgent
+//   pub fn jump_to_session(pid: u32, cwd: &str, tty: &str) -> bool // bring the window (on macOS the exact terminal tab / project) of the agent running as `pid` to the front
 //   pub fn work_area() -> Rect                                // primary monitor work area (excludes the taskbar), physical px
 //   pub fn cursor_position() -> (i32, i32)                    // physical px
 //   pub fn attach_parent_console()                            // so `waitplay --toggle` can print into the invoking shell

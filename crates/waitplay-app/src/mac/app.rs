@@ -717,7 +717,7 @@ impl App {
                     Act::Done => "done",
                     Act::Failed => "failed",
                 };
-                json!({ "id": r.id, "name": r.name, "act": act, "since": r.since, "durMs": r.duration_ms, "terminal": r.terminal, "prompt": r.prompt })
+                json!({ "id": r.id, "name": r.name, "act": act, "since": r.since, "durMs": r.duration_ms, "terminal": r.terminal, "prompt": r.prompt, "project": r.project, "tool": r.tool, "at": r.at })
             })
             .collect()
     }
@@ -1296,6 +1296,19 @@ impl App {
         self.render();
     }
 
+    /// A click on "Jump to this session": brings the window (on a Mac the exact terminal tab or editor project) the agent runs in to the
+    /// front. Off the UI thread, since on a Mac it runs a script.
+    fn focus_session(&mut self, id: &str) {
+        let Some(r) = self.rt.view.sessions.iter().find(|r| r.id == id) else { return };
+        let (pid, cwd, tty) = (r.pid, r.cwd.clone(), r.tty.clone());
+        let id = id.to_string();
+        let _ = std::thread::Builder::new().name("wp-jump".into()).spawn(move || {
+            if pid == 0 || !platform::jump_to_session(pid, &cwd, &tty) {
+                wp_info!("jump: no window found for session {}", id);
+            }
+        });
+    }
+
     fn open_entertainment(&mut self) {
         if self.account_gate() {
             return;
@@ -1513,6 +1526,7 @@ impl App {
             "openAccount" => self.open_account(target),
             "setName" | "signOut" | "signOutOthers" | "revokeDevice" => self.on_account_ipc(body),
             "openSite" => self.open_site(&str_of("key")),
+            "focusSession" => self.focus_session(&str_of("id")),
             "watchLogins" => {
                 self.watch_logins = v.get("on").and_then(Value::as_bool).unwrap_or(false);
                 if self.watch_logins {

@@ -154,6 +154,25 @@ pub fn parent_pid_or_self() -> u32 {
     parent_pid().unwrap_or_else(std::process::id)
 }
 
+/// The terminal device the agent runs on ("/dev/ttys003"), for jumping back to its exact tab on macOS. `None` where there is none.
+#[cfg(unix)]
+pub fn tty_of(pid: u32) -> Option<String> {
+    let out = std::process::Command::new("/bin/ps").args(["-o", "tty=", "-p", &pid.to_string()]).output().ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if name.is_empty() || name == "?" || name == "??" {
+        None
+    } else if name.starts_with('/') {
+        Some(name)
+    } else {
+        Some(format!("/dev/{}", name))
+    }
+}
+
+#[cfg(not(unix))]
+pub fn tty_of(_pid: u32) -> Option<String> {
+    None
+}
+
 #[cfg(unix)]
 fn parent_pid() -> Option<u32> {
     Some(std::os::unix::process::parent_id())

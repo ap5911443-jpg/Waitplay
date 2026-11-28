@@ -176,6 +176,57 @@ pub fn find_window_for_agent(_agent_name: &str) -> WindowId {
     NO_WINDOW
 }
 
+/// What to do to bring one agent session's place to the front.
+#[derive(Debug, PartialEq)]
+enum JumpPlan {
+    /// Select the tab with this terminal device in Terminal.app or iTerm2 (AppleScript).
+    Script(String),
+    /// A code editor: opening its folder again focuses the window that already shows it.
+    OpenFolder(String),
+    /// Anything else: just the application.
+    Activate,
+}
+
+fn jump_plan(bundle: &str, cwd: &str, tty: &str) -> JumpPlan {
+    // the device name reaches an AppleScript: only the characters a device path has
+    let tty_ok = !tty.is_empty() && tty.len() <= 40 && tty.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '.'));
+    match bundle {
+        "com.apple.Terminal" if tty_ok => JumpPlan::Script(format!(
+            "tell application \"Terminal\"\nactivate\nrepeat with w in windows\nrepeat with t in tabs of w\nif tty of t is \"{tty}\" then\nset selected of t to true\nset index of w to 1\nreturn\nend if\nend repeat\nend repeat\nend tell"
+        )),
+        "com.googlecode.iterm2" if tty_ok => JumpPlan::Script(format!(
+            "tell application \"iTerm\"\nactivate\nrepeat with w in windows\nrepeat with t in tabs of w\nrepeat with s in sessions of t\nif tty of s is \"{tty}\" then\nselect t\nselect s\nreturn\nend if\nend repeat\nend repeat\nend repeat\nend tell"
+        )),
+        b if !cwd.is_empty() && (b.starts_with("com.microsoft.VSCode") || b.starts_with("com.todesktop.") || b.starts_with("com.exafunction.windsurf") || b == "dev.zed.Zed" || b.starts_with("com.jetbrains.")) => {
+            JumpPlan::OpenFolder(b.to_string())
+        }
+        _ => JumpPlan::Activate,
+    }
+}
+
+/// Brings the place of the agent running as `pid` to the front: the exact tab in Terminal.app and iTerm2, the project's window in a
+/// code editor, otherwise the hosting application. `false` when no application hosts it.
+pub fn jump_to_session(pid: u32, cwd: &str, tty: &str) -> bool {
+    let target = find_top_window_for_pid(pid);
+    if target == NO_WINDOW {
+        return false;
+    }
+    let bundle = running_app(target as u32).and_then(|a| a.bundleIdentifier()).map(|b| b.to_string()).unwrap_or_default();
+    match jump_plan(&bundle, cwd, tty) {
+        JumpPlan::Script(script) => {
+            focus_window(target);
+            let _ = Command::new("/usr/bin/osascript").arg("-e").arg(script).status();
+        }
+        JumpPlan::OpenFolder(b) => {
+            if Command::new("/usr/bin/open").args(["-b", &b, cwd]).status().map(|s| !s.success()).unwrap_or(true) {
+                focus_window(target);
+            }
+        }
+        JumpPlan::Activate => focus_window(target),
+    }
+    true
+}
+
 fn lrect(r: objc2_foundation::NSRect) -> LRect {
     LRect::new(r.origin.x, r.origin.y, r.size.width, r.size.height)
 }
@@ -510,5 +561,25 @@ mod tests {
     #[test]
     fn parent_of_this_process_is_known() {
         assert!(parent_pid(std::process::id()) > 0);
+    }
+}
+
+#[cfg(test)]
+mod jump_tests {
+    use super::*;
+
+    #[test]
+    fn terminals_select_the_tab_by_device_and_editors_open_the_folder() {
+        assert!(matches!(jump_plan("com.apple.Terminal", "/p", "/dev/ttys003"), JumpPlan::Script(s) if s.contains("/dev/ttys003") && s.contains("\"Terminal\"")));
+        assert!(matches!(jump_plan("com.googlecode.iterm2", "", "/dev/ttys010"), JumpPlan::Script(s) if s.contains("iTerm")));
+        assert_eq!(jump_plan("com.microsoft.VSCode", "/Users/a/shop", ""), JumpPlan::OpenFolder("com.microsoft.VSCode".into()));
+        assert_eq!(jump_plan("com.microsoft.VSCode", "", ""), JumpPlan::Activate, "no folder known");
+        assert_eq!(jump_plan("com.mitchellh.ghostty", "/p", "/dev/ttys001"), JumpPlan::Activate);
+    }
+
+    #[test]
+    fn a_device_name_that_could_break_out_of_the_script_is_not_used() {
+        assert_eq!(jump_plan("com.apple.Terminal", "/p", "\" & do shell script \"x\" & \""), JumpPlan::Activate);
+        assert_eq!(jump_plan("com.apple.Terminal", "/p", ""), JumpPlan::Activate);
     }
 }

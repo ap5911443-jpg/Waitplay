@@ -152,6 +152,15 @@ pub struct AgentSessionInfo {
     pub agent_display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal: Option<String>,
+    /// The agent's working directory, when its hook says so. Local only: never sent over the WebSocket (see `ws::sanitize_session`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// The agent's process id and, on macOS, its terminal device ("/dev/ttys003"): what the widget needs to jump back to this session's window.
+    /// Local only, like `cwd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tty: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
