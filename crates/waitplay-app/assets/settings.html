@@ -444,6 +444,7 @@ const GLYPHS = {
   x: ["M3 3l10 10", "M13 3L3 13"],
   youtube: ["M2.5 4.5h11a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z", "M6.8 6l3 2-3 2z"]
 };
+const siteLogins = () => { const l = (S.runtime || {}).logins; return l && typeof l === "object" ? l : null; }; // null: the app cannot read the sites' sign-in state
 function paneEntertainment() {
   const rows = PLATFORMS.map(([id, name]) => {
     const sw = switchBtn(name, () => settings().platforms[id], v => {
@@ -457,7 +458,25 @@ function paneEntertainment() {
       set(patch);
     });
     reg(sw.update);
-    return h("div", { class: "row" }, h("div", { class: "glyph" }, svg(GLYPHS[id])), h("div", { class: "grow rtitle" }, name), sw.el);
+    // the site's sign-in: the status and the button follow what the app reads from the site's own cookies, so a login done in the
+    // window that opens shows up here by itself (the app checks every second or so while this pane is open)
+    const desc = h("div", { class: "rdesc" }), act = h("div", { class: "actions" });
+    let sig = "";
+    reg(() => {
+      const l = siteLogins(), opened = onbSites[id] === "opened", out = onbSites[id] === "out", signed = l ? !!l[id] : onbSites[id] === "done";
+      if (signed && opened) onbSites[id] = "";   // detected: the login worked
+      if (!signed && out) onbSites[id] = "";     // detected: the logout worked
+      const k = [signed, onbSites[id] || "", !!l].join();
+      if (k === sig) return;
+      sig = k;
+      const now = onbSites[id] || "";
+      setText(desc, signed ? (now === "out" ? "Signing out\u2026" : "Signed in") : now === "opened" ? (l ? "Sign in in the window that opened. This updates by itself." : "Sign in in the window that opened, then choose \u201cI\u2019m signed in\u201d.") : "Not signed in");
+      act.replaceChildren(...(signed
+        ? [l ? h("button", { class: "btn", type: "button", disabled: now === "out", onclick: () => { onbSites[id] = "out"; send({ t: "logoutSite", key: id }); setTimeout(() => { if (onbSites[id] === "out") { onbSites[id] = ""; render(); } }, 8000); render(); } }, "Log out") : null]
+        : [h("button", { class: "btn primary", type: "button", onclick: () => { onbSites[id] = "opened"; send({ t: "openSite", key: id }); render(); } }, "Log in"),
+           !l && now === "opened" ? h("button", { class: "btn", type: "button", onclick: () => { onbSites[id] = "done"; render(); } }, "I\u2019m signed in") : null]).filter(Boolean));
+    });
+    return h("div", { class: "row" }, h("div", { class: "glyph" }, svg(GLYPHS[id])), h("div", { class: "grow" }, h("div", { class: "rtitle" }, name), desc), act, sw.el);
   });
   const sel = h("select", { "aria-label": "Preferred platform" });
   PLATFORMS.forEach(([id, name]) => sel.append(h("option", { value: id }, name)));
@@ -472,7 +491,7 @@ function paneEntertainment() {
   const open = h("button", { class: "btn primary", type: "button", onclick: () => send({ t: "openEntertainment" }) }, "Open now");
   const hide = h("button", { class: "btn", type: "button", onclick: () => send({ t: "hideEntertainment" }) }, "Hide");
   return h("div", { class: "stack" },
-    section("Platforms", group(rows), h("div", { class: "note" }, "You stay signed in between launches.")),
+    section("Platforms", group(rows), h("div", { class: "note" }, "Log in once; you stay signed in between launches. Your logins stay on this " + THIS_PC + ".")),
     group(
       h("div", { class: "row" }, h("div", { class: "grow rtitle" }, "Preferred platform"), sel),
       h("div", { class: "row" }, h("div", { class: "grow" }, h("div", { class: "rtitle" }, "When the agent finishes"), finHelp), fin.el),
@@ -987,14 +1006,18 @@ function onbSlice(step) {
     default: return 0;
   }
 }
+/* the sign-in check runs only while a page that shows it is on screen: the guide's sites step, or the Entertainment pane */
+function syncWatch() {
+  const want = !!(S && (S.onboarding ? ONB_STEPS[onbStep] === "sites" : current === "entertainment"));
+  if (want !== onbWatching) { onbWatching = want; send({ t: "watchLogins", on: want }); }
+}
 function onbRender() {
   const on = !!(S && S.onboarding);
   onbEl.classList.toggle("on", on);
   if (on && acctRequired() && onbStep > 1) onbStep = 1; // signed out part-way through: back to the sign-in step
   if (on && onbAwait && ONB_STEPS[onbStep] === "account" && !acctRequired()) { onbAwait = false; onbStep++; onbSig = ""; } // signed in just now: move on
   // the sign-in check only runs while the sites page is on screen
-  const want = on && ONB_STEPS[onbStep] === "sites";
-  if (want !== onbWatching) { onbWatching = want; send({ t: "watchLogins", on: want }); }
+  syncWatch();
   if (!on) { if (onbSig) { onbSig = ""; onbEl.replaceChildren(); } return; }
   const sig = JSON.stringify([onbStep, onbSlice(ONB_STEPS[onbStep])]);
   if (sig === onbSig) return;
@@ -1134,7 +1157,7 @@ let current = "general";
 const tabEls = {}, paneEls = {};
 
 function selectPane(id, focus) {
-  if (current !== id) { current = id; stopRecording(); }
+  if (current !== id) { current = id; stopRecording(); syncWatch(); }
   for (const p of PANES) {
     const on = p[0] === id;
     setAttr(tabEls[p[0]], "aria-selected", on); tabEls[p[0]].tabIndex = on ? 0 : -1;
