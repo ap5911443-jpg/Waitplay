@@ -58,7 +58,7 @@ html,body{margin:0;background:transparent;overflow:hidden;color:var(--fg);
 #shell.vn.nm::after{left:100%;background:radial-gradient(circle farthest-side at 100% 100%,transparent 97%,var(--bg) 100%)}
 #shell.vn.nm #clip::after{content:"";position:absolute;left:50%;top:8px;width:36px;height:4px;margin-left:-18px;border-radius:2px;background:rgba(255,255,255,.82);opacity:0;pointer-events:none;transition:opacity .3s ease,top .5s var(--ease),width .5s var(--ease),margin .5s var(--ease)}
 #shell.vn.nm.open #clip::after{opacity:1;transition-delay:.2s,0s,0s,0s}
-#shell.vn.nm:not(.live):not(.open):not(.mcrest) #clip::after{opacity:.9;top:15px;width:26px;margin-left:-13px}
+#shell.vn.nm:not(.live):not(.calm):not(.open):not(.mcrest) #clip::after{opacity:.9;top:15px;width:26px;margin-left:-13px}
 #shell.vn .inds{display:none}
 #shell.vn #clip{contain:layout paint style}
 #shell.vn{will-change:transform;backface-visibility:hidden}
@@ -300,7 +300,7 @@ body.demo #wrap{margin:0 auto}
   function sizes(){
     if (hasNotch()){
       const w = Math.max(392, NW() + 2 * 96), nh = NH();
-      const ear = S.clip ? 104 : 180;
+      const ear = S.clip ? 88 : 180;
       return { rest: { w: NW() + (mascotOn() ? 68 : 0), h: nh, r: S.clip ? 14 : 11 }, calm: { w: NW() + 2 * ear, h: nh, r: S.clip ? 14 : 11 }, live: { w, h: nh + 56, r: 24 }, hdr: nh + 56, panelW: w, notchMode: true };
     }
     const top = (S.corner || 'top-center') === 'top-center';
